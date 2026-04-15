@@ -210,12 +210,12 @@ def _make_unified_tool(
             # When filter_token matched an ID, extract only header + matching rows
             if filter_token and is_sheet_table:
                 lines = content.splitlines()
-                header_lines = [l for l in lines if not l.startswith("|") or l.startswith("| ---")]
-                table_lines = [l for l in lines if l.startswith("|")]
-                matching = [l for l in table_lines if filter_token in l]
+                header_lines = [ln for ln in lines if not ln.startswith("|") or ln.startswith("| ---")]
+                table_lines = [ln for ln in lines if ln.startswith("|")]
+                matching = [ln for ln in table_lines if filter_token in ln]
                 if matching:
                     # keep description + table header rows (first 2 table lines) + matching rows
-                    sep_idx = next((i for i, l in enumerate(table_lines) if l.startswith("| ---")), 1)
+                    sep_idx = next((i for i, ln in enumerate(table_lines) if ln.startswith("| ---")), 1)
                     content = "\n".join(header_lines[:header_lines.index(table_lines[0]) if table_lines[0] in header_lines else len(header_lines)]
                                        + table_lines[:sep_idx + 1] + matching)
             elif (is_pdf_table or is_sheet_table) and len(content) > max_table_chars:
@@ -381,7 +381,7 @@ def ask_agent(agent: Any, query: str, show_tool_uses: bool = False) -> str:
     except BadRequestError as exc:
         err_str = str(exc).lower()
         if "input tokens" in err_str or "context" in err_str or "400" in err_str:
-            print(f"[WARN] Context overflow — retrying with fewer chunks.")
+            print("[WARN] Context overflow — retrying with fewer chunks.")
             _limits["rerank_top_n"] = max(3, _limits.get("rerank_top_n", RERANK_TOP_N) // 2)
             try:
                 result = agent.invoke(_invoke_input, config=_invoke_config)

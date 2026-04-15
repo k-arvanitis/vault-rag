@@ -25,6 +25,10 @@ GENERATION_MODEL: str = os.getenv("GENERATION_MODEL", "llama-3.3-70b-versatile")
 # Required — get a free key at console.groq.com
 GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
 
+# Contextual summary LLM used during chunking (smaller/faster model than generation)
+CHUNK_LLM_API_BASE: str = os.getenv("CHUNK_LLM_API_BASE", "https://api.groq.com/openai/v1")
+CHUNK_LLM_MODEL: str = os.getenv("CHUNK_LLM_MODEL", "llama-3.1-8b-instant")
+
 OCR_API_BASE: str = os.getenv("OCR_API_BASE", "http://127.0.0.1:8002")
 OCR_MODEL: str = os.getenv("OCR_MODEL", "lightonocr-2-1b-ocr-soup")
 

@@ -97,7 +97,7 @@ def _merge_units_into_headers(headers: list[str], units_row: list[Any]) -> list[
     merged = []
     for header, unit_val in zip(headers, units_row):
         unit_str = str(unit_val).strip() if unit_val is not None else ""
-        if unit_str and not unit_str.lower() in {"na", "no", "-", "–", "n/a"}:
+        if unit_str and unit_str.lower() not in {"na", "no", "-", "–", "n/a"}:
             # normalise: ensure parens
             unit_str = unit_str if unit_str.startswith("(") else f"({unit_str})"
             merged.append(f"{header} {unit_str}".strip())

@@ -14,38 +14,13 @@ from openai import OpenAI
 import os
 import tiktoken
 
-from src.config import OLLAMA_API_BASE, GENERATION_MODEL, CHUNK_MAX_TOKENS, CHUNK_MIN_TOKENS
+from src.config import GROQ_API_KEY, CHUNK_LLM_API_BASE, CHUNK_LLM_MODEL
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _debug(message: str) -> None:
     print(f"[CHUNKER][DEBUG] {message}")
-
-
-def _ollama_chat_base() -> str:
-    return f"{OLLAMA_API_BASE.rstrip('/')}/v1"
-
-
-def _resolve_chat_model(client: OpenAI, requested_model: str, verbose: bool) -> str:
-    try:
-        models = client.models.list()
-        available = [m.id for m in getattr(models, "data", []) if getattr(m, "id", None)]
-    except Exception as exc:
-        if verbose:
-            _debug(f"Could not list models from vLLM endpoint: {exc}")
-        return requested_model
-
-    if requested_model in available:
-        return requested_model
-    if available:
-        if verbose:
-            _debug(
-                f"Requested model '{requested_model}' not found. "
-                f"Falling back to '{available[0]}'."
-            )
-        return available[0]
-    return requested_model
 
 
 @dataclass
@@ -179,10 +154,10 @@ def chunk_markdown(
 ) -> list[Chunk]:
     load_dotenv()
 
-    api_base = os.getenv("CHUNK_LLM_API_BASE", _ollama_chat_base())
-    requested_model_name = os.getenv("CHUNK_LLM_MODEL", GENERATION_MODEL)
-    client = OpenAI(base_url=api_base, api_key="ollama")
-    model_name = _resolve_chat_model(client, requested_model_name, verbose)
+    api_base = os.getenv("CHUNK_LLM_API_BASE", CHUNK_LLM_API_BASE)
+    model_name = os.getenv("CHUNK_LLM_MODEL", CHUNK_LLM_MODEL)
+    api_key = GROQ_API_KEY or "no-key"
+    client = OpenAI(base_url=api_base, api_key=api_key)
 
     tokenizer = tiktoken.get_encoding("cl100k_base")
     text = markdown.replace("\r\n", "\n").replace("\r", "\n")
@@ -257,7 +232,7 @@ def chunk_markdown(
     if enrich_with_llm:
         total_chunks = len(compact_chunks)
         if verbose:
-            _debug(f"Enriching {total_chunks} chunks using vLLM model: {model_name}")
+            _debug(f"Enriching {total_chunks} chunks using Groq model: {model_name}")
         for i, chunk in enumerate(compact_chunks, start=1):
             context = contextualize_chunk(client, model_name, markdown, chunk.content)
             context = context.strip()

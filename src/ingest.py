@@ -1,27 +1,29 @@
 import argparse
 import importlib
 import json
+import os
 import time
 from pathlib import Path
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
-from pypdf import PdfReader
+from pypdf import PdfReader  # noqa: E402
 
-from src import chunker as chunker_module
-from src.config import (
+from src import chunker as chunker_module  # noqa: E402
+from src.config import (  # noqa: E402
     QDRANT_URL, QDRANT_COLLECTION, OLLAMA_API_BASE, OLLAMA_EMBED_MODEL,
     OCR_API_BASE, OCR_MODEL,
 )
-import os
+from src.embedder import embed_chunks_file  # noqa: E402
+from src.ingest_table_rows import ingest_table_rows  # noqa: E402
+from src.parser.input_utils import resolve_to_pdf  # noqa: E402
+from src.parser.lightonocr_parser import pdf_to_markdown  # noqa: E402
+from src.vector_store import delete_by_file, ingest_embeddings  # noqa: E402
+
 _IMAGE_ANALYSIS_API_BASE = os.getenv("IMAGE_ANALYSIS_API_BASE", os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11434"))
 _IMAGE_ANALYSIS_MODEL = os.getenv("IMAGE_ANALYSIS_MODEL", "Qwen/Qwen3.5-2B")
-from src.embedder import embed_chunks_file
-from src.ingest_table_rows import ingest_table_rows
-from src.parser.input_utils import resolve_to_pdf
-from src.parser.lightonocr_parser import pdf_to_markdown
-from src.vector_store import delete_by_file, ingest_embeddings
 
 REPO_ROOT = chunker_module.REPO_ROOT
 
