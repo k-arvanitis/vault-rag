@@ -1,7 +1,7 @@
-"""RagForge — Streamlit chat UI.
+"""Vault RAG — Streamlit chat UI.
 
 Features:
-- Upload PDFs, Excel, CSV, or Markdown files → ingested into Qdrant
+- Upload PDFs, Excel, CSV, Word, Markdown, or image files → ingested into Qdrant
 - Chat with your documents (ReAct agent, multi-step retrieval)
 - Conversation history per session
 - Document library: see what's been ingested, delete individual files
@@ -9,6 +9,7 @@ Features:
 """
 from __future__ import annotations
 
+import re
 import tempfile
 from pathlib import Path
 
@@ -19,14 +20,14 @@ load_dotenv()
 
 REPO_ROOT = Path(__file__).resolve().parent
 INPUT_DIR = REPO_ROOT / "data" / "input"
-TRANSLATED_DIR = REPO_ROOT / "data" / "output" / "translated"
+TRANSLATED_DIR = REPO_ROOT / "data" / "output" / "processed"
 INPUT_DIR.mkdir(parents=True, exist_ok=True)
 TRANSLATED_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="RagForge",
-    page_icon="🔥",
+    page_title="Vault RAG",
+    page_icon="🗄️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -35,6 +36,7 @@ st.set_page_config(
 # ── lazy imports ──────────────────────────────────────────────────────────────
 @st.cache_resource(show_spinner="Loading RAG agent…")
 def _get_agent():
+    """Build and cache the RAG agent using current config values."""
     from src.config import (
         GENERATION_API_BASE,
         GENERATION_MODEL,
@@ -68,6 +70,10 @@ def _ingest_file(uploaded_file) -> str:
     if suffix in {".xlsx", ".xls", ".csv"}:
         from src.ingest_table_rows import ingest_table_rows
         ingest_table_rows(str(dest), collection=QDRANT_COLLECTION)
+    elif suffix in {".pdf", ".docx", ".doc", ".pptx", ".ppt", ".md", ".png", ".jpg", ".jpeg"}:
+        # docx support: extend here if run_ingest does not yet handle .docx natively
+        from src.ingest import run_ingest
+        run_ingest(pdf_path=dest, collection=QDRANT_COLLECTION)
     else:
         from src.ingest import run_ingest
         run_ingest(pdf_path=dest, collection=QDRANT_COLLECTION)
@@ -76,6 +82,7 @@ def _ingest_file(uploaded_file) -> str:
 
 
 def _list_ingested_files() -> list[str]:
+    """Return sorted list of unique source filenames currently in the vector store."""
     from src.config import QDRANT_COLLECTION, QDRANT_URL
     from src.vector_store import scroll_all_payloads
     try:
@@ -92,6 +99,7 @@ def _list_ingested_files() -> list[str]:
 
 
 def _delete_file(file_name: str) -> None:
+    """Delete all vector store points associated with the given source filename."""
     from src.config import QDRANT_COLLECTION, QDRANT_URL
     from src.vector_store import delete_by_file
     delete_by_file(QDRANT_URL, QDRANT_COLLECTION, file_name)
@@ -117,18 +125,20 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "ingested" not in st.session_state:
     st.session_state.ingested = []
+if "last_chunks" not in st.session_state:
+    st.session_state.last_chunks = []  # list of chunk strings from last query
 
 
 # ── sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.title("🔥 RagForge")
-    st.caption("Self-hosted RAG — hybrid search · HyDE · reranking")
+    st.title("🗄️ Vault RAG")
+    st.caption("Business document Q&A — hybrid search · HyDE · reranking")
     st.divider()
 
     st.subheader("Add documents")
     uploaded = st.file_uploader(
-        "Upload PDF, Excel, CSV, or Markdown",
-        type=["pdf", "xlsx", "xls", "csv", "md"],
+        "Upload PDF, Excel, CSV, Markdown, Word, or images",
+        type=["pdf", "xlsx", "xls", "csv", "md", "docx", "png", "jpg", "jpeg"],
         accept_multiple_files=True,
         label_visibility="collapsed",
     )
@@ -151,6 +161,7 @@ with st.sidebar:
 
     @st.cache_data(ttl=30)
     def _cached_files():
+        """Cached wrapper around _list_ingested_files with 30-second TTL."""
         return _list_ingested_files()
 
     files = _cached_files()
@@ -173,7 +184,7 @@ with st.sidebar:
 
 
 # ── tabs ──────────────────────────────────────────────────────────────────────
-tab_chat, tab_inspect = st.tabs(["💬 Chat", "🔍 Document Inspector"])
+tab_chat, tab_chunks, tab_inspect = st.tabs(["💬 Chat", "🔎 Retrieved Chunks", "🔍 Document Inspector"])
 
 # ── chat tab ──────────────────────────────────────────────────────────────────
 with tab_chat:
@@ -189,14 +200,51 @@ with tab_chat:
         with st.chat_message("assistant"):
             with st.spinner("Thinking…"):
                 try:
+                    import re
+                    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+                    from src.rag_agent import SYSTEM_PROMPT
+
                     agent = _get_agent()
-                    from src.rag_agent import ask_agent
-                    answer = ask_agent(agent, prompt)
+                    en_query = prompt
+                    result = agent.invoke(
+                        {"messages": [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=en_query)]},
+                        config={"recursion_limit": 20},
+                    )
+                    messages = result.get("messages", [])
+
+                    # Extract retrieved chunks from all tool calls
+                    chunks = []
+                    for msg in messages:
+                        if isinstance(msg, ToolMessage):
+                            content = msg.content if isinstance(msg.content, str) else str(msg.content)
+                            parts = re.split(r"\n\n(?=\[\d+\])", content.strip())
+                            chunks.extend([p.strip() for p in parts if p.strip()])
+                    st.session_state.last_chunks = chunks
+
+                    # Final answer
+                    answer = "No answer generated."
+                    for msg in reversed(messages):
+                        if isinstance(msg, AIMessage) and not msg.tool_calls:
+                            text = re.sub(r"(?is)<think>.*?</think>\s*", "", str(msg.content)).strip()
+                            if text:
+                                answer = text
+                                break
                 except Exception as exc:
                     answer = f"Error: {exc}"
             st.markdown(answer)
 
         st.session_state.messages.append({"role": "assistant", "content": answer})
+
+
+# ── chunks tab ───────────────────────────────────────────────────────────────
+with tab_chunks:
+    if not st.session_state.last_chunks:
+        st.info("Ask a question in the Chat tab to see the retrieved chunks here.")
+    else:
+        st.caption(f"{len(st.session_state.last_chunks)} chunks retrieved")
+        for i, chunk in enumerate(st.session_state.last_chunks, start=1):
+            with st.expander(f"Chunk {i} — {chunk[:80]}…", expanded=i == 1):
+                st.markdown(chunk)
 
 
 # ── inspector tab ─────────────────────────────────────────────────────────────
@@ -223,7 +271,7 @@ with tab_inspect:
         else:
             import pypdfium2 as pdfium
             pdf_doc = pdfium.PdfDocument(str(pdf_path))
-            md_text = md_path.read_text(encoding="utf-8")
+            md_text = re.sub(r"\[TABLE_START\]\n?|\[TABLE_END\]\n?", "", md_path.read_text(encoding="utf-8"))
             page_sections = _split_markdown_by_page(md_text)
             n_pages = len(pdf_doc)
             has_markers = bool(page_sections)

@@ -473,12 +473,6 @@ def ingest_table_rows(
         for part_idx, window in enumerate(row_windows):
             chunk_text = sheet_to_chunk(file_name, sheet_name, qualified_headers, window, sheet_title, subheader_rows=subheader_rows)
 
-            # Translate to English if the chunk contains Greek text
-            from src.translator import is_greek, translate_to_english
-            from src.config import TRANSLATION_API_BASE, TRANSLATION_MODEL
-            if is_greek(chunk_text):
-                chunk_text = translate_to_english(chunk_text, TRANSLATION_API_BASE, TRANSLATION_MODEL)
-
             all_chunks.append({
                 "content": chunk_text,
                 "metadata": {
@@ -510,7 +504,7 @@ def ingest_table_rows(
                 "id": _point_id(file_name, sheet_name, f"sheet:{part_idx}"),
                 "vector": vector_field,
                 "payload": {
-                    "content": chunk_text,  # already translated to English
+                    "content": chunk_text,
                     "source_type": "table",
                     "metadata": {
                         "source_file": file_name,

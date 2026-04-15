@@ -1,0 +1,34 @@
+{
+  "total_pairs": 200,
+  "threshold": 0.7,
+  "metrics": {
+    "AnswerRelevancyMetric": {
+      "avg_score": 0.6881,
+      "pass_rate": 0.615,
+      "passed": 123,
+      "total": 200,
+      "passed_threshold": false
+    },
+    "FaithfulnessMetric": {
+      "avg_score": 0.463,
+      "pass_rate": 0.41,
+      "passed": 82,
+      "total": 200,
+      "passed_threshold": false
+    },
+    "ContextualRecallMetric": {
+      "avg_score": 0.795,
+      "pass_rate": 0.795,
+      "passed": 159,
+      "total": 200,
+      "passed_threshold": true
+    },
+    "ContextualPrecisionMetric": {
+      "avg_score": 0.7289,
+      "pass_rate": 0.7,
+      "passed": 140,
+      "total": 200,
+      "passed_threshold": true
+    }
+  }
+}

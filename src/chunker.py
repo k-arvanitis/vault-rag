@@ -60,6 +60,78 @@ class Chunk:
         return len(tokenizer.encode(self.content))
 
 
+_TABLE_ROWS_PER_CHUNK = int(os.getenv("TABLE_ROWS_PER_CHUNK", "20"))
+
+
+def _parse_ascii_grid(table_text: str) -> tuple[list[str], list[list[str]]]:
+    """Parse an ASCII +---+ grid table into (headers, data_rows).
+
+    Returns headers as a list of column names and data_rows as a list of
+    row value lists. Separator lines (+---+) and empty lines are skipped.
+    """
+    headers: list[str] = []
+    rows: list[list[str]] = []
+    past_header = False
+
+    for line in table_text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("+"):
+            if "=" in line:
+                past_header = True
+            continue
+        if line.startswith("|"):
+            cells = [c.strip() for c in line.strip("|").split("|")]
+            if not past_header and not headers:
+                headers = cells
+            elif past_header:
+                rows.append(cells)
+    return headers, rows
+
+
+def _ascii_table_to_chunks(
+    table_block: str,
+    metadata: dict,
+    rows_per_chunk: int = _TABLE_ROWS_PER_CHUNK,
+) -> list["Chunk"]:
+    """Convert a [TABLE_START]...[TABLE_END] block into row-sentence chunks.
+
+    Each chunk contains up to `rows_per_chunk` rows formatted as sentences,
+    prefixed with the table title and part number so chunks are self-contained.
+    """
+    inner = re.sub(r"\[TABLE_START\]|\[TABLE_END\]", "", table_block).strip()
+    # Strip ```text fences if present
+    inner = re.sub(r"^```\w*\n?", "", inner, flags=re.MULTILINE)
+    inner = re.sub(r"```\s*$", "", inner, flags=re.MULTILINE).strip()
+
+    headers, rows = _parse_ascii_grid(inner)
+    if not headers or not rows:
+        # Unparseable — fall back to storing the whole block as-is
+        return [Chunk(content=table_block.strip(), metadata=dict(metadata))]
+
+    col_names = " | ".join(headers)
+    total_parts = max(1, (len(rows) + rows_per_chunk - 1) // rows_per_chunk)
+    title = metadata.get("subsection") or metadata.get("section") or metadata.get("title") or "Table"
+    chunks: list[Chunk] = []
+
+    for part_idx, start in enumerate(range(0, len(rows), rows_per_chunk), start=1):
+        batch = rows[start: start + rows_per_chunk]
+        sentences = []
+        for row in batch:
+            pairs = [f"{h}: {v}" for h, v in zip(headers, row) if v]
+            if pairs:
+                sentences.append(" | ".join(pairs))
+
+        header_line = f"Table: {title} | Part {part_idx} of {total_parts} | Columns: {col_names}"
+        content = header_line + "\n\n" + "\n".join(sentences)
+        chunk_meta = dict(metadata)
+        chunk_meta["chunk_type"] = "pdf_table_rows"
+        chunk_meta["table_part"] = part_idx
+        chunk_meta["table_total_parts"] = total_parts
+        chunks.append(Chunk(content=content, metadata=chunk_meta))
+
+    return chunks
+
+
 def contextualize_chunk(client: OpenAI, model_name: str, doc_context: str, chunk_content: str) -> str:
     max_output_tokens = int(os.getenv("CONTEXT_ENRICH_MAX_OUTPUT_TOKENS", "100"))
     heading_match = re.search(r"(?m)^#{1,3}\s+(.+?)\s*$", chunk_content)
@@ -133,47 +205,22 @@ def chunk_markdown(
             continue
 
         metadata = dict(section.metadata or {})
-        if "[TABLE_START]" in content:
-            parts = re.split(r"(\[TABLE_START\].*?\[TABLE_END\])", content, flags=re.DOTALL)
-            for part in parts:
-                part = part.strip()
-                if not part:
-                    continue
-                if "[TABLE_START]" in part:
-                    chunks.append(Chunk(content=part, metadata=dict(metadata)))
-                    continue
-
-                token_count = len(tokenizer.encode(part))
-                if token_count <= max_tokens:
-                    chunks.append(Chunk(content=part, metadata=dict(metadata)))
-                else:
-                    sub_docs = text_splitter.create_documents([part], metadatas=[metadata])
-                    for sub_doc in sub_docs:
-                        sub_content = sub_doc.page_content.strip()
-                        if sub_content:
-                            chunks.append(Chunk(content=sub_content, metadata=dict(sub_doc.metadata or {})))
-            continue
-
         token_count = len(tokenizer.encode(content))
         if token_count <= max_tokens:
             chunks.append(Chunk(content=content, metadata=dict(metadata)))
-            continue
-
-        sub_docs = text_splitter.create_documents([content], metadatas=[metadata])
-        for sub_doc in sub_docs:
-            sub_content = sub_doc.page_content.strip()
-            if sub_content:
-                chunks.append(Chunk(content=sub_content, metadata=dict(sub_doc.metadata or {})))
+        else:
+            sub_docs = text_splitter.create_documents([content], metadatas=[metadata])
+            for sub_doc in sub_docs:
+                sub_content = sub_doc.page_content.strip()
+                if sub_content:
+                    chunks.append(Chunk(content=sub_content, metadata=dict(sub_doc.metadata or {})))
 
     compact_chunks: list[Chunk] = []
     for chunk in chunks:
         chunk_tokens = len(tokenizer.encode(chunk.content))
-        has_table = "[TABLE_START]" in chunk.content
-
         if (
             compact_chunks
             and chunk_tokens < min_tokens
-            and not has_table
         ):
             compact_chunks[-1].content += "\n\n" + chunk.content
         else:

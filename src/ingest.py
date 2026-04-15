@@ -12,7 +12,7 @@ from pypdf import PdfReader
 from src import chunker as chunker_module
 from src.config import (
     QDRANT_URL, QDRANT_COLLECTION, OLLAMA_API_BASE, OLLAMA_EMBED_MODEL,
-    OCR_API_BASE, OCR_MODEL, TRANSLATION_API_BASE, TRANSLATION_MODEL,
+    OCR_API_BASE, OCR_MODEL,
 )
 import os
 _IMAGE_ANALYSIS_API_BASE = os.getenv("IMAGE_ANALYSIS_API_BASE", os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11434"))
@@ -21,7 +21,6 @@ from src.embedder import embed_chunks_file
 from src.ingest_table_rows import ingest_table_rows
 from src.parser.input_utils import resolve_to_pdf
 from src.parser.lightonocr_parser import pdf_to_markdown
-from src.translator import is_greek, translate_to_english
 from src.vector_store import delete_by_file, ingest_embeddings
 
 REPO_ROOT = chunker_module.REPO_ROOT
@@ -123,15 +122,16 @@ def _run_ingest_pdf(
         enabled=verbose,
     )
 
-    # 1b) Translate markdown to English if Greek, save to data/output/translated/
+    # 1b) Save processed markdown to data/output/translated/ (translation removed)
     translated_dir = REPO_ROOT / "data" / "output" / "translated"
     translated_dir.mkdir(parents=True, exist_ok=True)
     translated_md_path = translated_dir / md_path.name
-    if is_greek(markdown):
-        _log("Greek content detected — translating to English", step=1, enabled=verbose)
-        markdown = translate_to_english(markdown, TRANSLATION_API_BASE, TRANSLATION_MODEL)
-        _log(f"Translated markdown saved → {translated_md_path}", step=1, enabled=verbose)
     translated_md_path.write_text(markdown, encoding="utf-8")
+
+    # 1c) Convert ASCII grid tables to row sentences, save to data/output/processed/
+    from src.table_processor import process_and_save as _process_md
+    processed_dir = REPO_ROOT / "data" / "output" / "processed"
+    markdown, _ = _process_md(markdown, md_path.stem, processed_dir)
 
     # 2) markdown -> chunks JSON
     _log("Chunk markdown -> chunks JSON", step=2, enabled=verbose)

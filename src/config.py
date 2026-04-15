@@ -12,25 +12,23 @@ import os
 OLLAMA_API_BASE: str = os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11434")
 
 # Embedding endpoint — defaults to Ollama, but can point to scripts/embedding_server.py
-# for models not available in Ollama (e.g. intfloat/multilingual-e5-large).
+# for models not available in Ollama.
 EMBED_API_BASE: str = os.getenv("EMBED_API_BASE", os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11435"))
-OLLAMA_EMBED_MODEL: str = os.getenv("OLLAMA_EMBED_MODEL", "bge-m3:latest")
+OLLAMA_EMBED_MODEL: str = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 
 QDRANT_URL: str = os.getenv("QDRANT_URL", "http://localhost:7333")
 QDRANT_COLLECTION: str = os.getenv("QDRANT_COLLECTION", "documents_chunks")
 
-GENERATION_API_BASE: str = os.getenv("GENERATION_API_BASE", "http://127.0.0.1:8003")
-GENERATION_MODEL: str = os.getenv("GENERATION_MODEL", "Qwen/Qwen3-8B")
+GENERATION_API_BASE: str = os.getenv("GENERATION_API_BASE", "https://api.groq.com/openai/v1")
+GENERATION_MODEL: str = os.getenv("GENERATION_MODEL", "llama-3.3-70b-versatile")
 
-# Translation model — defaults to generation model/endpoint, but can point to
-# a lighter Ollama model during ingestion when vLLM is not running.
-TRANSLATION_API_BASE: str = os.getenv("TRANSLATION_API_BASE", GENERATION_API_BASE)
-TRANSLATION_MODEL: str = os.getenv("TRANSLATION_MODEL", GENERATION_MODEL)
+# Required — get a free key at console.groq.com
+GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
 
 OCR_API_BASE: str = os.getenv("OCR_API_BASE", "http://127.0.0.1:8002")
 OCR_MODEL: str = os.getenv("OCR_MODEL", "lightonocr-2-1b-ocr-soup")
 
-RERANKER_MODEL: str = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
+RERANKER_MODEL: str = os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
 RERANKER_DEVICE: str = os.getenv("RERANKER_DEVICE", "cpu")
 EMBED_DEVICE: str = os.getenv("EMBED_DEVICE", "cpu")
 
