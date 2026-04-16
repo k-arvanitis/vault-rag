@@ -24,12 +24,16 @@ Under the hood:
 
 - **Any file type** — PDFs (including scanned), Excel, CSV, Word (.docx), Markdown, and images are all ingested into the same unified search index.
 - **LightOn OCR** converts scanned PDFs and complex layouts into clean Markdown before indexing, preserving tables and figures.
+- **Multi-level table repair** — research papers and reports often contain tables with two-row headers (group names + sub-column metrics like R@1/R@5/R@10). At ingest time, Vault RAG programmatically detects and flattens these into a single correct header row (e.g. `KaLMv2 + Qwen3-235B R@1`), handling both HTML tables (OCR output) and LaTeX-encoded `$\text{...}$` table blocks. Column names are derived structurally — no LLM guessing — so alignment is always correct.
+- **PDF text-layer recovery** — when OCR misses values in the rightmost column of wide tables (a common failure mode), the pipeline falls back to the PDF's embedded text layer to recover those values, splitting concatenated decimals (`2.9524.141` → `2.952`, `4.141`) using fixed-decimal-place matching.
+- **Figure/image analysis** — pages containing figures, charts, or diagrams are sent to a Groq vision model (`llama-4-scout`) which writes a description of each visual element inline in the Markdown, so figure content is searchable.
+- **Document-level summary chunk** — at ingest time, a 3–5 sentence summary of the whole document is generated and stored as a dedicated chunk. General questions like "what is this paper about?" retrieve the summary directly without scanning all content. The summary is also shown in the Document Inspector UI.
 - **Contextual retrieval** — after splitting a document into chunks, a fast LLM (`llama-3.1-8b-instant` via Groq) writes a one-sentence summary for each chunk describing its topic, entities, and purpose. This summary is prepended to the chunk text before embedding. The result is that each vector in the index carries both the context ("this chunk is about Q3 sales in the EMEA region") and the content — significantly improving retrieval accuracy on short or ambiguous queries.
-- **Hybrid search** combines dense semantic vectors (nomic-embed-text) with sparse BM25-style keyword vectors, fused via Reciprocal Rank Fusion (RRF) in Qdrant, so both conceptual and exact-match queries work well.
+- **Hybrid search** combines dense semantic vectors (bge-m3) with sparse BM25-style keyword vectors, fused via Reciprocal Rank Fusion (RRF) in Qdrant, so both conceptual and exact-match queries work well.
 - **HyDE query expansion** generates a hypothetical answer to the query and embeds that instead of the raw question, improving recall on short or vague questions.
 - **Cross-encoder reranking** re-scores the top-100 candidates with a dedicated reranker to surface the most relevant chunks before passing them to the LLM.
 - **ReAct agent** (LangGraph) can issue multiple search calls, compare results, and reason step-by-step before writing the final answer — useful for multi-part or comparative questions.
-- **Document inspector** shows the original PDF page side-by-side with the parsed Markdown so you can verify extraction quality.
+- **Document inspector** shows the original PDF page side-by-side with the parsed Markdown, including a document summary panel and correctly rendered tables.
 
 ---
 
@@ -107,7 +111,7 @@ PDF tables detected during OCR are stored as a separate `[TABLE_START]...[TABLE_
                                            ▼
                           ┌───────────────────────────────────┐
                           │  Embedder (local Ollama)          │
-                          │  nomic-embed-text → dense vector  │
+                          │  bge-m3 → dense vector  │
                           │  BM25 (fastembed) → sparse vector │
                           └────────────────┬──────────────────┘
                                            │
@@ -157,7 +161,7 @@ PDF tables detected during OCR are stored as a separate `[TABLE_START]...[TABLE_
 |-----------|-----------|-----|
 | OCR / parsing | LightOn OCR (local vLLM) | State-of-the-art vision-language model for scanned PDFs; runs locally so raw document content never leaves the machine |
 | Contextual summaries | llama-3.1-8b-instant (Groq) | Fast, cheap model writes one sentence per chunk at ingest time; improves retrieval without slowing queries |
-| Embeddings | nomic-embed-text (Ollama) | High-quality English embedding model; fast on CPU; runs locally so document text stays on-prem |
+| Embeddings | bge-m3 (Ollama) | High-quality English embedding model; fast on CPU; runs locally so document text stays on-prem |
 | Vector database | Qdrant | Native hybrid search (dense + sparse) with RRF fusion in a single query; straightforward Docker deployment |
 | Reranker | cross-encoder/ms-marco-MiniLM-L-6-v2 | Fast cross-encoder trained on MS MARCO; dramatically improves precision by comparing query and chunk together |
 | Generation | llama-3.3-70b-versatile (Groq) | Best-in-class open LLM for complex reasoning; Groq free tier has low latency and no GPU required |
@@ -208,7 +212,7 @@ cp .env.example .env        # set HUGGING_FACE_HUB_TOKEN
 cd ../..
 
 # Pull embedding model
-ollama pull nomic-embed-text
+ollama pull bge-m3
 
 # Start the app
 uv run streamlit run app.py
@@ -228,7 +232,7 @@ All variables can be set in `.env`. See `.env.example` for a full annotated list
 | `CHUNK_LLM_API_BASE` | `https://api.groq.com/openai/v1` | Endpoint for contextual summary LLM (ingest only) |
 | `CHUNK_LLM_MODEL` | `llama-3.1-8b-instant` | Model used to write one-sentence context per chunk |
 | `OLLAMA_API_BASE` | `http://127.0.0.1:11434` | Ollama server URL |
-| `OLLAMA_EMBED_MODEL` | `nomic-embed-text` | Embedding model (Ollama) |
+| `OLLAMA_EMBED_MODEL` | `bge-m3` | Embedding model (Ollama) |
 | `QDRANT_URL` | `http://localhost:7333` | Qdrant REST endpoint |
 | `QDRANT_COLLECTION` | `documents_chunks` | Qdrant collection name |
 | `OCR_API_BASE` | `http://127.0.0.1:8002` | LightOn OCR vLLM endpoint |
@@ -269,7 +273,7 @@ uv run python eval/evaluate_rag.py
 |---|---|---|---|
 | LightOn OCR | vLLM server not running | Ingest crashes with `Connection refused` on port 8002 | `cd docker/ingestion-stack && ./up.sh` |
 | Qdrant | Container not running | All queries return empty results | `docker compose up -d qdrant` |
-| Ollama / nomic-embed-text | Model not pulled | Embedding step fails | `ollama pull nomic-embed-text` |
+| Ollama / bge-m3 | Model not pulled | Embedding step fails | `ollama pull bge-m3` |
 | Groq API | Missing or invalid `GROQ_API_KEY` | Generation returns 401 | Set `GROQ_API_KEY` in `.env` |
 | Groq API | Rate limit hit | Slow or failed responses | Retry or use a local vLLM via `GENERATION_API_BASE` |
 | Reranker | Model not downloaded | First query is slow (~30s download) | Pre-download: `uv run python -c "from sentence_transformers import CrossEncoder; CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"` |
