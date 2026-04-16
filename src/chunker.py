@@ -107,8 +107,33 @@ def _ascii_table_to_chunks(
     return chunks
 
 
+def generate_document_summary(client: OpenAI, model_name: str, markdown: str) -> str:
+    """Generate a 3-5 sentence document-level summary for the whole document."""
+    max_input_chars = int(os.getenv("SUMMARY_MAX_INPUT_CHARS", "6000"))
+    truncated = markdown[:max_input_chars]
+    prompt = (
+        "Write a concise 3-5 sentence summary of this document. "
+        "Cover the main topic, key contributions or findings, and intended audience. "
+        "Return only the summary, no preamble.\n\n"
+        f"Document:\n{truncated}"
+    )
+    try:
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            max_tokens=300,
+        )
+        return (response.choices[0].message.content or "").strip()
+    except Exception as e:
+        return f"Summary unavailable: {e}"
+
+
 def contextualize_chunk(client: OpenAI, model_name: str, doc_context: str, chunk_content: str) -> str:
     max_output_tokens = int(os.getenv("CONTEXT_ENRICH_MAX_OUTPUT_TOKENS", "100"))
+    max_input_chars = int(os.getenv("CONTEXT_ENRICH_MAX_INPUT_CHARS", "3000"))
+    chunk_content = chunk_content[:max_input_chars]
+
     heading_match = re.search(r"(?m)^#{1,3}\s+(.+?)\s*$", chunk_content)
     table_match = re.search(r"(?i)\btable\s+\d+[^\n]*", chunk_content)
     heading_hint = (heading_match.group(1).strip() if heading_match else "none")
@@ -152,7 +177,7 @@ def chunk_markdown(
     file_name: str = "unknown",
     source_file: str = "",
 ) -> list[Chunk]:
-    load_dotenv()
+    load_dotenv(override=True)
 
     api_base = os.getenv("CHUNK_LLM_API_BASE", CHUNK_LLM_API_BASE)
     model_name = os.getenv("CHUNK_LLM_MODEL", CHUNK_LLM_MODEL)
@@ -240,6 +265,25 @@ def chunk_markdown(
             chunk.vector_text = f"CONTEXT: {context}\n\nCONTENT:\n{chunk.content}"
             if verbose and (i == 1 or i == total_chunks or i % 5 == 0):
                 _debug(f"Enriched {i}/{total_chunks} chunks")
+
+        # Document-level summary — prepended as a dedicated chunk so general
+        # questions ("what is this paper about?") hit it directly in retrieval.
+        if verbose:
+            _debug("Generating document summary chunk")
+        doc_summary = generate_document_summary(client, model_name, markdown)
+        summary_chunk = Chunk(
+            content=f"## Document Summary\n\n{doc_summary}",
+            metadata={
+                "chunk_type": "document_summary",
+                "file_name": file_name,
+                "source_file": source_file,
+                "chunk_index": -1,
+                "chunk_size_chars": len(doc_summary),
+                "token_count": len(tokenizer.encode(doc_summary)),
+            },
+        )
+        summary_chunk.vector_text = f"DOCUMENT SUMMARY:\n{doc_summary}"
+        compact_chunks.insert(0, summary_chunk)
 
     output_chunks = []
     for i, chunk in enumerate(compact_chunks):

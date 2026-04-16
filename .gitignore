@@ -23,3 +23,5 @@ data/output/*
 !data/output/.gitkeep
 
 CLAUDE.md
+
+vault-rag.code-workspace

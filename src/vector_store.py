@@ -136,6 +136,27 @@ def scroll_all_payloads(url: str, collection: str) -> list[dict]:
     return payloads
 
 
+def get_document_summary(url: str, collection: str, file_name: str) -> str | None:
+    """Return the document summary content for a given file, or None if not found."""
+    base = url.rstrip("/")
+    try:
+        result = _request("POST", f"{base}/collections/{collection}/points/scroll", {
+            "filter": {"must": [
+                {"key": "metadata.chunk_type", "match": {"value": "document_summary"}},
+                {"key": "metadata.file_name", "match": {"value": file_name}},
+            ]},
+            "limit": 1,
+            "with_payload": True,
+            "with_vector": False,
+        })
+    except RuntimeError:
+        return None
+    points = result.get("result", {}).get("points", [])
+    if not points:
+        return None
+    return points[0].get("payload", {}).get("content") or None
+
+
 def delete_by_file(url: str, collection: str, file_name: str) -> int:
     """Delete all PDF chunk points for a given file_name. Returns deleted count."""
     base = url.rstrip("/")

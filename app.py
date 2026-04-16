@@ -15,7 +15,7 @@ from pathlib import Path
 import streamlit as st
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 REPO_ROOT = Path(__file__).resolve().parent
 INPUT_DIR = REPO_ROOT / "data" / "input"
@@ -263,6 +263,15 @@ with tab_inspect:
         pdf_path = INPUT_DIR / pdf_name
         md_path = TRANSLATED_DIR / (Path(pdf_name).stem + ".md")
 
+        # Show document summary if available
+        from src.config import QDRANT_COLLECTION, QDRANT_URL
+        from src.vector_store import get_document_summary
+        md_stem = Path(pdf_name).stem + ".md"
+        summary = get_document_summary(QDRANT_URL, QDRANT_COLLECTION, md_stem)
+        if summary:
+            with st.expander("Document Summary", expanded=True):
+                st.markdown(summary.replace("## Document Summary\n\n", ""))
+
         if not pdf_path.exists():
             st.warning("PDF not available locally — it was ingested before file saving was enabled.")
         elif not md_path.exists():
@@ -289,7 +298,7 @@ with tab_inspect:
                     with col_md:
                         st.caption(f"Parsed — page {page_num}")
                         section = page_sections.get(page_num, "_No content for this page._")
-                        st.markdown(section)
+                        st.markdown(section, unsafe_allow_html=True)
                     st.divider()
             else:
                 # Fallback: all pages left, full markdown right
@@ -301,4 +310,4 @@ with tab_inspect:
                         st.image(bitmap.to_pil(), caption=f"Page {i+1}", use_container_width=True)
                 with col_md:
                     st.subheader("Parsed & enhanced markdown")
-                    st.markdown(md_text)
+                    st.markdown(md_text, unsafe_allow_html=True)

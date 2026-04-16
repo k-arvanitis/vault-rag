@@ -6,6 +6,9 @@ from __future__ import annotations
 
 import os
 
+from dotenv import load_dotenv
+load_dotenv(override=True)
+
 # ---------------------------------------------------------------------------
 # Service endpoints
 # ---------------------------------------------------------------------------
@@ -14,7 +17,7 @@ OLLAMA_API_BASE: str = os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11434")
 # Embedding endpoint — defaults to Ollama, but can point to scripts/embedding_server.py
 # for models not available in Ollama.
 EMBED_API_BASE: str = os.getenv("EMBED_API_BASE", os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11435"))
-OLLAMA_EMBED_MODEL: str = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+OLLAMA_EMBED_MODEL: str = os.getenv("OLLAMA_EMBED_MODEL", "bge-m3")
 
 QDRANT_URL: str = os.getenv("QDRANT_URL", "http://localhost:7333")
 QDRANT_COLLECTION: str = os.getenv("QDRANT_COLLECTION", "documents_chunks")

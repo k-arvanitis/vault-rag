@@ -284,7 +284,7 @@ def build_rag_agent(
     llm = ChatOpenAI(
         model=model_name,
         base_url=_to_openai_base(generation_api_base),
-        api_key=os.getenv("OPENAI_API_KEY", "EMPTY"),
+        api_key=os.getenv("GROQ_API_KEY") or os.getenv("OPENAI_API_KEY", "EMPTY"),
         temperature=0,
         max_tokens=1024,
     )

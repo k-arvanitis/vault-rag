@@ -29,11 +29,14 @@ DEFAULT_OUTPUT_DIR = REPO_ROOT / "data/output/lightonocr"
 
 DEFAULT_ENDPOINT = "http://127.0.0.1:8002/v1/chat/completions"
 DEFAULT_MODEL = "lightonocr-2-1b-ocr-soup"
-DEFAULT_IMAGE_ANALYSIS_ENDPOINT = (
-    f"{os.getenv('IMAGE_ANALYSIS_API_BASE', os.getenv('OLLAMA_API_BASE', 'http://127.0.0.1:11434')).rstrip('/')}"
-    "/v1/chat/completions"
-)
-DEFAULT_IMAGE_ANALYSIS_MODEL = os.getenv("IMAGE_ANALYSIS_MODEL", "qwen2.5vl:latest")
+def _build_image_analysis_endpoint() -> str:
+    base = os.getenv("IMAGE_ANALYSIS_API_BASE", os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11434")).rstrip("/")
+    if not base.endswith("/v1"):
+        base = f"{base}/v1"
+    return f"{base}/chat/completions"
+
+DEFAULT_IMAGE_ANALYSIS_ENDPOINT = _build_image_analysis_endpoint()
+DEFAULT_IMAGE_ANALYSIS_MODEL = os.getenv("IMAGE_ANALYSIS_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
 DEFAULT_PROMPT = (
     "Transcribe this page into Markdown. If there are images, figures, or diagrams, "
     "provide a brief description of what they contain within the text flow."
@@ -48,13 +51,20 @@ IMG_ALT_RE = re.compile(r"""(?is)\balt\s*=\s*(?:"(?P<d>[^"]*)"|'(?P<s>[^']*)')""
 IMAGE_MARKER_RE = re.compile(r"\[IMAGE\](?:\s+[^\n]+)?")
 
 
-def _image_to_data_url(image: Image.Image) -> str:
+def _image_to_data_url(image: Image.Image, max_side: int = 1568) -> str:
+    """Encode image as base64 JPEG data URL, resizing to max_side if needed.
+
+    Groq vision models require images ≤ 1568px on the longest side.
+    JPEG is used instead of PNG to keep payload size small.
+    """
+    w, h = image.size
+    if max(w, h) > max_side:
+        scale = max_side / max(w, h)
+        image = image.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
     buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
-    img_bytes = buffer.getvalue()
-    mime = mimetypes.guess_type("x.png")[0] or "image/png"
-    b64 = base64.b64encode(img_bytes).decode("utf-8")
-    return f"data:{mime};base64,{b64}"
+    image.save(buffer, format="JPEG", quality=85)
+    b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+    return f"data:image/jpeg;base64,{b64}"
 
 
 def _post_process_markdown(
@@ -92,6 +102,7 @@ def _analyze_page_images_with_qwen(
     model_name: str,
     timeout_sec: int = 120,
     prompt_template: str = DEFAULT_IMAGE_ANALYSIS_PROMPT,
+    api_key: str | None = None,
 ) -> list[str]:
     if marker_count <= 0:
         return []
@@ -112,10 +123,14 @@ def _analyze_page_images_with_qwen(
         "max_tokens": 1024,
     }
 
-    response = requests.post(endpoint, json=payload, timeout=timeout_sec)
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    response = requests.post(endpoint, json=payload, headers=headers, timeout=timeout_sec)
     response.raise_for_status()
     content = response.json()["choices"][0]["message"]["content"]
     text = str(content).strip()
+    # Strip markdown code fences (model may wrap JSON in ```json ... ```)
+    text = re.sub(r"^\s*```(?:json)?\s*\n?", "", text)
+    text = re.sub(r"\n?\s*```\s*$", "", text).strip()
 
     try:
         parsed = json.loads(text)
@@ -194,6 +209,7 @@ def pdf_to_markdown(
     image_analysis_endpoint: str = DEFAULT_IMAGE_ANALYSIS_ENDPOINT,
     image_analysis_model: str = DEFAULT_IMAGE_ANALYSIS_MODEL,
     image_analysis_timeout_sec: int = 120,
+    image_analysis_api_key: str | None = None,
 ) -> Path:
     pdf_path = resolve_to_pdf(pdf_path)
     output_dir = Path(output_dir)
@@ -229,6 +245,7 @@ def pdf_to_markdown(
                 endpoint=image_analysis_endpoint,
                 model_name=image_analysis_model,
                 timeout_sec=image_analysis_timeout_sec,
+                api_key=image_analysis_api_key,
             )
             page_md = _inject_image_blocks(page_md, descriptions)
 
@@ -257,6 +274,7 @@ def png_to_markdown(
     image_analysis_endpoint: str = DEFAULT_IMAGE_ANALYSIS_ENDPOINT,
     image_analysis_model: str = DEFAULT_IMAGE_ANALYSIS_MODEL,
     image_analysis_timeout_sec: int = 120,
+    image_analysis_api_key: str | None = None,
 ) -> Path:
     image_path = Path(image_path)
     output_dir = Path(output_dir)
@@ -288,6 +306,7 @@ def png_to_markdown(
             endpoint=image_analysis_endpoint,
             model_name=image_analysis_model,
             timeout_sec=image_analysis_timeout_sec,
+            api_key=image_analysis_api_key,
         )
         markdown_content = _inject_image_blocks(markdown_content, descriptions)
 
