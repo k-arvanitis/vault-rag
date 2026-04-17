@@ -47,10 +47,9 @@ It searches both unstructured documents (PDFs, reports) and structured tables (C
 
 Rules:
 - Always call search_knowledge_base with a focused, specific sub-question.
-- The knowledge base contains documents in both Greek and English. Always search in BOTH languages — first in the query language, then in Greek (or English) if the first attempt returns no results.
 - If the answer requires comparing two subjects or two time periods, call the tool twice — once per subject or year (e.g. search "X in 2019" then "X in 2023" separately).
 - If the question asks about multiple distinct entities, sectors, or categories (e.g. "military, academic, commercial, and medical"), call the tool once per entity — do not try to cover all of them in a single search.
-- If the tool returns no useful results after trying both languages, say so clearly rather than guessing.
+- If the tool returns no useful results, say so clearly rather than guessing.
 
 When answering:
 - Structure your answer to match the scope of the question. If the question has multiple parts or asks about multiple entities, address each one explicitly.
@@ -97,14 +96,6 @@ def _hyde(query: str, api_base: str, model_name: str) -> str:
     )
 
 
-def _translate_to_greek(query: str, api_base: str, model_name: str) -> str:
-    """Translate query to Greek for cross-lingual retrieval."""
-    return _llm_call(
-        f"/no_think Translate the following question to Greek. Output only the translation, nothing else.\n\nQuestion: {query}",
-        api_base, model_name, max_tokens=64, temperature=0.0,
-    )
-
-
 def _make_unified_tool(
     qdrant_url: str,
     collection: str,
@@ -114,7 +105,6 @@ def _make_unified_tool(
     generation_api_base: str,
     generation_model: str,
     use_hyde: bool = True,
-    use_bilingual: bool = True,
 ) -> tuple[StructuredTool, dict]:
     class SearchInput(BaseModel):
         query: str
@@ -155,29 +145,6 @@ def _make_unified_tool(
             use_qdrant=True,
             filter_token=filter_token,
         )
-
-        # Retrieve with a Greek translation and merge results (bilingual retrieval)
-        if use_bilingual:
-            try:
-                greek_query = _translate_to_greek(query, api_base, generation_model)
-                greek_embed_query = _hyde(greek_query, api_base, generation_model) if use_hyde else greek_query
-                greek_hits = retrieve(
-                    query=greek_embed_query,
-                    top_k=retrieval_top_k,
-                    qdrant_url=qdrant_url,
-                    collection=collection,
-                    use_qdrant=True,
-                    filter_token=filter_token,
-                )
-                # Merge: keep best score per chunk ID
-                seen: dict[Any, dict] = {h["id"]: h for h in hits}
-                for h in greek_hits:
-                    hid = h["id"]
-                    if hid not in seen or h["score"] > seen[hid]["score"]:
-                        seen[hid] = h
-                hits = sorted(seen.values(), key=lambda x: x["score"], reverse=True)[:retrieval_top_k]
-            except Exception:
-                pass  # translation/retrieval failure: continue with original hits only
 
         if not hits:
             return None
@@ -265,7 +232,6 @@ def build_rag_agent(
     model_name: str = GENERATION_MODEL,
     generation_api_base: str = GENERATION_API_BASE,
     use_hyde: bool = True,
-    use_bilingual: bool = False,  # disabled: ask_agent_multilingual handles translation upstream
 ) -> Any:
     ranker: BGEReranker | QwenReranker | None = None
     if reranker_model_name:
@@ -298,7 +264,6 @@ def build_rag_agent(
         generation_api_base=generation_api_base,
         generation_model=model_name,
         use_hyde=use_hyde,
-        use_bilingual=use_bilingual,
     )
 
     agent = create_react_agent(model=llm, tools=[tool])
@@ -344,24 +309,8 @@ def _get_langfuse():
 
 
 def ask_agent(agent: Any, query: str, show_tool_uses: bool = False) -> str:
-    """Run the RAG agent on a query.
-
-    Pipeline:
-        query → [translate to EN if Greek] → agent → [translate back if Greek] → answer
-
-    Greek codes, legal references, and acronyms are preserved verbatim by the
-    translation prompts, so identifiers like ΚΥΑ 8668/2007 survive intact.
-    """
+    """Run the RAG agent on a query and return the final answer."""
     from openai import BadRequestError
-    from src.translator import is_greek, translate_to_english, translate_to_greek
-
-    input_is_greek = is_greek(query)
-    if input_is_greek:
-        print("[TRANSLATOR] Greek query detected — translating to English.")
-        en_query = translate_to_english(query, GENERATION_API_BASE, GENERATION_MODEL)
-        print(f"[TRANSLATOR] EN query: {en_query}")
-    else:
-        en_query = query
 
     lf = _get_langfuse()
     trace = lf.trace(name="rag-agent", input=query) if lf else None
@@ -369,7 +318,7 @@ def ask_agent(agent: Any, query: str, show_tool_uses: bool = False) -> str:
     _invoke_input = {
         "messages": [
             SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content=en_query),
+            HumanMessage(content=query),
         ]
     }
     _invoke_config = {"recursion_limit": 20}
@@ -418,10 +367,6 @@ def ask_agent(agent: Any, query: str, show_tool_uses: bool = False) -> str:
             text = str(msg.content).strip()
             answer = re.sub(r"(?is)<think>.*?</think>\s*", "", text).strip()
             break
-
-    if input_is_greek:
-        print("[TRANSLATOR] Translating answer back to Greek.")
-        answer = translate_to_greek(answer, GENERATION_API_BASE, GENERATION_MODEL)
 
     if trace is not None:
         trace.update(output=answer)
@@ -514,7 +459,6 @@ def main() -> None:
     parser.add_argument("--show-tool-uses", action="store_true")
     parser.add_argument("--stream", action="store_true", help="Stream the answer token-by-token.")
     parser.add_argument("--no-hyde", action="store_true", help="Disable HyDE query expansion.")
-    parser.add_argument("--no-bilingual", action="store_true", help="Disable Greek bilingual retrieval.")
     args = parser.parse_args()
 
     agent = build_rag_agent(
@@ -526,7 +470,6 @@ def main() -> None:
         model_name=args.model_name,
         generation_api_base=args.generation_api_base,
         use_hyde=not args.no_hyde,
-        use_bilingual=not args.no_bilingual,
     )
 
     if args.stream:

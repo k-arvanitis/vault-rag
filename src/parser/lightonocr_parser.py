@@ -44,7 +44,13 @@ DEFAULT_PROMPT = (
 DEFAULT_IMAGE_ANALYSIS_PROMPT = (
     "You are analyzing a document page image. The OCR output detected visual elements. "
     "Return JSON only with key 'descriptions' containing exactly {count} strings in reading order. "
-    "Each string should describe one visual element (logo, icon, chart, table, figure) and include key details."
+    "Each string should describe one visual element. Follow these rules per element type:\n"
+    "- Chart/graph/plot: state the chart type, axes and their ranges, all series/models shown, "
+    "which series performs best and at what value, notable trends or crossover points, and one key takeaway.\n"
+    "- Table: state the columns, value ranges, and which row/column stands out.\n"
+    "- Diagram/figure: describe the structure and what it illustrates.\n"
+    "- Logo/icon: name or describe it briefly.\n"
+    "Be specific with numbers where readable. Do not use generic filler like 'the graph shows performance'."
 )
 HTML_IMG_RE = re.compile(r"(?is)<img\b(?P<attrs>[^>]*)>")
 IMG_ALT_RE = re.compile(r"""(?is)\balt\s*=\s*(?:"(?P<d>[^"]*)"|'(?P<s>[^']*)')""")

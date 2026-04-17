@@ -648,13 +648,7 @@ def _run_ingest_pdf(
     markdown = _convert_latex_tables_in_markdown(markdown, verbose=verbose)
     md_path.write_text(markdown, encoding="utf-8")
 
-    # 1c) Save processed markdown to data/output/translated/ (translation removed)
-    translated_dir = REPO_ROOT / "data" / "output" / "translated"
-    translated_dir.mkdir(parents=True, exist_ok=True)
-    translated_md_path = translated_dir / md_path.name
-    translated_md_path.write_text(markdown, encoding="utf-8")
-
-    # 1d) Convert ASCII grid tables to row sentences, save to data/output/processed/
+    # 1c) Convert ASCII grid tables to row sentences, save to data/output/processed/
     from src.table_processor import process_and_save as _process_md
     processed_dir = REPO_ROOT / "data" / "output" / "processed"
     markdown, _ = _process_md(markdown, md_path.stem, processed_dir)

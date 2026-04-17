@@ -25,3 +25,5 @@ data/output/*
 CLAUDE.md
 
 vault-rag.code-workspace
+
+/notebooks
