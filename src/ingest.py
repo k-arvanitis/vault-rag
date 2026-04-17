@@ -747,7 +747,7 @@ def run_ingest(
     ocr_table_mode: str = "grid",
     data_format: str = "all",
     ollama_api_base: str = "http://127.0.0.1:11434",
-    ollama_embed_model: str = "bge-m3",
+    ollama_embed_model: str = OLLAMA_EMBED_MODEL,
     enrich_with_llm: bool = True,
     recursive: bool = False,
     verbose: bool = True,

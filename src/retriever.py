@@ -9,6 +9,9 @@ from urllib.request import Request, urlopen
 
 from dotenv import load_dotenv
 
+from src.config import OLLAMA_EMBED_MODEL
+
+
 def _ollama_embed_query(api_base: str, model_name: str, query: str) -> list[float]:
     """Embed a single query string via the Ollama /api/embed endpoint."""
     url = f"{api_base.rstrip('/')}/api/embed"
@@ -140,7 +143,7 @@ def retrieve(
     embeddings_path: Path | None = None,
     top_k: int = 20,
     api_base: str = "http://127.0.0.1:11434",
-    model_name: str = os.getenv("OLLAMA_EMBED_MODEL", "bge-m3"),
+    model_name: str = OLLAMA_EMBED_MODEL,
     qdrant_url: str = "http://127.0.0.1:7333",
     collection: str = "documents_chunks",
     use_qdrant: bool = True,
@@ -241,7 +244,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--model-name",
-        default=os.getenv("OLLAMA_EMBED_MODEL", "bge-m3"),
+        default=OLLAMA_EMBED_MODEL,
         help="Ollama embedding model name",
     )
     args = parser.parse_args()

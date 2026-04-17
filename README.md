@@ -7,44 +7,42 @@
 
 # Vault RAG
 
-Ask questions across all your business documents — PDFs, Word files, Excel sheets, and scanned images. Upload once, query instantly, answers with sources.
+A retrieval backend for business document intelligence. Upload your company's contracts, reports, invoices, and spreadsheets — then query across all of them at once in plain English, with cited answers.
 
-**Example questions:**
-- "What are the payment terms in our supplier contract?"
-- "What were total sales in Q3 according to the spreadsheet?"
-- "Summarise the key risks identified in the audit report."
+The demo runs as a Streamlit app. The pipeline is designed to be embedded: as a Slack bot, an internal API, or a customer-facing assistant. Swap the UI layer; the retrieval backend stays unchanged.
 
 ---
 
 ## Why Vault RAG is different
 
-Most document RAG demos use PyMuPDF for parsing and fixed-size text chunking. Vault RAG makes different engineering choices at every layer:
+Most document RAG demos query a single clean PDF with fixed-size chunking. Vault RAG is built for real business document collections:
 
-- **Parsing**: LightOn OCR (a vision-language model running locally via vLLM) instead of rule-based PDF parsers. At only 1B parameters it is remarkably lightweight, yet outperforms much larger models on accuracy — including handwritten text, complex table layouts, and mixed-language content that PyMuPDF cannot handle at all.
-- **Chunking**: 5-stage pipeline — header-aware splitting → token-limit enforcement → tiny chunk merging → contextual summary per chunk → table-aware batching. Chunks are never cut mid-table or mid-section.
-- **Contextual retrieval**: Before embedding, a fast LLM writes one sentence per chunk describing its topic, entities, and purpose. That sentence is prepended to the chunk text. Every vector in the index captures both what the chunk *says* and what it is *about*.
-- **Retrieval**: Hybrid search (dense nomic-embed-text + sparse BM25, RRF fusion in Qdrant) + HyDE query expansion + cross-encoder reranking. Short or vague queries still find the right chunks.
-- **Privacy**: Parsing and embedding run entirely locally. Only retrieved chunks (not raw documents) are sent to the LLM API. Fully air-gappable by pointing generation and chunking endpoints at a local vLLM server.
+- **Cross-document retrieval** — queries run across all uploaded documents simultaneously. Answers can draw from a contract, a spreadsheet, and a scanned invoice in the same response.
+- **Production-grade parsing** — LightOn OCR (vision-language model, runs locally via vLLM) handles scanned PDFs, complex table layouts, and mixed-language content that rule-based parsers cannot.
+- **5-stage chunking pipeline** — header-aware splitting, token-limit enforcement, tiny chunk merging, contextual summary per chunk (Anthropic Contextual Retrieval), and table-aware batching. Structure is preserved; chunks are never cut mid-table or mid-section.
+- **Hybrid search + reranking** — dense (nomic-embed-text) + sparse (BM25) vectors fused via RRF in Qdrant, HyDE query expansion, cross-encoder reranking. Both semantic and exact-match queries work on short or ambiguous input.
+- **Privacy-first** — parsing and embedding run entirely locally. Only retrieved chunks (not raw documents) leave the machine. Fully air-gappable by pointing generation endpoints at a local vLLM server.
 
 ---
 
 ## What it does
 
-Upload any business document and ask questions in plain English. Vault RAG finds the most relevant passages across all your files and returns a precise, cited answer.
+Upload any business document and ask questions in plain English. Vault RAG searches across all your files simultaneously and returns a precise, cited answer — pulling from whichever documents contain the relevant information.
 
-**Example questions:**
+**Example questions across a real document collection:**
 - "What are the payment terms in our supplier contract?"
 - "What were total sales in Q3 according to the spreadsheet?"
 - "Summarise the key risks identified in the audit report."
+- "Which invoices from last quarter exceeded the budget cap in the procurement policy?"
 
 Under the hood:
-- **Any file type** — PDFs (including scanned), Excel, CSV, Word, Markdown, and images are ingested into a unified search index.
-- **LightOn OCR** converts scanned PDFs and complex layouts (tables, figures, multi-column) into clean Markdown locally before indexing.
-- **5-stage chunking pipeline** preserves document structure, merges stubs, and prepends a contextual summary to every chunk before embedding.
-- **Hybrid search + reranking** — dense + sparse vectors fused via RRF, then re-scored by a cross-encoder. Both semantic and exact-match queries work well.
-- **ReAct agent** (LangGraph) issues multiple search calls, reasons step-by-step, and returns a cited answer. Fully traced in Langfuse.
+- **Any file type** — PDFs (including scanned), Excel, CSV, Word, Markdown, and images ingested into a single unified search index.
+- **LightOn OCR** converts scanned PDFs and complex layouts locally before indexing — tables, figures, and multi-column content preserved.
+- **5-stage chunking pipeline** preserves document structure and prepends a contextual summary to every chunk before embedding.
+- **Hybrid search + reranking** — dense + sparse vectors fused via RRF, re-scored by a cross-encoder. Semantic and exact-match queries both work.
+- **ReAct agent** (LangGraph) issues multiple search calls, reasons across results, and returns a cited answer. Every run traced in Langfuse.
 
-The detailed technical breakdown of each component is in the Architecture and Chunking sections below.
+Full technical breakdown in the Architecture and Chunking sections below.
 
 ---
 
@@ -335,7 +333,7 @@ uv run python eval/evaluate_rag.py
 |---|---|---|---|
 | LightOn OCR | vLLM server not running | Ingest crashes with `Connection refused` on port 8002 | `cd docker/ingestion-stack && ./up.sh` |
 | Qdrant | Container not running | All queries return empty results | `docker compose up -d qdrant` |
-| Ollama / bge-m3 | Model not pulled | Embedding step fails | `ollama pull bge-m3` |
+| Ollama / nomic-embed-text | Model not pulled | Embedding step fails | `ollama pull nomic-embed-text` |
 | Groq API | Missing or invalid `GROQ_API_KEY` | Generation returns 401 | Set `GROQ_API_KEY` in `.env` |
 | Groq API | Rate limit hit | Slow or failed responses | Retry or use a local vLLM via `GENERATION_API_BASE` |
 | Reranker | Model not downloaded | First query is slow (~30s download) | Pre-download: `uv run python -c "from sentence_transformers import CrossEncoder; CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"` |
