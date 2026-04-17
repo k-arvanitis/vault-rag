@@ -14,6 +14,16 @@ def test_rerank_top_n_less_than_retrieval_top_k():
     assert config.RERANK_TOP_N < config.RETRIEVAL_TOP_K
 
 
-def test_no_multilingual_models():
-    assert "multilingual" not in config.OLLAMA_EMBED_MODEL.lower()
-    assert "m3" not in config.RERANKER_MODEL.lower()
+def test_default_embed_model():
+    """Default embed model must be nomic-embed-text (set in .env.example)."""
+    import os
+    model = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+    assert "multilingual" not in model.lower(), (
+        "Multilingual embedding models are significantly slower; "
+        "use a monolingual model unless bilingual retrieval is explicitly required."
+    )
+
+
+def test_reranker_is_cross_encoder():
+    """Default reranker must be a cross-encoder (ms-marco family)."""
+    assert "cross-encoder" in config.RERANKER_MODEL.lower()

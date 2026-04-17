@@ -35,6 +35,7 @@ def _image_analysis_endpoint() -> str:
 
 
 def _image_analysis_model() -> str:
+    """Return the vision model name used for figure/image analysis."""
     return os.getenv("IMAGE_ANALYSIS_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
 
 
@@ -114,7 +115,6 @@ def _fix_html_multirow_header(table_html: str) -> str | None:
     # Fallback: produce a flat pipe table without derivation
     # Just combine: for empty thead cells, pull sub-col name; for non-empty, append sub-col
     flat_headers: list[str] = []
-    sub_idx = 0
     for i, h in enumerate(first_body_cells):
         # Try to assign a group name based on position
         group = thead_cells[i] if i < len(thead_cells) else ""
@@ -174,7 +174,7 @@ def _fill_empty_last_column_from_text(markdown: str, pdf_path: Path, verbose: bo
 
     def _has_empty_last_col(table_str: str) -> bool:
         """Return True if >50% of data rows have an empty last cell."""
-        rows = [l for l in table_str.strip().splitlines() if l.startswith("|") and "---" not in l]
+        rows = [line for line in table_str.strip().splitlines() if line.startswith("|") and "---" not in line]
         if len(rows) < 2:
             return False
         empty = sum(1 for r in rows[1:] if r.rstrip().endswith("|  |") or r.rstrip().endswith("| |"))
@@ -191,7 +191,7 @@ def _fill_empty_last_column_from_text(markdown: str, pdf_path: Path, verbose: bo
         return ""
 
     def _find_row_value_in_text(label: str, page_text: str, n_expected: int) -> str | None:
-        """Find the n_expected-th decimal number in the row starting with label.
+        r"""Find the n_expected-th decimal number in the row starting with label.
 
         PDF text layers concatenate adjacent numbers with no space (e.g. "2.9524.141").
         Using \d+\.\d{3} correctly splits these since research table values have exactly
@@ -377,13 +377,10 @@ def _derive_column_names(header_str: str, clean_data: str) -> list[str]:
     # Each group gets one "slice" of sub-col tokens.
     # The total sub-col tokens should equal groups × len(unit), ± last group variant.
     n_unit = len(unit)
-    expected_subs = len(groups) * n_unit
     # Allow last group to have fewer/different sub-cols (e.g. just @adaptive)
     sub_slices: list[list[str]] = []
     idx = 0
     for i in range(len(groups)):
-        remaining_subs = sub_col_tokens[idx:]
-        remaining_groups = len(groups) - i
         if i < len(groups) - 1:
             # Normal group: take exactly n_unit sub-cols
             slice_ = sub_col_tokens[idx: idx + n_unit]
@@ -540,6 +537,7 @@ REPO_ROOT = chunker_module.REPO_ROOT
 
 
 def _log(message: str, step: int | None = None, debug: bool = False, enabled: bool = True) -> None:
+    """Print a prefixed ingestion log line; no-ops when enabled=False."""
     if not enabled:
         return
     prefix = "[INGEST]"
@@ -551,10 +549,12 @@ def _log(message: str, step: int | None = None, debug: bool = False, enabled: bo
 
 
 def _path_size_mb(path: Path) -> float:
+    """Return the file size of path in megabytes."""
     return path.stat().st_size / (1024 * 1024)
 
 
 def _load_json_list(path: Path, label: str) -> list[dict]:
+    """Read a JSON file and assert it is a list; raises ValueError otherwise."""
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, list):
         raise ValueError(f"Expected list in {label} at {path}, got {type(payload).__name__}")
@@ -562,6 +562,7 @@ def _load_json_list(path: Path, label: str) -> list[dict]:
 
 
 def _pdf_page_count(pdf_path: Path) -> int:
+    """Return the number of pages in a PDF without loading the full content."""
     return len(PdfReader(str(pdf_path)).pages)
 
 

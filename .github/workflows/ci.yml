@@ -18,11 +18,10 @@ jobs:
         uses: astral-sh/setup-uv@v3
 
       - name: Install dependencies
-        run: uv sync --frozen
+        run: uv sync --frozen --dev
 
       - name: Lint
         run: uv run ruff check src/ app.py
 
       - name: Test
         run: uv run pytest tests/ -v --tb=short
-        continue-on-error: true

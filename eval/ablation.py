@@ -1,11 +1,21 @@
 """Ablation study: measure the contribution of each retrieval technique.
 
-Runs the evaluation pipeline four times with increasing pipeline complexity:
+An ablation study isolates how much each individual component contributes to
+overall pipeline quality by systematically removing one component at a time
+and measuring the drop in evaluation metrics. The name comes from neuroscience,
+where researchers lesion specific brain regions to understand their function.
 
-  1. baseline   — raw query embedding, no HyDE, no bilingual, no reranker
-  2. +hyde       — HyDE query expansion, no bilingual, no reranker
-  3. +bilingual  — HyDE + Greek translation retrieval, no reranker
-  4. full        — HyDE + bilingual + reranker (production config)
+Here, we run the full evaluation pipeline three times with increasing complexity:
+
+  1. baseline — raw query embedding only; no HyDE, no reranker
+  2. +hyde     — adds HyDE query expansion (embed a hypothetical answer
+                 instead of the raw question, improving recall on vague queries)
+  3. full      — HyDE + cross-encoder reranking (re-scores top-100 candidates
+                 with a model that sees both query and chunk together,
+                 improving precision); production config
+
+The delta rows in the output table show exactly how many metric points each
+component adds — useful for deciding whether the latency cost is worth it.
 
 Usage:
     uv run python -m eval.ablation [--dataset eval/dataset.json]
@@ -36,10 +46,9 @@ DEFAULT_OUTPUT_DIR = REPO_ROOT / "eval" / "ablation"
 METRIC_THRESHOLD = 0.7
 
 CONFIGS: list[dict] = [
-    {"name": "baseline",   "use_hyde": False, "use_bilingual": False, "use_reranker": False},
-    {"name": "+hyde",      "use_hyde": True,  "use_bilingual": False, "use_reranker": False},
-    {"name": "+bilingual", "use_hyde": True,  "use_bilingual": True,  "use_reranker": False},
-    {"name": "full",       "use_hyde": True,  "use_bilingual": True,  "use_reranker": True},
+    {"name": "baseline", "use_hyde": False, "use_reranker": False},
+    {"name": "+hyde",    "use_hyde": True,  "use_reranker": False},
+    {"name": "full",     "use_hyde": True,  "use_reranker": True},
 ]
 
 
@@ -120,7 +129,7 @@ def run_config(
 
     print(f"\n{'=' * 60}")
     print(f"  Config: {cfg['name']}")
-    print(f"    HyDE={cfg['use_hyde']}  Bilingual={cfg['use_bilingual']}  Reranker={bool(reranker)}")
+    print(f"    HyDE={cfg['use_hyde']}  Reranker={bool(reranker)}")
     print(f"{'=' * 60}")
 
     agent = build_rag_agent(
@@ -132,7 +141,6 @@ def run_config(
         model_name=GENERATION_MODEL,
         generation_api_base=GENERATION_API_BASE,
         use_hyde=cfg["use_hyde"],
-        use_bilingual=cfg["use_bilingual"],
     )
 
     judge = OpenAICompatibleJudge()

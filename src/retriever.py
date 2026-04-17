@@ -10,6 +10,7 @@ from urllib.request import Request, urlopen
 from dotenv import load_dotenv
 
 def _ollama_embed_query(api_base: str, model_name: str, query: str) -> list[float]:
+    """Embed a single query string via the Ollama /api/embed endpoint."""
     url = f"{api_base.rstrip('/')}/api/embed"
     payload = json.dumps({"model": model_name, "input": [query], "options": {"num_gpu": 0}}).encode("utf-8")
     req = Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
@@ -31,6 +32,7 @@ def _ollama_embed_query(api_base: str, model_name: str, query: str) -> list[floa
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    """Compute cosine similarity between two equal-length embedding vectors."""
     if len(a) != len(b):
         raise ValueError(f"Embedding dimension mismatch: query={len(a)} doc={len(b)}")
     dot = sum(x * y for x, y in zip(a, b))
@@ -42,6 +44,7 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
 
 
 def _text_filter(token: str) -> dict:
+    """Build a Qdrant payload filter that requires token to appear in the content field."""
     return {"must": [{"key": "content", "match": {"text": token}}]}
 
 
@@ -52,6 +55,7 @@ def _qdrant_search(
     top_k: int,
     filter_token: str | None = None,
 ) -> list[dict[str, Any]]:
+    """Run a dense vector search against Qdrant, with an optional keyword filter."""
     base = qdrant_url.rstrip("/")
     url = f"{base}/collections/{collection}/points/search"
     body: dict[str, Any] = {"vector": query_vec, "limit": top_k, "with_payload": True}

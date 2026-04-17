@@ -5,7 +5,6 @@ import base64
 import html
 import io
 import json
-import mimetypes
 import os
 import re
 from pathlib import Path
