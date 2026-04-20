@@ -58,7 +58,7 @@ def _qdrant_search(
     top_k: int,
     filter_token: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Run a dense vector search against Qdrant, with an optional keyword filter."""
+    """Run a dense vector search against Qdrant, with optional keyword filter."""
     base = qdrant_url.rstrip("/")
     url = f"{base}/collections/{collection}/points/search"
     body: dict[str, Any] = {"vector": query_vec, "limit": top_k, "with_payload": True}
@@ -149,6 +149,7 @@ def retrieve(
     use_qdrant: bool = True,
     filter_token: str | None = None,
 ) -> list[dict[str, Any]]:
+    """Retrieve top-k relevant chunks from the full collection."""
     query_vec = _ollama_embed_query(api_base=api_base, model_name=model_name, query=query)
 
     if use_qdrant:

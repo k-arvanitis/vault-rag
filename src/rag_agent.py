@@ -96,6 +96,7 @@ def _hyde(query: str, api_base: str, model_name: str) -> str:
     )
 
 
+
 def _make_unified_tool(
     qdrant_url: str,
     collection: str,
@@ -156,7 +157,6 @@ def _make_unified_tool(
             top_hits = [{**hits[r["index"]], "rerank_score": r["score"]} for r in reranked]
             reranked_used = True
         else:
-            # No reranker: pass all retrieved hits so nothing is prematurely cut off
             top_hits = hits
 
         parts: list[str] = []
@@ -194,19 +194,14 @@ def _make_unified_tool(
         return "\n\n".join(parts) if parts else None
 
     def search_knowledge_base(query: str) -> str:
-        """Search all knowledge sources — documents and tables — simultaneously.
-        Pass a focused sub-question for best results."""
+        """Search the knowledge base for relevant documents and tables."""
         result = _fetch_docs(query)
         return result if result else "No relevant information found."
 
     tool = StructuredTool.from_function(
         func=search_knowledge_base,
         name="search_knowledge_base",
-        description=(
-            "Search all knowledge sources (documents and structured tables) simultaneously. "
-            "Returns document chunks and/or table data relevant to the query. "
-            "Input: a focused sub-question."
-        ),
+        description="Search all knowledge sources (documents and tables). Input: a focused sub-question.",
         args_schema=SearchInput,
     )
     return tool, _limits
@@ -308,19 +303,26 @@ def _get_langfuse():
         return None
 
 
-def ask_agent(agent: Any, query: str, show_tool_uses: bool = False) -> str:
-    """Run the RAG agent on a query and return the final answer."""
+def ask_agent(agent: Any, query: str, history: list[dict] | None = None, show_tool_uses: bool = False) -> str:
+    """Run the RAG agent on a query and return the final answer.
+
+    Args:
+        history: Prior conversation turns as [{"role": "user"/"assistant", "content": str}].
+    """
     from openai import BadRequestError
 
     lf = _get_langfuse()
     trace = lf.trace(name="rag-agent", input=query) if lf else None
 
-    _invoke_input = {
-        "messages": [
-            SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content=query),
-        ]
-    }
+    messages: list = [SystemMessage(content=SYSTEM_PROMPT)]
+    for turn in (history or []):
+        if turn["role"] == "user":
+            messages.append(HumanMessage(content=turn["content"]))
+        else:
+            messages.append(AIMessage(content=turn["content"]))
+    messages.append(HumanMessage(content=query))
+
+    _invoke_input = {"messages": messages}
     _invoke_config = {"recursion_limit": 20}
 
     _limits: dict = getattr(agent, "_rag_limits", {})
@@ -375,19 +377,32 @@ def ask_agent(agent: Any, query: str, show_tool_uses: bool = False) -> str:
     return answer
 
 
-def stream_agent(agent: Any, query: str, show_tool_uses: bool = False) -> Generator[str, None, None]:
+def stream_agent(
+    agent: Any,
+    query: str,
+    history: list[dict] | None = None,
+    show_tool_uses: bool = False,
+    collected_chunks: list[str] | None = None,
+) -> Generator[str, None, None]:
     """Stream the agent's final answer token-by-token.
 
     Yields string fragments as they arrive from the LLM.
     Tool calls are not yielded (optionally printed if show_tool_uses=True).
     Qwen3 <think>...</think> blocks are suppressed.
+
+    Args:
+        history: Prior conversation turns as [{"role": "user"/"assistant", "content": str}].
+        collected_chunks: If provided, tool result chunks are appended to this list.
     """
-    _invoke_input = {
-        "messages": [
-            SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content=query),
-        ]
-    }
+    messages: list = [SystemMessage(content=SYSTEM_PROMPT)]
+    for turn in (history or []):
+        if turn["role"] == "user":
+            messages.append(HumanMessage(content=turn["content"]))
+        else:
+            messages.append(AIMessage(content=turn["content"]))
+    messages.append(HumanMessage(content=query))
+
+    _invoke_input = {"messages": messages}
     _invoke_config = {"recursion_limit": 20}
 
     # State machine for stripping <think> blocks mid-stream
@@ -403,34 +418,33 @@ def stream_agent(agent: Any, query: str, show_tool_uses: bool = False) -> Genera
             if _in_think:
                 end = _think_buf.find("</think>")
                 if end == -1:
-                    # Still inside think block — hold everything
                     return out
-                # Found closing tag — discard block, continue with remainder
                 _think_buf = _think_buf[end + len("</think>"):]
                 _in_think = False
             else:
                 start = _think_buf.find("<think>")
                 if start == -1:
-                    # No think block — emit everything
                     out += _think_buf
                     _think_buf = ""
                     return out
-                # Emit text before the opening tag, then enter think mode
                 out += _think_buf[:start]
                 _think_buf = _think_buf[start + len("<think>"):]
                 _in_think = True
 
     for chunk, metadata in agent.stream(_invoke_input, config=_invoke_config, stream_mode="messages"):
         if isinstance(chunk, AIMessageChunk):
-            # Skip tool-call chunks (they don't carry text we want to stream)
             if chunk.tool_call_chunks:
                 continue
             if chunk.content:
                 filtered = _filter(str(chunk.content))
                 if filtered:
                     yield filtered
-        elif isinstance(chunk, ToolMessage) and show_tool_uses:
-            print(f"\n[TOOL_RESULT] {chunk.name} ->\n{_extract_refs(chunk.content)}\n")
+        elif isinstance(chunk, ToolMessage):
+            if collected_chunks is not None:
+                parts = re.split(r"\n\n(?=\[\d+\])", chunk.content.strip())
+                collected_chunks.extend([p.strip() for p in parts if p.strip()])
+            if show_tool_uses:
+                print(f"\n[TOOL_RESULT] {chunk.name} ->\n{_extract_refs(chunk.content)}\n")
 
     # Flush any remaining buffered text (e.g. trailing content after last </think>)
     if _think_buf and not _in_think:

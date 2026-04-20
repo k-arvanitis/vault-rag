@@ -26,6 +26,7 @@ dependencies = [
   # Local reranker
   "transformers>=4.40.0",
   "torch>=2.2.0",
+  "accelerate>=0.30.0",
   # Observability
   "langfuse>=2.0.0,<3.0.0",
   # UI
@@ -38,6 +39,10 @@ dependencies = [
   "pillow>=12.1.1",
   "requests>=2.33.0",
   "pymupdf4llm>=1.27.2.2",
+  # Slack interface
+  "slack-bolt>=1.18.0",
+  "datasets>=4.8.4",
+  "deepeval>=3.9.7",
 ]
 
 [dependency-groups]

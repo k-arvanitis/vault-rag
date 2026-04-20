@@ -1,0 +1,12 @@
+services:
+  vault-rag-slack:
+    build:
+      context: ../..
+      dockerfile: docker/slack-stack/Dockerfile
+    container_name: vault-rag-slack
+    restart: unless-stopped
+    # Host networking gives the container direct access to Qdrant (:7333),
+    # Ollama (:11434), and LightOn OCR (:8002) running on the host.
+    network_mode: host
+    env_file:
+      - .env

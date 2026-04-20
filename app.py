@@ -196,42 +196,23 @@ with tab_chat:
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking…"):
-                try:
-                    import re
-                    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-                    from src.rag_agent import SYSTEM_PROMPT
+        # History = all turns before the current user message
+        history = st.session_state.messages[:-1]
 
-                    agent = _get_agent()
-                    en_query = prompt
-                    result = agent.invoke(
-                        {"messages": [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=en_query)]},
-                        config={"recursion_limit": 20},
-                    )
-                    messages = result.get("messages", [])
+        from src.rag_agent import stream_agent
+        chunks: list[str] = []
+        try:
+            agent = _get_agent()
+            with st.chat_message("assistant"):
+                answer = st.write_stream(
+                    stream_agent(agent, prompt, history=history, collected_chunks=chunks)
+                )
+        except Exception as exc:
+            answer = f"Error: {exc}"
+            with st.chat_message("assistant"):
+                st.error(answer)
 
-                    # Extract retrieved chunks from all tool calls
-                    chunks = []
-                    for msg in messages:
-                        if isinstance(msg, ToolMessage):
-                            content = msg.content if isinstance(msg.content, str) else str(msg.content)
-                            parts = re.split(r"\n\n(?=\[\d+\])", content.strip())
-                            chunks.extend([p.strip() for p in parts if p.strip()])
-                    st.session_state.last_chunks = chunks
-
-                    # Final answer
-                    answer = "No answer generated."
-                    for msg in reversed(messages):
-                        if isinstance(msg, AIMessage) and not msg.tool_calls:
-                            text = re.sub(r"(?is)<think>.*?</think>\s*", "", str(msg.content)).strip()
-                            if text:
-                                answer = text
-                                break
-                except Exception as exc:
-                    answer = f"Error: {exc}"
-            st.markdown(answer)
-
+        st.session_state.last_chunks = chunks
         st.session_state.messages.append({"role": "assistant", "content": answer})
 
 

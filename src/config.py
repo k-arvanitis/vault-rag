@@ -43,7 +43,7 @@ EMBED_DEVICE: str = os.getenv("EMBED_DEVICE", "cpu")
 # Retrieval & ranking
 # ---------------------------------------------------------------------------
 RETRIEVAL_TOP_K: int = int(os.getenv("RETRIEVAL_TOP_K", "100"))
-RERANK_TOP_N: int = int(os.getenv("RERANK_TOP_N", "10"))
+RERANK_TOP_N: int = int(os.getenv("RERANK_TOP_N", "20"))
 DOC_MIN_SCORE: float = float(os.getenv("DOC_MIN_SCORE", "0.01"))
 
 # Max chars of a chunk/table shown to the LLM (prevents context overflow)

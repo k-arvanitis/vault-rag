@@ -4,6 +4,7 @@
 ![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
 ![Qdrant](https://img.shields.io/badge/Qdrant-FF4136?style=for-the-badge&logoColor=white)
 ![Groq](https://img.shields.io/badge/Groq-F55036?style=for-the-badge&logo=groq&logoColor=white)
+![Langfuse](https://img.shields.io/badge/Langfuse-111827?style=for-the-badge&logoColor=white)
 
 # Vault RAG
 
@@ -43,6 +44,61 @@ Under the hood:
 - **ReAct agent** (LangGraph) issues multiple search calls, reasons across results, and returns a cited answer. Every run traced in Langfuse.
 
 Full technical breakdown in the Architecture and Chunking sections below.
+
+---
+
+## Interfaces
+
+Vault RAG separates the operator experience from the end-user experience.
+
+### Streamlit UI — for testing and tuning
+
+Before going live, use the Streamlit app to validate your document collection:
+inspect how each file chunks, verify OCR output on scanned PDFs, run test
+queries and see exactly which chunks were retrieved and why. This is your
+tuning environment, not your production UI.
+
+```bash
+uv run streamlit run app.py   # → http://localhost:8501
+```
+
+### Slack — for your team
+
+The Streamlit UI is for the admin who owns the document collection. Slack is
+for everyone else. Once documents are indexed, the whole team can query them
+from where they already work — no new tool, no access to manage.
+
+The Slack bot is a **query interface only**. It does not accept file uploads.
+Documents are sensitive; they belong in your infrastructure, not in Slack.
+The admin indexes them once via Streamlit; the team queries from that point on.
+
+```
+@vault what are the payment terms in the supplier contract?
+→ Payment is due within 30 days of invoice date. [1]
+  [1] contract.pdf, Section 4.2
+```
+
+Works in channels (@mention) and DMs (message directly).
+
+**Setup:** create a Slack app, enable Socket Mode, add `SLACK_BOT_TOKEN`
+and `SLACK_APP_TOKEN` to `.env`, then:
+
+```bash
+make slack            # run locally
+make docker-slack-up  # run in Docker
+```
+
+See [Slack app setup](#slack-setup) for the full walkthrough.
+
+---
+
+## Deployment model
+
+Each customer runs their own instance — their own Docker containers,
+their own Qdrant collection, their own Slack workspace connection.
+No shared infrastructure. Document content never leaves the customer's
+environment (parsing and embeddings run locally; only retrieved chunks
+are sent to the LLM API).
 
 ---
 
@@ -306,6 +362,55 @@ All variables can be set in `.env`. See `.env.example` for a full annotated list
 
 ---
 
+## Slack setup
+
+### 1. Create a Slack app
+
+Go to [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From scratch**.
+
+### 2. Enable Socket Mode
+
+**Settings → Socket Mode** → Enable. This creates the App-Level Token (`xapp-...`) — copy it to `SLACK_APP_TOKEN`.
+
+### 3. Add Bot Token Scopes
+
+**OAuth & Permissions → Scopes → Bot Token Scopes**, add:
+
+| Scope | Purpose |
+|-------|---------|
+| `app_mentions:read` | Receive @mention events |
+| `chat:write` | Post messages and replies |
+| `im:history` | Receive DM messages |
+| `im:write` | Reply in DMs |
+
+### 4. Subscribe to events
+
+**Event Subscriptions → Subscribe to bot events**, add:
+- `app_mention`
+- `message.im`
+
+### 5. Install and configure
+
+**OAuth & Permissions → Install to Workspace** → copy the Bot User OAuth Token to `SLACK_BOT_TOKEN`.
+
+Add both tokens to `.env`:
+
+```
+SLACK_BOT_TOKEN=xoxb-...
+SLACK_APP_TOKEN=xapp-...
+```
+
+### 6. Start the bot
+
+```bash
+make slack            # local
+make docker-slack-up  # Docker
+```
+
+Invite the bot to a channel: `/invite @vault-rag`
+
+---
+
 ## Evaluation
 
 An evaluation harness lives in `eval/evaluate_rag.py`. It runs a set of question–answer pairs through the full pipeline and scores each answer with a GPT-4o-mini judge across four metrics: faithfulness, context recall, answer relevance, and context precision.
@@ -324,6 +429,37 @@ Run evaluation:
 ```bash
 uv run python eval/evaluate_rag.py
 ```
+
+---
+
+## Tests
+
+65 tests, all mocked — no live services (Ollama, Qdrant, Groq) required to run CI.
+
+| File | Tests | What's covered |
+|------|-------|----------------|
+| `test_chunker.py` | 3 | Token limits, minimum chunk size, required output fields |
+| `test_config.py` | 5 | Config invariants: types, model family constraints |
+| `test_retriever.py` | 14 | Cosine similarity math, text filter shape, retrieve from local JSON, dense and hybrid Qdrant paths |
+| `test_reranker.py` | 10 | BGEReranker and QwenReranker: output format, sort order, top-n, score ranges |
+| `test_rag_agent.py` | 17 | `ask_agent` history injection and answer extraction, `stream_agent` token streaming and `<think>` suppression, chunk collection, system prompt invariants |
+| `test_table_repair.py` | 16 | Three-pass table repair: two-row HTML headers, LaTeX column derivation, missing last-column recovery |
+
+```bash
+uv run pytest tests/ -v
+```
+
+---
+
+## Known limitations
+
+- **Very large Excel files** — files with 100k+ rows or 20+ sheets are ingested fully into memory. Expect slow ingestion and possible OOM errors; consider pre-filtering sheets before upload.
+- **Password-protected PDFs** — LightOn OCR receives the raw bytes and will fail or return empty output. There is no detection or user-facing warning; the file silently ingests as an empty document.
+- **Low-quality scans** — severely skewed, low-DPI, or handwritten content degrades OCR accuracy. Ingestion does not fail, but retrieved text may contain OCR artefacts that hurt retrieval precision.
+- **Complex PDF table layouts** — merged cells, rotated headers, and tables spanning multiple pages are parsed heuristically. The three-pass table repair handles common academic/GHG-report patterns; novel layouts may produce misaligned row-sentence chunks.
+- **Very long documents (500+ pages)** — the contextual enrichment step makes one LLM call per chunk. A 500-page technical report can generate 600+ chunks; at Groq free-tier rate limits this takes several minutes and may hit the requests-per-minute cap.
+- **Multi-language documents** — cross-lingual retrieval (Greek ↔ English) was removed from the pipeline. Documents in non-English languages can still be ingested and searched in their native language, but English queries will not retrieve non-English content and vice versa.
+- **Streaming and context overflow** — the adaptive `rerank_top_n` retry on context overflow is implemented only in `ask_agent`. The streaming path (`stream_agent`) does not retry; it will raise a `BadRequestError` on overflow. Use `ask_agent` for large document collections.
 
 ---
 

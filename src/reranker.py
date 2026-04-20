@@ -78,7 +78,7 @@ class QwenReranker:
 
         for idx, doc in enumerate(documents):
             text_to_score = self._format_input(query, doc, instruction)
-            inputs = self.tokenizer(text_to_score, return_tensors="pt").to(self.model.device)
+            inputs = self.tokenizer(text_to_score, return_tensors="pt", truncation=True, max_length=512).to(self.model.device)
             
             outputs = self.model(**inputs)
             # We look at the logits of the last generated token
