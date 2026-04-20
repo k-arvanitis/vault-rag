@@ -16,6 +16,9 @@ wheels/
 *.env
 assets/
 
+eval
+eval/pdfs
+.deepeval
 # Data directories (keep .gitkeep markers)
 data/input/*
 data/output/*
@@ -29,3 +32,4 @@ vault-rag.code-workspace
 /notebooks
 
 cheatsheet.md
+*.code-workspace

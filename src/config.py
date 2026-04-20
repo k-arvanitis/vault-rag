@@ -70,3 +70,13 @@ NO_DATA_TOKENS: frozenset[str] = frozenset({"no", "na", "ne", "ie", "n/a", "n.a.
 # ---------------------------------------------------------------------------
 CHUNK_MAX_TOKENS: int = int(os.getenv("CHUNK_MAX_TOKENS", "1024"))
 CHUNK_MIN_TOKENS: int = int(os.getenv("CHUNK_MIN_TOKENS", "256"))
+
+# ---------------------------------------------------------------------------
+# Text-layer PDF parsing (pymupdf4llm path)
+# ---------------------------------------------------------------------------
+# Fraction of page area — images smaller than this are skipped by pymupdf4llm
+IMAGE_SIZE_LIMIT: float = float(os.getenv("IMAGE_SIZE_LIMIT", "0.05"))
+# Set False to skip VLM calls entirely (faster, no figure descriptions)
+VLM_ENABLED: bool = os.getenv("VLM_ENABLED", "true").lower() not in ("false", "0", "no")
+VLM_PROVIDER: str = os.getenv("VLM_PROVIDER", "groq")
+VLM_MODEL: str = os.getenv("VLM_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")

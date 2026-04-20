@@ -20,6 +20,7 @@ from src.embedder import embed_chunks_file  # noqa: E402
 from src.ingest_table_rows import ingest_table_rows  # noqa: E402
 from src.parser.input_utils import resolve_to_pdf  # noqa: E402
 from src.parser.lightonocr_parser import pdf_to_markdown  # noqa: E402
+from src.parser.pdf_parser import parse_pdf  # noqa: E402
 from src.vector_store import delete_by_file, ingest_embeddings  # noqa: E402
 
 def _image_analysis_endpoint() -> str:
@@ -606,33 +607,19 @@ def _run_ingest_pdf(
         enabled=verbose,
     )
 
-    # 1) PDF -> markdown (LightOn OCR)
-    _log("Parse PDF -> markdown", step=1, enabled=verbose)
-    _log(
-        "Parsing config: "
-        f"endpoint={ocr_endpoint}, model={ocr_model_name}, table_mode={ocr_table_mode}",
-        step=1,
-        debug=True,
-        enabled=verbose,
+    # 1) PDF -> markdown (two-path router: pymupdf4llm for text-layer, LightOn OCR for scanned)
+    _log("Parse PDF -> markdown (two-path router)", step=1, enabled=verbose)
+    pages = parse_pdf(str(resolved_pdf_path))
+    markdown = "".join(
+        f"\n\n<!-- PAGE {i + 1} | {label} -->\n\n{page_text}"
+        for i, (page_text, label) in enumerate(pages)
     )
-    md_path = pdf_to_markdown(
-        pdf_path=resolved_pdf_path,
-        output_dir=REPO_ROOT / "data/output/lightonocr",
-        endpoint=ocr_endpoint,
-        model_name=ocr_model_name,
-        markdown_tables=True,
-        table_mode=ocr_table_mode,
-        image_analysis_endpoint=_image_analysis_endpoint(),
-        image_analysis_model=_image_analysis_model(),
-        image_analysis_timeout_sec=300,
-        image_analysis_api_key=os.getenv("GROQ_API_KEY") or None,
-    )
-    if not md_path.exists():
-        raise FileNotFoundError(f"Markdown output not found after parsing step: {md_path}")
-    markdown = md_path.read_text(encoding="utf-8")
-    page_markers = markdown.count("<!-- PAGE ")
+    output_dir = REPO_ROOT / "data/output/lightonocr"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    md_path = output_dir / f"{resolved_pdf_path.stem}.md"
+    md_path.write_text(markdown, encoding="utf-8")
     _log(
-        f"Done | markdown={md_path} | pages={page_markers} | chars={len(markdown)} | size={_path_size_mb(md_path):.2f} MB",
+        f"Done | markdown={md_path} | pages={len(pages)} | chars={len(markdown)} | size={_path_size_mb(md_path):.2f} MB",
         step=1,
         enabled=verbose,
     )

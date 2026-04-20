@@ -19,7 +19,7 @@ The demo runs as a Streamlit app. The pipeline is designed to be embedded: as a 
 Most document RAG demos query a single clean PDF with fixed-size chunking. Vault RAG is built for real business document collections:
 
 - **Cross-document retrieval** — queries run across all uploaded documents simultaneously. Answers can draw from a contract, a spreadsheet, and a scanned invoice in the same response.
-- **Production-grade parsing** — LightOn OCR (vision-language model, runs locally via vLLM) handles scanned PDFs, complex table layouts, and mixed-language content that rule-based parsers cannot.
+- **Two-path PDF parsing** — each page is routed independently: born-digital pages use pymupdf4llm (CPU, no API call, zero hallucination risk) while scanned pages use LightOn OCR (local vision-language model via vLLM). Mixed documents — a contract where most pages are digital but one page is a faxed addendum — are handled correctly without any manual configuration.
 - **5-stage chunking pipeline** — header-aware splitting, token-limit enforcement, tiny chunk merging, contextual summary per chunk (Anthropic Contextual Retrieval), and table-aware batching. Structure is preserved; chunks are never cut mid-table or mid-section.
 - **Hybrid search + reranking** — dense (nomic-embed-text) + sparse (BM25) vectors fused via RRF in Qdrant, HyDE query expansion, cross-encoder reranking. Both semantic and exact-match queries work on short or ambiguous input.
 - **Privacy-first** — parsing and embedding run entirely locally. Only retrieved chunks (not raw documents) leave the machine. Fully air-gappable by pointing generation endpoints at a local vLLM server.
@@ -38,7 +38,7 @@ Upload any business document and ask questions in plain English. Vault RAG searc
 
 Under the hood:
 - **Any file type** — PDFs (including scanned), Excel, CSV, Word, Markdown, and images ingested into a single unified search index.
-- **LightOn OCR** converts scanned PDFs and complex layouts locally before indexing — tables, figures, and multi-column content preserved.
+- **Two-path PDF parser** routes each page independently — pymupdf4llm for born-digital pages (fast, no API call), LightOn OCR for scanned pages (local vLLM). Embedded figures are described by a vision model (Groq) and injected inline as `[Figure: ...]` before chunking.
 - **5-stage chunking pipeline** preserves document structure and prepends a contextual summary to every chunk before embedding.
 - **Hybrid search + reranking** — dense + sparse vectors fused via RRF, re-scored by a cross-encoder. Semantic and exact-match queries both work.
 - **ReAct agent** (LangGraph) issues multiple search calls, reasons across results, and returns a cited answer. Every run traced in Langfuse.
@@ -139,7 +139,8 @@ PDF tables detected during OCR are stored as a separate `[TABLE_START]...[TABLE_
 
 | Type | Parser | What it extracts |
 |------|--------|-----------------|
-| PDF | LightOn OCR | Text, tables, scanned content, complex layouts |
+| PDF (born-digital) | pymupdf4llm | Text layer extraction, tables, embedded figures (VLM description) |
+| PDF (scanned) | LightOn OCR (local vLLM) | Vision-language OCR, complex layouts, multi-column content |
 | Excel / CSV | openpyxl / pandas | All sheets, row batches with headers |
 | Word (.docx) | python-docx (via LibreOffice → PDF) | Paragraphs with heading structure |
 | Images (.png / .jpg) | Vision (Groq) | Text and visual content description |
@@ -158,11 +159,21 @@ PDF tables detected during OCR are stored as a separate `[TABLE_START]...[TABLE_
    ▼
  ┌──────────────────┐     ┌───────────────────────────────────┐
  │  File type       │────▶│  Parser                           │
- │  detection       │     │  PDF/DOCX → LightOn OCR (local)   │
- └──────────────────┘     │  Excel/CSV → openpyxl             │
-                          │  Markdown  → plain text           │
-                          └────────────────┬──────────────────┘
-                                           │ Markdown
+ │  detection       │     │  Excel/CSV → openpyxl / pandas    │
+ └──────────────────┘     │  Markdown  → plain text           │
+                          │  PDF/DOCX  → per-page router ─────┼──┐
+                          └───────────────────────────────────┘  │
+                                                                  │
+                          ┌──────────── PDF page ────────────┐   │
+                          │                                  │◀──┘
+                          │  text layer ≥ 50 chars?          │
+                          │     YES → pymupdf4llm            │
+                          │           (CPU, no API call)     │
+                          │           figures → VLM (Groq)   │
+                          │     NO  → LightOn OCR            │
+                          │           (local vLLM, GPU)      │
+                          └────────────────┬─────────────────┘
+                                           │ Markdown (per page)
                                            ▼
                           ┌───────────────────────────────────┐
                           │  Chunker                          │
@@ -224,6 +235,38 @@ PDF tables detected during OCR are stored as a separate `[TABLE_START]...[TABLE_
 
 These are the non-obvious choices made during implementation — the ones that are not visible in the architecture diagram but directly determine whether the system works well on real documents.
 
+### Per-page routing: pymupdf4llm vs LightOn OCR
+
+Every PDF page is routed independently to one of two parsers based on whether it has an extractable text layer.
+
+**pymupdf4llm — born-digital pages**
+
+| Property | Detail |
+|---|---|
+| Runs on | CPU only — no GPU, no model, no API call |
+| Speed | Near-instant — a 50-page research paper parses in under a second |
+| Accuracy | Lossless — reads characters directly from the PDF byte stream |
+| Failure modes | None for text; figures require a separate VLM call (see below) |
+
+Born-digital PDFs (exported from Word, LaTeX, or a browser) embed their text as selectable characters. Running OCR on these is counterproductive: the vision model transcribes what it *sees* in a rendered image, introducing errors on numbers, equations, and code that are already represented perfectly as text. pymupdf4llm skips the model entirely and reads the text layer directly — structure like tables and bold text is preserved in Markdown.
+
+**LightOn OCR — scanned pages**
+
+| Property | Detail |
+|---|---|
+| Runs on | GPU via local vLLM server |
+| Speed | ~2–5 seconds per page depending on GPU |
+| Accuracy | State-of-the-art for document OCR; handles multi-column, tables, mixed-language |
+| Failure modes | Requires the vLLM server running; born-digital pages are unaffected if it goes down |
+
+Scanned pages have no text layer — pymupdf4llm returns an empty string. A vision-language model is the only option.
+
+The routing threshold is 50 characters of extractable text per page. Mixed documents — a contract where pages 1–10 are digital and page 11 is a faxed addendum — are handled correctly per page with no configuration required.
+
+**Figure descriptions (pymupdf4llm path only)**
+
+Figures in born-digital PDFs come in two forms: raster images written to disk by pymupdf4llm (appear as `![](path.png)` in the Markdown) and vector graphics whose underlying text pymupdf4llm extracts as raw labels (wrapped in `--- Start of picture text ---` blocks — typical for matplotlib or D3 charts). Both types are intercepted, the page region is cropped via fitz, and the image is sent to a vision model (Groq) for a natural-language description. The description is injected inline as `[Figure: ...]` so it enters the chunk index and is searchable.
+
 ### Deterministic point IDs (idempotent re-ingestion)
 
 Every chunk stored in Qdrant is assigned a SHA-1 hash of `(file_name, chunk_index)` rather than a random UUID. This means re-ingesting the same file overwrites the existing vectors in place instead of appending duplicates. The consequence: you can update a document, re-run ingestion, and the collection stays consistent without a manual delete step. With random IDs, re-running ingestion on an already-indexed file silently doubles every chunk in the index — a subtle bug that degrades retrieval precision without any visible error.
@@ -260,7 +303,9 @@ Instead of embedding the raw user question, the agent first generates a *hypothe
 
 | Component | Technology | Why |
 |-----------|-----------|-----|
-| OCR / parsing | LightOn OCR (local vLLM) | State-of-the-art vision-language model for scanned PDFs; runs locally so raw document content never leaves the machine |
+| PDF parsing — text layer | pymupdf4llm | CPU-only, no model, near-instant. Born-digital PDFs embed selectable text — reading it directly is lossless and avoids the transcription errors a vision model introduces on numbers, equations, and code |
+| PDF parsing — scanned | LightOn OCR (local vLLM) | Scanned pages have no text layer; a vision-language model running locally on GPU is the only option. Keeping it local means raw document bytes never leave the machine |
+| Figure descriptions | llama-4-scout-17b (Groq vision) | Converts embedded charts and diagrams to searchable text; both raster images and vector graphics (extracted as raw label text by pymupdf4llm) are rasterised and described before chunking |
 | Contextual summaries | llama-3.1-8b-instant (Groq) | Fast, cheap model writes one sentence per chunk at ingest time; improves retrieval without slowing queries |
 | Embeddings | nomic-embed-text (Ollama) | Strong open embedding model; fast on CPU; runs locally so document text stays on-prem |
 | Vector database | Qdrant | Native hybrid search (dense + sparse) with RRF fusion in a single query; straightforward Docker deployment |
@@ -274,7 +319,7 @@ Instead of embedding the raw user question, the agent first generates a *hypothe
 
 ## Privacy & data
 
-- **Parsing** runs entirely locally via the LightOn OCR server (vLLM on your GPU).
+- **Parsing** runs locally. Born-digital PDF pages are processed by pymupdf4llm on CPU with no network calls. Scanned pages go to the LightOn OCR server (vLLM on your GPU, also local). Raw document bytes never leave the machine.
 - **Embeddings** are generated locally by Ollama — document text never leaves the machine at indexing time.
 - **Contextual summaries** (written per chunk at ingest time) are sent to the Groq API along with the chunk text. If this is unacceptable, point `CHUNK_LLM_API_BASE` at a local vLLM server and set `CHUNK_LLM_MODEL` accordingly.
 - **LLM inference** at query time sends only the retrieved chunks and the user query to the Groq API. To go fully air-gapped, point `GENERATION_API_BASE` at a local vLLM server and set `GENERATION_MODEL` accordingly.
@@ -359,6 +404,10 @@ All variables can be set in `.env`. See `.env.example` for a full annotated list
 | `RERANK_TOP_N` | `10` | Top chunks passed to the LLM after reranking |
 | `CHUNK_MAX_TOKENS` | `1024` | Maximum tokens per chunk |
 | `CHUNK_MIN_TOKENS` | `256` | Minimum tokens per chunk (smaller chunks are merged) |
+| `IMAGE_SIZE_LIMIT` | `0.05` | Fraction of page area; images smaller than this are skipped by pymupdf4llm |
+| `VLM_ENABLED` | `true` | Set `false` to skip VLM figure descriptions entirely (faster ingestion, no Groq calls) |
+| `VLM_PROVIDER` | `groq` | Provider for figure description calls |
+| `VLM_MODEL` | `meta-llama/llama-4-scout-17b-16e-instruct` | Vision model used for figure descriptions |
 
 ---
 
@@ -434,7 +483,7 @@ uv run python eval/evaluate_rag.py
 
 ## Tests
 
-65 tests, all mocked — no live services (Ollama, Qdrant, Groq) required to run CI.
+71 tests, all mocked — no live services (Ollama, Qdrant, Groq) required to run CI.
 
 | File | Tests | What's covered |
 |------|-------|----------------|
@@ -444,6 +493,7 @@ uv run python eval/evaluate_rag.py
 | `test_reranker.py` | 10 | BGEReranker and QwenReranker: output format, sort order, top-n, score ranges |
 | `test_rag_agent.py` | 17 | `ask_agent` history injection and answer extraction, `stream_agent` token streaming and `<think>` suppression, chunk collection, system prompt invariants |
 | `test_table_repair.py` | 16 | Three-pass table repair: two-row HTML headers, LaTeX column derivation, missing last-column recovery |
+| `test_pdf_parser.py` | 6 | Per-page routing (text-layer vs scanned), VLM enable/disable, VLM exception handling, mixed documents |
 
 ```bash
 uv run pytest tests/ -v
@@ -455,7 +505,8 @@ uv run pytest tests/ -v
 
 - **Very large Excel files** — files with 100k+ rows or 20+ sheets are ingested fully into memory. Expect slow ingestion and possible OOM errors; consider pre-filtering sheets before upload.
 - **Password-protected PDFs** — LightOn OCR receives the raw bytes and will fail or return empty output. There is no detection or user-facing warning; the file silently ingests as an empty document.
-- **Low-quality scans** — severely skewed, low-DPI, or handwritten content degrades OCR accuracy. Ingestion does not fail, but retrieved text may contain OCR artefacts that hurt retrieval precision.
+- **Low-quality scans** — severely skewed, low-DPI, or handwritten content degrades LightOn OCR accuracy. Ingestion does not fail, but retrieved text may contain OCR artefacts that hurt retrieval precision. Born-digital pages are unaffected (they bypass OCR entirely).
+- **VLM figure descriptions** — vector graphics in PDFs (e.g. matplotlib charts exported as PDF vectors) are rasterised and sent to Groq for description. If `GROQ_API_KEY` is unset or the Groq API is unavailable, figures are replaced with `[Figure: description unavailable]` and ingestion continues. Set `VLM_ENABLED=false` to skip all figure description calls.
 - **Complex PDF table layouts** — merged cells, rotated headers, and tables spanning multiple pages are parsed heuristically. The three-pass table repair handles common academic/GHG-report patterns; novel layouts may produce misaligned row-sentence chunks.
 - **Very long documents (500+ pages)** — the contextual enrichment step makes one LLM call per chunk. A 500-page technical report can generate 600+ chunks; at Groq free-tier rate limits this takes several minutes and may hit the requests-per-minute cap.
 - **Multi-language documents** — cross-lingual retrieval (Greek ↔ English) was removed from the pipeline. Documents in non-English languages can still be ingested and searched in their native language, but English queries will not retrieve non-English content and vice versa.
@@ -467,7 +518,8 @@ uv run pytest tests/ -v
 
 | Component | What fails | Symptom | Fix |
 |---|---|---|---|
-| LightOn OCR | vLLM server not running | Ingest crashes with `Connection refused` on port 8002 | `cd docker/ingestion-stack && ./up.sh` |
+| LightOn OCR | vLLM server not running | Scanned pages fail with `Connection refused` on port 8002; born-digital pages are unaffected | `cd docker/ingestion-stack && ./up.sh` |
+| VLM (figure descriptions) | Groq API unavailable or `VLM_ENABLED=false` | Figures replaced with `[Figure: description unavailable]`; ingestion continues | Set `GROQ_API_KEY` or set `VLM_ENABLED=false` to opt out |
 | Qdrant | Container not running | All queries return empty results | `docker compose up -d qdrant` |
 | Ollama / nomic-embed-text | Model not pulled | Embedding step fails | `ollama pull nomic-embed-text` |
 | Groq API | Missing or invalid `GROQ_API_KEY` | Generation returns 401 | Set `GROQ_API_KEY` in `.env` |

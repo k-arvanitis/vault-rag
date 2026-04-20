@@ -104,19 +104,30 @@ def _delete_file(file_name: str) -> None:
     delete_by_file(QDRANT_URL, QDRANT_COLLECTION, file_name)
 
 
-def _split_markdown_by_page(md_text: str) -> dict[int, str]:
-    """Split markdown into {page_number: content} using <!-- PAGE N --> markers."""
+def _split_markdown_by_page(md_text: str) -> tuple[dict[int, str], dict[int, str]]:
+    """Split markdown into page content and pipeline labels using <!-- PAGE N --> markers.
+
+    Supports both legacy <!-- PAGE N --> and new <!-- PAGE N | label --> formats.
+
+    Returns:
+        Tuple of (pages, pipelines) where each is a dict keyed by 1-based page number.
+    """
     import re
-    parts = re.split(r"<!--\s*PAGE\s+(\d+)\s*-->", md_text)
+    # Capture optional "| label" suffix
+    parts = re.split(r"<!--\s*PAGE\s+(\d+)(?:\s*\|([^-]*))?\s*-->", md_text)
     pages: dict[int, str] = {}
-    # parts = [pre_text, "1", content1, "2", content2, ...]
+    pipelines: dict[int, str] = {}
+    # parts = [pre_text, "1", label_or_None, content1, "2", label_or_None, content2, ...]
     i = 1
-    while i < len(parts) - 1:
+    while i < len(parts) - 2:
         page_num = int(parts[i])
-        content = parts[i + 1].strip()
+        label = (parts[i + 1] or "").strip()
+        content = parts[i + 2].strip()
         pages[page_num] = content
-        i += 2
-    return pages
+        if label:
+            pipelines[page_num] = label
+        i += 3
+    return pages, pipelines
 
 
 # ── session state ─────────────────────────────────────────────────────────────
@@ -253,17 +264,26 @@ with tab_inspect:
             with st.expander("Document Summary", expanded=True):
                 st.markdown(summary.replace("## Document Summary\n\n", ""))
 
-        if not pdf_path.exists():
-            st.warning("PDF not available locally — it was ingested before file saving was enabled.")
-        elif not md_path.exists():
+        pdf_available = pdf_path.exists()
+        md_available = md_path.exists()
+
+        if not pdf_available:
+            st.warning("Original PDF not available locally — showing parsed markdown only.")
+        if not md_available:
             st.info("Markdown not found. Re-ingest this PDF to generate it.")
-        else:
+
+        if md_available:
             import pypdfium2 as pdfium
-            pdf_doc = pdfium.PdfDocument(str(pdf_path))
             md_text = re.sub(r"\[TABLE_START\]\n?|\[TABLE_END\]\n?", "", md_path.read_text(encoding="utf-8"))
-            page_sections = _split_markdown_by_page(md_text)
-            n_pages = len(pdf_doc)
+            page_sections, page_pipelines = _split_markdown_by_page(md_text)
             has_markers = bool(page_sections)
+
+            if pdf_available:
+                pdf_doc = pdfium.PdfDocument(str(pdf_path))
+                n_pages = len(pdf_doc)
+            else:
+                pdf_doc = None
+                n_pages = max(page_sections.keys()) if page_sections else 0
 
             st.caption(f"{n_pages} pages · {'page-synced' if has_markers else 'no page markers — showing full markdown'}")
             st.divider()
@@ -271,24 +291,36 @@ with tab_inspect:
             if has_markers:
                 for i in range(n_pages):
                     page_num = i + 1
-                    col_pdf, col_md = st.columns(2)
-                    with col_pdf:
-                        st.caption(f"Page {page_num}")
-                        bitmap = pdf_doc[i].render(scale=2.0)
-                        st.image(bitmap.to_pil(), use_container_width=True)
-                    with col_md:
-                        st.caption(f"Parsed — page {page_num}")
+                    pipeline = page_pipelines.get(page_num, "")
+                    badge = f" · `{pipeline}`" if pipeline else ""
+
+                    if pdf_available:
+                        col_pdf, col_md = st.columns(2)
+                        with col_pdf:
+                            st.caption(f"Page {page_num}")
+                            bitmap = pdf_doc[i].render(scale=2.0)
+                            st.image(bitmap.to_pil(), use_container_width=True)
+                        with col_md:
+                            st.caption(f"Parsed — page {page_num}{badge}")
+                            section = page_sections.get(page_num, "_No content for this page._")
+                            st.markdown(section, unsafe_allow_html=True)
+                    else:
+                        st.caption(f"Page {page_num}{badge}")
                         section = page_sections.get(page_num, "_No content for this page._")
                         st.markdown(section, unsafe_allow_html=True)
                     st.divider()
             else:
-                # Fallback: all pages left, full markdown right
-                col_pdf, col_md = st.columns(2)
-                with col_pdf:
-                    st.subheader("Original PDF")
-                    for i in range(n_pages):
-                        bitmap = pdf_doc[i].render(scale=2.0)
-                        st.image(bitmap.to_pil(), caption=f"Page {i+1}", use_container_width=True)
-                with col_md:
+                # Fallback: full markdown (optionally side-by-side with PDF)
+                if pdf_available:
+                    col_pdf, col_md = st.columns(2)
+                    with col_pdf:
+                        st.subheader("Original PDF")
+                        for i in range(n_pages):
+                            bitmap = pdf_doc[i].render(scale=2.0)
+                            st.image(bitmap.to_pil(), caption=f"Page {i+1}", use_container_width=True)
+                    with col_md:
+                        st.subheader("Parsed & enhanced markdown")
+                        st.markdown(md_text, unsafe_allow_html=True)
+                else:
                     st.subheader("Parsed & enhanced markdown")
                     st.markdown(md_text, unsafe_allow_html=True)
