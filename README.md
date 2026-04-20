@@ -172,6 +172,7 @@ PDF tables detected during OCR are stored as a separate `[TABLE_START]...[TABLE_
                           │           figures → VLM (Groq)   │
                           │     NO  → LightOn OCR            │
                           │           (local vLLM, GPU)      │
+                          │           figures → Qwen (local) │
                           └────────────────┬─────────────────┘
                                            │ Markdown (per page)
                                            ▼
@@ -263,9 +264,13 @@ Scanned pages have no text layer — pymupdf4llm returns an empty string. A visi
 
 The routing threshold is 50 characters of extractable text per page. Mixed documents — a contract where pages 1–10 are digital and page 11 is a faxed addendum — are handled correctly per page with no configuration required.
 
-**Figure descriptions (pymupdf4llm path only)**
+**Figure descriptions — born-digital path**
 
 Figures in born-digital PDFs come in two forms: raster images written to disk by pymupdf4llm (appear as `![](path.png)` in the Markdown) and vector graphics whose underlying text pymupdf4llm extracts as raw labels (wrapped in `--- Start of picture text ---` blocks — typical for matplotlib or D3 charts). Both types are intercepted, the page region is cropped via fitz, and the image is sent to a vision model (Groq) for a natural-language description. The description is injected inline as `[Figure: ...]` so it enters the chunk index and is searchable.
+
+**Figure descriptions — scanned path**
+
+LightOn OCR does not describe figures natively. When it detects an image in the page it emits an `[IMAGE]` placeholder in its Markdown output. After OCR completes, a post-processing step (`_analyze_page_images_with_qwen`) detects these placeholders, crops the corresponding page regions, and calls a Qwen vision model to generate descriptions. The descriptions are injected in place of the `[IMAGE]` tokens before chunking — same inline `[Figure: ...]` format as the born-digital path.
 
 ### Deterministic point IDs (idempotent re-ingestion)
 
