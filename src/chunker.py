@@ -198,6 +198,30 @@ def chunk_markdown(
         encoding_name="cl100k_base",
     )
 
+    _figure_block_re = re.compile(
+        r'\[FIGURE_START\].*?\[FIGURE_END\]', re.DOTALL
+    )
+
+    def _split_protecting_figures(content: str, metadata: dict) -> list[Chunk]:
+        """Split content on token limit while keeping figure blocks atomic."""
+        result: list[Chunk] = []
+        parts = _figure_block_re.split(content)
+        figures = _figure_block_re.findall(content)
+        for idx, part in enumerate(parts):
+            part = part.strip()
+            if part:
+                token_count = len(tokenizer.encode(part))
+                if token_count <= max_tokens:
+                    result.append(Chunk(content=part, metadata=dict(metadata)))
+                else:
+                    for sub_doc in text_splitter.create_documents([part], metadatas=[metadata]):
+                        sub_content = sub_doc.page_content.strip()
+                        if sub_content:
+                            result.append(Chunk(content=sub_content, metadata=dict(sub_doc.metadata or {})))
+            if idx < len(figures):
+                result.append(Chunk(content=figures[idx].strip(), metadata=dict(metadata)))
+        return result
+
     chunks: list[Chunk] = []
     for section in header_splitter.split_text(text):
         content = section.page_content.strip()
@@ -209,11 +233,7 @@ def chunk_markdown(
         if token_count <= max_tokens:
             chunks.append(Chunk(content=content, metadata=dict(metadata)))
         else:
-            sub_docs = text_splitter.create_documents([content], metadatas=[metadata])
-            for sub_doc in sub_docs:
-                sub_content = sub_doc.page_content.strip()
-                if sub_content:
-                    chunks.append(Chunk(content=sub_content, metadata=dict(sub_doc.metadata or {})))
+            chunks.extend(_split_protecting_figures(content, metadata))
 
     compact_chunks: list[Chunk] = []
     for chunk in chunks:
@@ -234,17 +254,19 @@ def chunk_markdown(
         chunk_chars = len(chunk.content)
         has_table = "[TABLE_START]" in chunk.content
 
-        if has_table or chunk_chars >= min_chars:
+        has_figure = "[FIGURE_START]" in chunk.content
+
+        if has_table or has_figure or chunk_chars >= min_chars:
             merged_chunks.append(chunk)
             i += 1
             continue
 
-        if merged_chunks and "[TABLE_START]" not in merged_chunks[-1].content:
+        if merged_chunks and "[TABLE_START]" not in merged_chunks[-1].content and "[FIGURE_START]" not in merged_chunks[-1].content:
             merged_chunks[-1].content += "\n\n" + chunk.content
             i += 1
             continue
 
-        if i + 1 < len(compact_chunks) and "[TABLE_START]" not in compact_chunks[i + 1].content:
+        if i + 1 < len(compact_chunks) and "[TABLE_START]" not in compact_chunks[i + 1].content and "[FIGURE_START]" not in compact_chunks[i + 1].content:
             compact_chunks[i + 1].content = chunk.content + "\n\n" + compact_chunks[i + 1].content
             i += 1
             continue

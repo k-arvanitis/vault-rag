@@ -242,6 +242,31 @@ def _collect_subheaders(rows: list[list[Any]], after_idx: int) -> tuple[list[lis
     return subheaders, i
 
 
+def _format_cell(v: Any) -> str:
+    """Format one cell value for markdown/text chunk output."""
+    s = str(v).strip() if v is not None else ""
+    if not s:
+        return ""
+    try:
+        f = float(s.replace(",", ""))
+        if f == int(f):
+            return str(int(f))
+        if len(s) <= 12:
+            return s
+        return f"{f:.6g}"
+    except ValueError:
+        return s
+
+
+def _should_skip_data_row(row: list[Any]) -> bool:
+    """Return True when a table row is documentation or contains only no-data values."""
+    first_val = str(row[0]).strip().lower() if row and row[0] is not None else ""
+    if first_val in SKIP_ROW_VALUES:
+        return True
+    data_vals = [str(v).strip().lower() for v in row[1:] if v is not None and str(v).strip()]
+    return bool(data_vals) and all(v in NO_DATA_TOKENS for v in data_vals)
+
+
 def sheet_to_markdown(
     headers: list[str],
     data_rows: list[list[Any]],
@@ -254,42 +279,50 @@ def sheet_to_markdown(
     Sub-header rows (column annotations, units) are prepended after the separator
     so every chunk is self-contained.
     """
-    def _fmt(v: Any) -> str:
-        s = str(v).strip() if v is not None else ""
-        if not s:
-            return ""
-        try:
-            f = float(s.replace(",", ""))
-            # Keep integers as-is (IDs, order numbers, counts)
-            if f == int(f):
-                return str(int(f))
-            # Keep original string if short — preserves exact values like "27242.75"
-            if len(s) <= 12:
-                return s
-            # Truncate only very long floats (16-digit precision noise)
-            return f"{f:.6g}"
-        except ValueError:
-            return s
-
     lines = []
     lines.append("| " + " | ".join(str(h) for h in headers) + " |")
     lines.append("| " + " | ".join("---" for _ in headers) + " |")
 
     if subheader_rows:
         for sh_row in subheader_rows:
-            cells = [_fmt(sh_row[i]) if i < len(sh_row) else "" for i in range(len(headers))]
+            cells = [_format_cell(sh_row[i]) if i < len(sh_row) else "" for i in range(len(headers))]
             lines.append("| " + " | ".join(cells) + " |")
 
     for row in data_rows:
-        first_val = str(row[0]).strip().lower() if row and row[0] is not None else ""
-        if first_val in SKIP_ROW_VALUES:
+        if _should_skip_data_row(row):
             continue
-        data_vals = [str(v).strip().lower() for v in row[1:] if v is not None and str(v).strip()]
-        if data_vals and all(v in NO_DATA_TOKENS for v in data_vals):
-            continue
-        cells = [_fmt(row[i]) if i < len(row) else "" for i in range(len(headers))]
+        cells = [_format_cell(row[i]) if i < len(row) else "" for i in range(len(headers))]
         lines.append("| " + " | ".join(cells) + " |")
 
+    return "\n".join(lines)
+
+
+def row_to_chunk(
+    file_name: str,
+    sheet_name: str,
+    headers: list[str],
+    row: list[Any],
+    sheet_title: str = "",
+) -> str:
+    """Build a compact row-level chunk using the resolved table context."""
+    prefix_parts = [f"File: {file_name}", f"Sheet: {sheet_name}"]
+    if sheet_title:
+        prefix_parts.append(sheet_title)
+
+    row_label = _format_cell(row[0]) if row else ""
+    pairs = []
+    for idx, header in enumerate(headers):
+        if idx >= len(row):
+            continue
+        value = _format_cell(row[idx])
+        if not value:
+            continue
+        pairs.append(f"{header}: {value}")
+
+    lines = [f"[{' | '.join(prefix_parts)}]"]
+    if row_label:
+        lines.append(f"Row summary: {row_label}")
+    lines.append(" | ".join(pairs))
     return "\n".join(lines)
 
 
@@ -352,6 +385,43 @@ def _ensure_collection(collection: str, dim: int) -> None:
 def _upsert(collection: str, points: list[dict]) -> None:
     base = _qdrant_url().rstrip("/")
     _qdrant_request("PUT", f"{base}/collections/{collection}/points?wait=true", {"points": points})
+
+
+def _build_vector_field(text: str, sparse_embedder: Any) -> Any:
+    """Build dense or dense+sparse vectors for one chunk of table text."""
+    vec = _embed(text)
+    if sparse_embedder is None:
+        return vec
+    indices, values = sparse_embedder.embed(text)
+    return {"": vec, "sparse": {"indices": indices, "values": values}}
+
+
+def _build_table_point(
+    file_name: str,
+    sheet_name: str,
+    chunk_text: str,
+    chunk_type: str,
+    part_idx: int,
+    num_rows: int,
+    vector_field: Any,
+) -> dict[str, Any]:
+    """Build one Qdrant point for a table-derived chunk."""
+    prefix = "sheet" if chunk_type == "sheet_table" else "row"
+    return {
+        "id": _point_id(file_name, sheet_name, f"{prefix}:{part_idx}"),
+        "vector": vector_field,
+        "payload": {
+            "content": chunk_text,
+            "source_type": "table",
+            "metadata": {
+                "source_file": file_name,
+                "sheet_name": sheet_name,
+                "chunk_type": chunk_type,
+                "part": part_idx,
+                "num_rows": num_rows,
+            },
+        },
+    }
 
 def _point_id(file_name: str, sheet_name: str, key_suffix: Any) -> int:
     key = f"{file_name}::{sheet_name}::{key_suffix}"
@@ -462,6 +532,7 @@ def ingest_table_rows(
             sparse_embedder = None
 
         _ensure_collection_done = False
+        points: list[dict[str, Any]] = []
         # Save full sheet as markdown before chunking
         full_sheet_md = sheet_to_chunk(file_name, sheet_name, qualified_headers, data_rows, sheet_title, subheader_rows=subheader_rows)
         md_out_dir = REPO_ROOT / "data" / "output" / "table_markdowns"
@@ -485,41 +556,68 @@ def ingest_table_rows(
                 },
             })
 
-            vec = _embed(chunk_text)
+            try:
+                vector_field = _build_vector_field(chunk_text, sparse_embedder)
+            except Exception as e:
+                print(f"  [WARNING] Sparse embedding failed for part {part_idx}: {e}. Using dense only.")
+                vector_field = _embed(chunk_text)
             if not _ensure_collection_done:
-                _ensure_collection(collection, len(vec))
+                vec_size = len(vector_field[""]) if isinstance(vector_field, dict) else len(vector_field)
+                _ensure_collection(collection, vec_size)
                 _ensure_collection_done = True
+            points.append(_build_table_point(
+                file_name=file_name,
+                sheet_name=sheet_name,
+                chunk_text=chunk_text,
+                chunk_type="sheet_table",
+                part_idx=part_idx,
+                num_rows=len(window),
+                vector_field=vector_field,
+            ))
 
-            if sparse_embedder is not None:
-                try:
-                    indices, values = sparse_embedder.embed(chunk_text)
-                    vector_field: Any = {"": vec, "sparse": {"indices": indices, "values": values}}
-                except Exception as e:
-                    print(f"  [WARNING] Sparse embedding failed for part {part_idx}: {e}. Using dense only.")
-                    vector_field = vec
-            else:
-                vector_field = vec
-
-            point: dict = {
-                "id": _point_id(file_name, sheet_name, f"sheet:{part_idx}"),
-                "vector": vector_field,
-                "payload": {
-                    "content": chunk_text,
-                    "source_type": "table",
-                    "metadata": {
-                        "source_file": file_name,
-                        "sheet_name": sheet_name,
-                        "chunk_type": "sheet_table",
-                        "part": part_idx,
-                        "num_rows": len(window),
-                    },
+        row_chunk_count = 0
+        for row_idx, row in enumerate(data_rows):
+            if _should_skip_data_row(row):
+                continue
+            chunk_text = row_to_chunk(file_name, sheet_name, qualified_headers, row, sheet_title)
+            all_chunks.append({
+                "content": chunk_text,
+                "metadata": {
+                    "source_file": file_name,
+                    "sheet_name": sheet_name,
+                    "sheet_title": sheet_title,
+                    "chunk_type": "sheet_row",
+                    "part": row_idx,
+                    "num_rows": 1,
                 },
-            }
-            _upsert(collection, [point])
+            })
+
+            try:
+                vector_field = _build_vector_field(chunk_text, sparse_embedder)
+            except Exception as e:
+                print(f"  [WARNING] Sparse embedding failed for row {row_idx}: {e}. Using dense only.")
+                vector_field = _embed(chunk_text)
+            if not _ensure_collection_done:
+                vec_size = len(vector_field[""]) if isinstance(vector_field, dict) else len(vector_field)
+                _ensure_collection(collection, vec_size)
+                _ensure_collection_done = True
+            points.append(_build_table_point(
+                file_name=file_name,
+                sheet_name=sheet_name,
+                chunk_text=chunk_text,
+                chunk_type="sheet_row",
+                part_idx=row_idx,
+                num_rows=1,
+                vector_field=vector_field,
+            ))
+            row_chunk_count += 1
+
+        if points:
+            _upsert(collection, points)
 
         n_parts = len(row_windows)
         if verbose:
-            print(f"    → {n_parts} chunk(s) upserted ({len(data_rows)} rows)")
+            print(f"    → {n_parts} table chunk(s) + {row_chunk_count} row chunk(s) upserted ({len(data_rows)} rows)")
 
     out_path = _save_chunks_json(file_path, all_chunks)
     if verbose:

@@ -110,6 +110,48 @@ def _parse_text_layer_page(path: str, page_number: int, image_dir: str) -> str:
     ]
     all_matches.sort(key=lambda x: x[1].start())
 
+    # pymupdf4llm's internal OCR path silently skips image extraction.
+    # Fall back: use fitz directly to extract any embedded raster images that
+    # pymupdf4llm missed (i.e. not already referenced in page_markdown).
+    if VLM_ENABLED and not all_matches:
+        fitz_doc = fitz.open(path)
+        fitz_page = fitz_doc[page_number]
+        fitz_images = fitz_page.get_images(full=True)
+        if fitz_images:
+            page_rect = fitz_page.rect
+            image_info = fitz_page.get_image_info(hashes=False, xrefs=True)
+            # Build xref → bbox lookup
+            xref_to_bbox: dict[int, fitz.Rect] = {
+                info["xref"]: fitz.Rect(info["bbox"]) for info in image_info if "xref" in info
+            }
+            original_len = len(page_markdown)
+            insert_offset = 0
+            for img_info in fitz_images:
+                xref = img_info[0]
+                try:
+                    base_image = fitz_doc.extract_image(xref)
+                    img_bytes = base_image["image"]
+                    description = call_vlm_description(img_bytes)
+                except Exception:
+                    logger.exception("Fallback VLM extraction failed for page %d xref %d", page_number, xref)
+                    description = "description unavailable"
+                marker = f"[FIGURE_START]\n{description}\n[FIGURE_END]\n\n"
+                bbox = xref_to_bbox.get(xref)
+                if bbox and page_rect.height > 0:
+                    # y-fraction applied to original length, then shifted by prior insertions
+                    y_frac = bbox.y1 / page_rect.height
+                    target_char = int(y_frac * original_len) + insert_offset
+                    # Snap to the nearest paragraph break at or after target_char
+                    para_break = page_markdown.find("\n\n", target_char)
+                    if para_break == -1:
+                        para_break = len(page_markdown)
+                    pos = para_break
+                else:
+                    pos = len(page_markdown)
+                page_markdown = page_markdown[:pos] + "\n\n" + marker + page_markdown[pos:]
+                insert_offset += len(marker) + 2
+        return page_markdown
+
     if not all_matches:
         return page_markdown
 
@@ -135,7 +177,7 @@ def _parse_text_layer_page(path: str, page_number: int, image_dir: str) -> str:
             else:
                 logger.warning("Image file not found for page %d index %d: %s", page_number, img_idx, embedded_path)
                 description = "description unavailable"
-            replacements.append((match, f"[Figure: {description}]"))
+            replacements.append((match, f"[FIGURE_START]\n{description}\n[FIGURE_END]"))
 
         elif match_type == "picture_text":
             if not VLM_ENABLED:
@@ -153,7 +195,7 @@ def _parse_text_layer_page(path: str, page_number: int, image_dir: str) -> str:
             except Exception:
                 logger.exception("VLM render failed for picture text block page %d index %d", page_number, img_idx)
                 description = "description unavailable"
-            replacements.append((match, f"[Figure: {description}]"))
+            replacements.append((match, f"[FIGURE_START]\n{description}\n[FIGURE_END]"))
 
     # Apply replacements from end to start to preserve string positions
     for match, replacement in sorted(replacements, key=lambda x: x[0].start(), reverse=True):

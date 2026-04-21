@@ -174,6 +174,7 @@ def _make_unified_tool(
             content = (h.get("content", "") or "").strip()
             is_pdf_table = "[TABLE_START]" in content
             is_sheet_table = chunk_type == "sheet_table"
+            is_sheet_row = chunk_type == "sheet_row"
             # When filter_token matched an ID, extract only header + matching rows
             if filter_token and is_sheet_table:
                 lines = content.splitlines()
@@ -187,7 +188,7 @@ def _make_unified_tool(
                                        + table_lines[:sep_idx + 1] + matching)
             elif (is_pdf_table or is_sheet_table) and len(content) > max_table_chars:
                 content = content[:max_table_chars] + "\n… (truncated)"
-            elif not is_pdf_table and not is_sheet_table and len(content) > max_chunk_chars:
+            elif not is_pdf_table and not is_sheet_table and not is_sheet_row and len(content) > max_chunk_chars:
                 content = content[:max_chunk_chars] + "…"
             parts.append(f"[{i}] file={file_name} {location} score={score:.4f}\n{content}")
 

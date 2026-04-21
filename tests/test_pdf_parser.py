@@ -5,9 +5,7 @@ No real files or API calls are made.
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock, call, patch
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +97,7 @@ def test_text_layer_with_image_calls_vlm(tmp_path):
     img_file.write_bytes(b"fakepng")
 
     page_text = "B" * 60
-    page_md = f"# Title\n\n![](doc-0-0.png)\n\nMore text"
+    page_md = "# Title\n\n![](doc-0-0.png)\n\nMore text"
     vlm_desc = "A bar chart showing quarterly revenue."
 
     with (
@@ -122,7 +120,7 @@ def test_text_layer_with_image_calls_vlm(tmp_path):
 
         result = parse_pdf("doc.pdf")
 
-    assert result[0][0] == f"# Title\n\n[Figure: {vlm_desc}]\n\nMore text"
+    assert result[0][0] == f"# Title\n\n[FIGURE_START]\n{vlm_desc}\n[FIGURE_END]\n\nMore text"
     assert result[0][1] == "pymupdf4llm"
     mock_vlm.assert_called_once_with(b"fakepng")
 
@@ -167,7 +165,7 @@ def test_vlm_exception_inserts_fallback(tmp_path):
     img_file.write_bytes(b"fakepng")
 
     page_text = "D" * 60
-    page_md = f"# Title\n\n![](doc-0-0.png)\n\nText"
+    page_md = "# Title\n\n![](doc-0-0.png)\n\nText"
 
     with (
         patch("src.parser.pdf_parser.fitz") as mock_fitz,
@@ -190,11 +188,7 @@ def test_vlm_exception_inserts_fallback(tmp_path):
         # Must not raise
         result = parse_pdf("doc.pdf")
 
-    # vlm raises, but call_vlm_description itself is supposed to catch — simulate
-    # the real vlm.py catching it and returning "description unavailable"
-    # Here we test that pdf_parser also survives an uncaught exception from vlm.
-    # The replacement should be the fallback string.
-    assert "[Figure:" in result[0][0]
+    assert "[FIGURE_START]\ndescription unavailable\n[FIGURE_END]" in result[0][0]
 
 
 # ---------------------------------------------------------------------------

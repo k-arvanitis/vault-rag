@@ -8,27 +8,45 @@
 
 # Vault RAG
 
-A retrieval backend for business document intelligence. Upload your company's contracts, reports, invoices, and spreadsheets — then query across all of them at once in plain English, with cited answers.
+A production-minded document intelligence platform for heterogeneous business documents.
 
-The demo runs as a Streamlit app. The pipeline is designed to be embedded: as a Slack bot, an internal API, or a customer-facing assistant. Swap the UI layer; the retrieval backend stays unchanged.
+Vault RAG is built for the hard case most portfolio RAG demos avoid: messy enterprise document collections with mixed formats, mixed quality, and mixed retrieval needs. Instead of assuming one clean PDF and one chat UI, it ingests contracts, reports, spreadsheets, scanned PDFs, and figures into a single retrieval system, then exposes that system through separate operator and end-user interfaces.
+
+The Streamlit app is the operator control plane for ingestion, inspection, and tuning. Slack is the delivery surface for the rest of the team. Underneath both is the same retrieval backend: adaptive parsing, structure-aware chunking, hybrid retrieval, reranking, and cited answers.
 
 ---
 
 ## Why Vault RAG is different
 
-Most document RAG demos query a single clean PDF with fixed-size chunking. Vault RAG is built for real business document collections:
+Most document RAG demos are optimized for the easiest possible setup: one clean document type, one parser path, one chat UI, and no operational workflow. Vault RAG is designed for real document collections and the engineering tradeoffs they force:
 
-- **Cross-document retrieval** — queries run across all uploaded documents simultaneously. Answers can draw from a contract, a spreadsheet, and a scanned invoice in the same response.
-- **Two-path PDF parsing** — each page is routed independently: born-digital pages use pymupdf4llm (CPU, no API call, zero hallucination risk) while scanned pages use LightOn OCR (local vision-language model via vLLM). Mixed documents — a contract where most pages are digital but one page is a faxed addendum — are handled correctly without any manual configuration.
-- **5-stage chunking pipeline** — header-aware splitting, token-limit enforcement, tiny chunk merging, contextual summary per chunk (Anthropic Contextual Retrieval), and table-aware batching. Structure is preserved; chunks are never cut mid-table or mid-section.
-- **Hybrid search + reranking** — dense (nomic-embed-text) + sparse (BM25) vectors fused via RRF in Qdrant, HyDE query expansion, cross-encoder reranking. Both semantic and exact-match queries work on short or ambiguous input.
-- **Privacy-first** — parsing and embedding run entirely locally. Only retrieved chunks (not raw documents) leave the machine. Fully air-gappable by pointing generation endpoints at a local vLLM server.
+- **Built for heterogeneous corpora** — queries can span contracts, spreadsheets, scanned PDFs, reports, invoices, and figures in the same answer.
+- **Adaptive ingestion instead of one parser for everything** — each PDF page is routed independently: born-digital pages use pymupdf4llm while scanned pages use LightOn OCR. Mixed documents are handled correctly without manual preprocessing.
+- **Operator workflow separated from user workflow** — the Streamlit app is for ingestion, inspection, and tuning; Slack is the read-only query surface for the team.
+- **Retrieval quality engineered as a system** — structure-aware chunking, contextual summaries, hybrid dense+sparse search, HyDE, and reranking work together instead of relying on embeddings alone.
+- **Privacy-aware deployment model** — parsing and embeddings run locally, deployments are customer-isolated, and Slack is intentionally query-only.
+- **Debuggable by design** — document inspection, per-page pipeline labels, chunk visibility, and Langfuse traces make failures inspectable instead of opaque.
+
+---
+
+## Why this is not a tutorial project
+
+Vault RAG is not just a chat wrapper around a vector database. It combines several product-grade subsystems that could each stand alone:
+
+- **Adaptive ingestion engine** — routes born-digital and scanned pages differently, repairs OCR table failures, and enriches figures before indexing.
+- **Retrieval engine** — unifies structured and unstructured content with hybrid search, reranking, and agentic query decomposition.
+- **Operator console** — lets an admin ingest documents, inspect parsed output, validate retrieval, and debug chunk quality.
+- **Slack knowledge interface** — gives the team a familiar delivery surface without turning Slack into a document storage layer.
+- **Deployment and privacy model** — designed for customer-isolated instances, local parsing/embedding, and controlled data exposure.
+- **Observability and evaluation hooks** — chunk inspection, pipeline labels, traces, and an evaluation harness make the system measurable and debuggable.
+
+The point of the project is not narrow benchmark performance on a single domain. The point is building a document intelligence system that can survive contact with real business data.
 
 ---
 
 ## What it does
 
-Upload any business document and ask questions in plain English. Vault RAG searches across all your files simultaneously and returns a precise, cited answer — pulling from whichever documents contain the relevant information.
+Upload a mixed business document collection and ask questions in plain English. Vault RAG searches across all indexed files simultaneously and returns a precise, cited answer — pulling from whichever sources actually contain the evidence.
 
 **Example questions across a real document collection:**
 - "What are the payment terms in our supplier contract?"
@@ -37,11 +55,11 @@ Upload any business document and ask questions in plain English. Vault RAG searc
 - "Which invoices from last quarter exceeded the budget cap in the procurement policy?"
 
 Under the hood:
-- **Any file type** — PDFs (including scanned), Excel, CSV, Word, Markdown, and images ingested into a single unified search index.
-- **Two-path PDF parser** routes each page independently — pymupdf4llm for born-digital pages (fast, no API call), LightOn OCR for scanned pages (local vLLM). Embedded figures are described by a vision model (Groq) and injected inline as `[Figure: ...]` before chunking.
-- **5-stage chunking pipeline** preserves document structure and prepends a contextual summary to every chunk before embedding.
-- **Hybrid search + reranking** — dense + sparse vectors fused via RRF, re-scored by a cross-encoder. Semantic and exact-match queries both work.
-- **ReAct agent** (LangGraph) issues multiple search calls, reasons across results, and returns a cited answer. Every run traced in Langfuse.
+- **Cross-format retrieval** — PDFs (including scanned), Excel, CSV, Word, Markdown, and images are ingested into one unified search index.
+- **Per-page routing** — born-digital PDF pages go through pymupdf4llm; scanned pages go through LightOn OCR; figures are described by a vision model before chunking.
+- **Structure-aware chunking** — header-aware splitting, token control, small-chunk merging, contextual summaries, and table-aware batching preserve document structure.
+- **Hybrid retrieval stack** — dense + sparse vectors are fused via RRF, then reranked by a cross-encoder for better precision.
+- **Agentic answering** — a ReAct agent can issue multiple searches, reason across results, and return cited answers with Langfuse traces.
 
 Full technical breakdown in the Architecture and Chunking sections below.
 
