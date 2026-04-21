@@ -14,7 +14,7 @@ from openai import OpenAI
 import os
 import tiktoken
 
-from src.config import GROQ_API_KEY, CHUNK_LLM_API_BASE, CHUNK_LLM_MODEL
+from src.config import CHUNK_LLM_API_BASE, CHUNK_LLM_MODEL, CHUNK_LLM_API_KEY
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -181,7 +181,7 @@ def chunk_markdown(
 
     api_base = os.getenv("CHUNK_LLM_API_BASE", CHUNK_LLM_API_BASE)
     model_name = os.getenv("CHUNK_LLM_MODEL", CHUNK_LLM_MODEL)
-    api_key = GROQ_API_KEY or "no-key"
+    api_key = os.getenv("CHUNK_LLM_API_KEY", CHUNK_LLM_API_KEY) or "no-key"
     client = OpenAI(base_url=api_base, api_key=api_key)
 
     tokenizer = tiktoken.get_encoding("cl100k_base")

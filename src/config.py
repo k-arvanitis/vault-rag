@@ -29,13 +29,15 @@ GENERATION_MODEL: str = os.getenv("GENERATION_MODEL", "llama-3.3-70b-versatile")
 GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
 
 # Contextual summary LLM used during chunking (smaller/faster model than generation)
-CHUNK_LLM_API_BASE: str = os.getenv("CHUNK_LLM_API_BASE", "https://api.groq.com/openai/v1")
-CHUNK_LLM_MODEL: str = os.getenv("CHUNK_LLM_MODEL", "llama-3.1-8b-instant")
+CHUNK_LLM_API_BASE: str = os.getenv("CHUNK_LLM_API_BASE", "https://openrouter.ai/api/v1")
+CHUNK_LLM_MODEL: str = os.getenv("CHUNK_LLM_MODEL", "google/gemma-4-31b-it:free")
+# Key for the chunk LLM provider — defaults to OPENROUTER_API_KEY, falls back to GROQ_API_KEY
+CHUNK_LLM_API_KEY: str = os.getenv("CHUNK_LLM_API_KEY", os.getenv("OPENROUTER_API_KEY", os.getenv("GROQ_API_KEY", "")))
 
 OCR_API_BASE: str = os.getenv("OCR_API_BASE", "http://127.0.0.1:8002")
 OCR_MODEL: str = os.getenv("OCR_MODEL", "lightonocr-2-1b-ocr-soup")
 
-RERANKER_MODEL: str = os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
+RERANKER_MODEL: str = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
 RERANKER_DEVICE: str = os.getenv("RERANKER_DEVICE", "cpu")
 EMBED_DEVICE: str = os.getenv("EMBED_DEVICE", "cpu")
 
