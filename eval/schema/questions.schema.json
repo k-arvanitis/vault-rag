@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Vault RAG evaluation questions",
+  "type": "object",
+  "required": [
+    "qa_id",
+    "question",
+    "gold_answer",
+    "answer_type",
+    "question_type",
+    "difficulty",
+    "requires_cross_document",
+    "document_count",
+    "source_document_ids",
+    "gold_evidence",
+    "metadata"
+  ],
+  "properties": {
+    "qa_id": {"type": "string"},
+    "question": {"type": "string"},
+    "gold_answer": {"type": "string"},
+    "answer_type": {"type": "string"},
+    "question_type": {"type": "string"},
+    "difficulty": {"type": "string"},
+    "requires_cross_document": {"type": "boolean"},
+    "document_count": {"type": "integer"},
+    "reasoning_hops": {"type": "integer"},
+    "source_document_ids": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "gold_evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "doc_id": {"type": "string"},
+          "evidence_type": {"type": "string"},
+          "page": {"type": "integer"},
+          "sheet_name": {"type": "string"},
+          "row_ref": {"type": "string"},
+          "quote": {"type": "string"}
+        },
+        "required": ["doc_id", "evidence_type"],
+        "additionalProperties": false
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["modality_focus", "requires_ocr", "requires_table_reasoning"],
+      "properties": {
+        "modality_focus": {"type": "string"},
+        "requires_ocr": {"type": "boolean"},
+        "requires_table_reasoning": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

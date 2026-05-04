@@ -1,0 +1,218 @@
+[
+  {
+    "qa_id": "qa_1",
+    "question": "What is the total amount for transaction number 6091984?",
+    "gold_answer": "3,500,000.00",
+    "answer_type": "short_text",
+    "question_type": "table_lookup",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_007"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_007",
+        "evidence_type": "sheet_row",
+        "sheet_name": null,
+        "row_ref": "17687",
+        "quote": "Date: 04/04/2025 | Transaction Number: 6091984 | Beneficiary: ST LEGER HOMES OF DONCASTER LTD | Total: 3,500,000.00"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "table",
+      "requires_ocr": false,
+      "requires_table_reasoning": true
+    }
+  },
+  {
+    "qa_id": "qa_2",
+    "question": "On what date was transaction number 6123276 recorded?",
+    "gold_answer": "29/04/2025",
+    "answer_type": "short_text",
+    "question_type": "table_lookup",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_007"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_007",
+        "evidence_type": "sheet_row",
+        "sheet_name": null,
+        "row_ref": "17693",
+        "quote": "Date: 29/04/2025 | Transaction Number: 6123276 | Beneficiary: ST LEGER HOMES OF DONCASTER LTD | Total: 3,500,000.00"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "table",
+      "requires_ocr": false,
+      "requires_table_reasoning": true
+    }
+  },
+  {
+    "qa_id": "qa_3",
+    "question": "Who is the beneficiary for transaction number 6110140?",
+    "gold_answer": "DONCASTER SCHOOL SOLUTIONS LIMITED",
+    "answer_type": "short_text",
+    "question_type": "table_lookup",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_007"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_007",
+        "evidence_type": "sheet_row",
+        "sheet_name": null,
+        "row_ref": "17794",
+        "quote": "Date: 16/04/2025 | Transaction Number: 6110140 | Beneficiary: DONCASTER SCHOOL SOLUTIONS LIMITED | Total: 668,113.34"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "table",
+      "requires_ocr": false,
+      "requires_table_reasoning": true
+    }
+  },
+  {
+    "qa_id": "qa_4",
+    "question": "What is the beneficiary for the row with transaction number 6092074?",
+    "gold_answer": "WILLMOTT DIXON CONSTRUCTION LIMITED",
+    "answer_type": "short_text",
+    "question_type": "table_lookup",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_007"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_007",
+        "evidence_type": "sheet_row",
+        "sheet_name": null,
+        "row_ref": "5381",
+        "quote": "Date: 04/04/2025 | Transaction Number: 6092074 | Beneficiary: WILLMOTT DIXON CONSTRUCTION LIMITED | Total: 575,867.29"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "table",
+      "requires_ocr": false,
+      "requires_table_reasoning": true
+    }
+  },
+  {
+    "qa_id": "qa_5",
+    "question": "What was the total paid to WATES PROPERTY SERVICES LTD on transaction number 6110567?",
+    "gold_answer": "467,776.43",
+    "answer_type": "short_text",
+    "question_type": "table_lookup",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_007"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_007",
+        "evidence_type": "sheet_row",
+        "sheet_name": null,
+        "row_ref": "8409",
+        "quote": "Date: 16/04/2025 | Transaction Number: 6110567 | Beneficiary: WATES PROPERTY SERVICES LTD | Total: 467,776.43"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "table",
+      "requires_ocr": false,
+      "requires_table_reasoning": true
+    }
+  },
+  {
+    "qa_id": "qa_6",
+    "question": "Which beneficiary received 440,850.00 on 04/04/2025?",
+    "gold_answer": "THORNE MOORENDS TOWN COUNCIL",
+    "answer_type": "short_text",
+    "question_type": "table_lookup",
+    "difficulty": "medium",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_007"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_007",
+        "evidence_type": "sheet_row",
+        "sheet_name": null,
+        "row_ref": "13794",
+        "quote": "Date: 04/04/2025 | Transaction Number: 6092110 | Beneficiary: THORNE MOORENDS TOWN COUNCIL | Total: 440,850.00"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "table",
+      "requires_ocr": false,
+      "requires_table_reasoning": true
+    }
+  },
+  {
+    "qa_id": "qa_7",
+    "question": "Which local authority department is associated with transaction number 6104695?",
+    "gold_answer": "STRATEGIC HOUSING",
+    "answer_type": "short_text",
+    "question_type": "table_lookup",
+    "difficulty": "medium",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_007"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_007",
+        "evidence_type": "sheet_row",
+        "sheet_name": null,
+        "row_ref": "2143",
+        "quote": "Transaction Number: 6104695 | Local Authority Dept: STRATEGIC HOUSING | Beneficiary: GATELEY LLP | Total: 428,728.00"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "table",
+      "requires_ocr": false,
+      "requires_table_reasoning": true
+    }
+  },
+  {
+    "qa_id": "qa_8",
+    "question": "What is the merchant category for transaction number 6103921?",
+    "gold_answer": "COMMUNICATIONS AND COMPUTING",
+    "answer_type": "short_text",
+    "question_type": "table_lookup",
+    "difficulty": "medium",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_007"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_007",
+        "evidence_type": "sheet_row",
+        "sheet_name": null,
+        "row_ref": "17133",
+        "quote": "Transaction Number: 6103921 | Merchant Category: COMMUNICATIONS AND COMPUTING | Beneficiary: VIRGIN MEDIA PAYMENTS LTD | Total: 233,070.76"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "table",
+      "requires_ocr": false,
+      "requires_table_reasoning": true
+    }
+  }
+]

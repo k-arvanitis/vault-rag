@@ -1,0 +1,138 @@
+[
+  {
+    "qa_id": "qa_1",
+    "question": "Which document allows a longer extension period: the procurement policy or the services contract terms?",
+    "gold_answer": "The procurement policy allows a longer extension: up to 2 years, versus up to 6 months in the services contract terms.",
+    "answer_type": "short_text",
+    "question_type": "cross_document_compare",
+    "difficulty": "medium",
+    "requires_cross_document": true,
+    "document_count": 2,
+    "reasoning_hops": 2,
+    "source_document_ids": [
+      "doc_001",
+      "doc_002"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_001",
+        "evidence_type": "page_span",
+        "page": 16,
+        "quote": "Contracts shall be limited to a maximum of five (5) consecutive years with an optional extension of up to two years."
+      },
+      {
+        "doc_id": "doc_002",
+        "evidence_type": "page_span",
+        "page": 3,
+        "quote": "The Customer may extend the Agreement for a period of up to 6 months"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "cross_document",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_2",
+    "question": "Which document explicitly requires legal review or approval before contracts proceed, while the other focuses instead on customer-issued notices for varying the service scope?",
+    "gold_answer": "The procurement policy requires Legal Office review and approval of all contracts, while the services contract terms focus on written notice from the Customer to request a variation to the scope of the Services.",
+    "answer_type": "short_text",
+    "question_type": "cross_document_compare",
+    "difficulty": "hard",
+    "requires_cross_document": true,
+    "document_count": 2,
+    "reasoning_hops": 2,
+    "source_document_ids": [
+      "doc_001",
+      "doc_002"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_001",
+        "evidence_type": "page_span",
+        "page": 16,
+        "quote": "The Legal Office must review and approve all Contracts."
+      },
+      {
+        "doc_id": "doc_002",
+        "evidence_type": "page_span",
+        "page": 3,
+        "quote": "The Customer may by written notice to the Supplier at any time request a variation to the scope of the Services."
+      }
+    ],
+    "metadata": {
+      "modality_focus": "cross_document",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_3",
+    "question": "Which document sets a shorter deadline tied to information requests, and what are the two deadlines?",
+    "gold_answer": "The services contract terms set the shorter deadline: transfer Requests for Information within 2 Working Days, while the procurement policy requires emergency purchase documentation within 7 calendar days.",
+    "answer_type": "short_text",
+    "question_type": "cross_document_compare",
+    "difficulty": "hard",
+    "requires_cross_document": true,
+    "document_count": 2,
+    "reasoning_hops": 2,
+    "source_document_ids": [
+      "doc_001",
+      "doc_002"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_001",
+        "evidence_type": "page_span",
+        "page": 11,
+        "quote": "Within seven (7) calendar days of any emergency purchase, a complete description of the emergent circumstances and justification for making the purchase outside the requirements set forth in this Policy shall be documented in writing"
+      },
+      {
+        "doc_id": "doc_002",
+        "evidence_type": "page_span",
+        "page": 9,
+        "quote": "transfer to the Customer all Requests for Information relating to this Agreement that it receives as soon as practicable and in any event within 2 Working Days of receipt"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "cross_document",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_4",
+    "question": "Which document explicitly prohibits evergreen arrangements, while the other instead states that the agreement runs from the Start Date to the Expiry Date unless extended or terminated?",
+    "gold_answer": "The procurement policy prohibits evergreen contracts, while the services contract terms state that the agreement runs from the Start Date to the Expiry Date unless extended or terminated.",
+    "answer_type": "short_text",
+    "question_type": "cross_document_compare",
+    "difficulty": "medium",
+    "requires_cross_document": true,
+    "document_count": 2,
+    "reasoning_hops": 2,
+    "source_document_ids": [
+      "doc_001",
+      "doc_002"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_001",
+        "evidence_type": "page_span",
+        "page": 16,
+        "quote": "Evergreen Contracts are prohibited, unless approved by the Board of Retirement."
+      },
+      {
+        "doc_id": "doc_002",
+        "evidence_type": "page_span",
+        "page": 3,
+        "quote": "The Agreement shall take effect on the Start Date and shall expire on the Expiry Date, unless it is otherwise extended in accordance with clause 4.2 or terminated"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "cross_document",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  }
+]

@@ -1,0 +1,104 @@
+[
+  {
+    "qa_id": "qa_1",
+    "question": "Which document in the corpus states the CEO salary of Simple Sanitation Inc?",
+    "gold_answer": "Unsupported",
+    "answer_type": "abstain",
+    "question_type": "unanswerable",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 0,
+    "source_document_ids": [],
+    "gold_evidence": [],
+    "metadata": {
+      "modality_focus": "unsupported",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_2",
+    "question": "What is the home address of the authorizing manager named in the procurement policy?",
+    "gold_answer": "Unsupported",
+    "answer_type": "abstain",
+    "question_type": "unanswerable",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 0,
+    "source_document_ids": [],
+    "gold_evidence": [],
+    "metadata": {
+      "modality_focus": "unsupported",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_3",
+    "question": "Which document provides the CEO salary for Doncaster School Solutions Limited?",
+    "gold_answer": "Unsupported",
+    "answer_type": "abstain",
+    "question_type": "unanswerable",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 0,
+    "source_document_ids": [],
+    "gold_evidence": [],
+    "metadata": {
+      "modality_focus": "unsupported",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_4",
+    "question": "What is the personal email address of the Federal Reserve report author?",
+    "gold_answer": "Unsupported",
+    "answer_type": "abstain",
+    "question_type": "unanswerable",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 0,
+    "source_document_ids": [],
+    "gold_evidence": [],
+    "metadata": {
+      "modality_focus": "unsupported",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_5",
+    "question": "Which document gives the GPS coordinates of Llano Airport fuel transactions?",
+    "gold_answer": "Unsupported",
+    "answer_type": "abstain",
+    "question_type": "unanswerable",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 0,
+    "source_document_ids": [],
+    "gold_evidence": [],
+    "metadata": {
+      "modality_focus": "unsupported",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_6",
+    "question": "What is the Slack workspace URL used by the agencies discussed in the corpus?",
+    "gold_answer": "Unsupported",
+    "answer_type": "abstain",
+    "question_type": "unanswerable",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 0,
+    "source_document_ids": [],
+    "gold_evidence": [],
+    "metadata": {
+      "modality_focus": "unsupported",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  }
+]

@@ -1,0 +1,132 @@
+[
+  {
+    "qa_id": "qa_1",
+    "question": "What is the title of the document?",
+    "gold_answer": "Appendix C \u2013 Terms and Conditions of Contract for Services",
+    "answer_type": "short_text",
+    "question_type": "ocr_extraction",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_002_services_contract_terms"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_002_services_contract_terms",
+        "evidence_type": "ocr_page",
+        "page": 1,
+        "quote": "Appendix C \u2013 Terms and Conditions of Contract for Services"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "ocr",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_2",
+    "question": "Which agency is listed in the document header?",
+    "gold_answer": "Government Property Agency",
+    "answer_type": "short_text",
+    "question_type": "ocr_extraction",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_002_services_contract_terms"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_002_services_contract_terms",
+        "evidence_type": "ocr_page",
+        "page": 1,
+        "quote": "Government Property Agency"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "ocr",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_3",
+    "question": "What is the version number of the document?",
+    "gold_answer": "V2.0",
+    "answer_type": "short_text",
+    "question_type": "ocr_extraction",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_002_services_contract_terms"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_002_services_contract_terms",
+        "evidence_type": "ocr_page",
+        "page": 1,
+        "quote": "V2.0 01/04/2018"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "ocr",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_4",
+    "question": "What does \"FOIA\" stand for in the document?",
+    "gold_answer": "Freedom of Information Act 2000",
+    "answer_type": "short_text",
+    "question_type": "ocr_extraction",
+    "difficulty": "medium",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_002_services_contract_terms"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_002_services_contract_terms",
+        "evidence_type": "ocr_page",
+        "page": 1,
+        "quote": "\u201cFOIA\u201d means the Freedom of Information Act 2000;"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "ocr",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_5",
+    "question": "What law governs the agreement according to the document?",
+    "gold_answer": "English law",
+    "answer_type": "short_text",
+    "question_type": "ocr_extraction",
+    "difficulty": "medium",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_002_services_contract_terms"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_002_services_contract_terms",
+        "evidence_type": "ocr_page",
+        "page": 14,
+        "quote": "shall be governed by English law"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "ocr",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  }
+]

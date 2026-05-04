@@ -1,0 +1,116 @@
+[
+  {
+    "qa_id": "qa_1",
+    "question": "Which document is about portable toilet rental invoices for Village special events, and which document is a fuel transaction invoice for Llano Airport site 0001?",
+    "gold_answer": "doc_004 is the portable toilet invoice packet; doc_005 is the fuel transaction invoice for Llano Airport site 0001.",
+    "answer_type": "short_text",
+    "question_type": "cross_document_compare",
+    "difficulty": "medium",
+    "requires_cross_document": true,
+    "document_count": 2,
+    "reasoning_hops": 2,
+    "source_document_ids": [
+      "doc_004",
+      "doc_005"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_004",
+        "evidence_type": "page_span",
+        "page": 1,
+        "quote": "\"looking for information from 09/01/2023 thru 10/01/2024 portable rental toilet & dumpster that Village has for village special events.\""
+      },
+      {
+        "doc_id": "doc_005",
+        "evidence_type": "page_span",
+        "page": 1,
+        "quote": "\"Transactions for SITE ID: 0001 ... Llano Airport\" and \"CUSTOMER INVOICE\""
+      }
+    ],
+    "metadata": {
+      "modality_focus": "cross_document",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_2",
+    "question": "What is the difference between the total amount due across the two Simple Sanitation invoices in doc_004 and the total cost shown in doc_005?",
+    "gold_answer": "$2,849.04",
+    "answer_type": "short_text",
+    "question_type": "cross_document_compare",
+    "difficulty": "hard",
+    "requires_cross_document": true,
+    "document_count": 2,
+    "reasoning_hops": 2,
+    "source_document_ids": [
+      "doc_004",
+      "doc_005"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_004",
+        "evidence_type": "page_span",
+        "page": 2,
+        "quote": "\"Please Pay $230.00\""
+      },
+      {
+        "doc_id": "doc_004",
+        "evidence_type": "page_span",
+        "page": 3,
+        "quote": "\"Please Pay $230.00\""
+      },
+      {
+        "doc_id": "doc_005",
+        "evidence_type": "page_span",
+        "page": 1,
+        "quote": "\"Total for 25 transactions 711.62 3,309.04\""
+      }
+    ],
+    "metadata": {
+      "modality_focus": "cross_document",
+      "requires_ocr": false,
+      "requires_table_reasoning": true
+    }
+  },
+  {
+    "qa_id": "qa_3",
+    "question": "Which document covers September-October 2023 billing for Village of Bensenville, and which covers August 24-25, 2012 transactions ending on August 26, 2012 for Llano Airport?",
+    "gold_answer": "doc_004 covers Sep-Oct 2023 Village of Bensenville billing; doc_005 covers Aug 24-25, 2012 Llano Airport transactions with the invoice printed on Aug 26, 2012.",
+    "answer_type": "short_text",
+    "question_type": "cross_document_compare",
+    "difficulty": "medium",
+    "requires_cross_document": true,
+    "document_count": 2,
+    "reasoning_hops": 2,
+    "source_document_ids": [
+      "doc_004",
+      "doc_005"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_004",
+        "evidence_type": "page_span",
+        "page": 2,
+        "quote": "\"Billing Period Sep 1, 2023 - Sep 30, 2023\""
+      },
+      {
+        "doc_id": "doc_004",
+        "evidence_type": "page_span",
+        "page": 3,
+        "quote": "\"Billing Period Oct 1, 2023 - Oct 31, 2023\""
+      },
+      {
+        "doc_id": "doc_005",
+        "evidence_type": "page_span",
+        "page": 1,
+        "quote": "\"From Date: 8/24/2012\" ... \"To Date: 8/26/2012\" and transaction rows for \"8/24/2012\" and \"8/25/2012\""
+      }
+    ],
+    "metadata": {
+      "modality_focus": "cross_document",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  }
+]

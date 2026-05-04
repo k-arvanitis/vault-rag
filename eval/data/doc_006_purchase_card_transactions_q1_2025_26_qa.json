@@ -1,0 +1,218 @@
+[
+  {
+    "qa_id": "qa_1",
+    "question": "What is the NET Amount for the row with supplier Google Ads2372193163?",
+    "gold_answer": "402.89",
+    "answer_type": "short_text",
+    "question_type": "table_lookup",
+    "difficulty": "medium",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_006"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_006",
+        "evidence_type": "sheet_row",
+        "sheet_name": "DataAnalysis",
+        "row_ref": "2",
+        "quote": "Transaction Date: 2025-04-01; Directorate: CHILDREN,YOUNG PEOPLE&FAMILIES; Department: CiC AND FOSTERING; NET Amount: 402.89; Supplier Name: Google Ads2372193163; Purchase of Expenditure: ADVERTISING COSTS; Merchant Category: Business Services"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "table",
+      "requires_ocr": false,
+      "requires_table_reasoning": true
+    }
+  },
+  {
+    "qa_id": "qa_2",
+    "question": "Which supplier appears on the row where the Department is BUSINESS DONCASTER and the NET Amount is 206?",
+    "gold_answer": "Doncaster Mbc",
+    "answer_type": "short_text",
+    "question_type": "table_lookup",
+    "difficulty": "medium",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_006"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_006",
+        "evidence_type": "sheet_row",
+        "sheet_name": "DataAnalysis",
+        "row_ref": "7",
+        "quote": "Transaction Date: 2025-04-01; Directorate: CHIEF EXECUTIVE; Department: BUSINESS DONCASTER; NET Amount: 206; Supplier Name: Doncaster Mbc; Purchase of Expenditure: EQUIPMENT; Merchant Category: Government"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "table",
+      "requires_ocr": false,
+      "requires_table_reasoning": true
+    }
+  },
+  {
+    "qa_id": "qa_3",
+    "question": "What is the Purchase of Expenditure for the transaction with supplier Asda Groceries Online?",
+    "gold_answer": "CATERING",
+    "answer_type": "short_text",
+    "question_type": "table_lookup",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_006"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_006",
+        "evidence_type": "sheet_row",
+        "sheet_name": "DataAnalysis",
+        "row_ref": "6",
+        "quote": "Transaction Date: 2025-04-01; Directorate: CHILDREN,YOUNG PEOPLE&FAMILIES; Department: RESIDENTIAL& INSPIRING FUTURES; NET Amount: 217.75; Supplier Name: Asda Groceries Online; Purchase of Expenditure: CATERING; Merchant Category: Retail"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "table",
+      "requires_ocr": false,
+      "requires_table_reasoning": true
+    }
+  },
+  {
+    "qa_id": "qa_4",
+    "question": "Which Merchant Category is listed for the supplier Hm Passport Office on the 88.5 transaction?",
+    "gold_answer": "Government",
+    "answer_type": "short_text",
+    "question_type": "table_lookup",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_006"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_006",
+        "evidence_type": "sheet_row",
+        "sheet_name": "DataAnalysis",
+        "row_ref": "21",
+        "quote": "Transaction Date: 2025-04-01; Directorate: CHILDREN,YOUNG PEOPLE&FAMILIES; Department: CiC AND FOSTERING; NET Amount: 88.5; Supplier Name: Hm Passport Office; Purchase of Expenditure: EQUIPMENT; Merchant Category: Government"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "table",
+      "requires_ocr": false,
+      "requires_table_reasoning": true
+    }
+  },
+  {
+    "qa_id": "qa_5",
+    "question": "What department is listed for the supplier Citycoseals?",
+    "gold_answer": "LEGAL SERVICES",
+    "answer_type": "short_text",
+    "question_type": "table_lookup",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_006"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_006",
+        "evidence_type": "sheet_row",
+        "sheet_name": "DataAnalysis",
+        "row_ref": "15",
+        "quote": "Transaction Date: 2025-04-01; Directorate: CORPORATE RESOURCES; Department: LEGAL SERVICES; NET Amount: 164.99; Supplier Name: Citycoseals; Purchase of Expenditure: EQUIPMENT; Merchant Category: Misc Store"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "table",
+      "requires_ocr": false,
+      "requires_table_reasoning": true
+    }
+  },
+  {
+    "qa_id": "qa_6",
+    "question": "What is the Purchase of Expenditure for the Trainline transaction?",
+    "gold_answer": "STAFF TRAVEL EXPENSES",
+    "answer_type": "short_text",
+    "question_type": "table_lookup",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_006"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_006",
+        "evidence_type": "sheet_row",
+        "sheet_name": "DataAnalysis",
+        "row_ref": "29",
+        "quote": "Transaction Date: 2025-04-01; Directorate: CHILDREN,YOUNG PEOPLE&FAMILIES; Department: RESIDENTIAL& INSPIRING FUTURES; NET Amount: 55.29; Supplier Name: 687 - Wilmington; Purchase of Expenditure: EQUIPMENT; Merchant Category: Retail"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "table",
+      "requires_ocr": false,
+      "requires_table_reasoning": true
+    }
+  },
+  {
+    "qa_id": "qa_7",
+    "question": "Which supplier is listed on the LEGAL SERVICES row with NET Amount 40 and Purchase of Expenditure TENANTS?",
+    "gold_answer": "Moj Ospt Ecom",
+    "answer_type": "short_text",
+    "question_type": "table_lookup",
+    "difficulty": "medium",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_006"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_006",
+        "evidence_type": "sheet_row",
+        "sheet_name": "DataAnalysis",
+        "row_ref": "40",
+        "quote": "Transaction Date: 2025-04-01; Directorate: CORPORATE RESOURCES; Department: LEGAL SERVICES; NET Amount: 40; Supplier Name: Moj Ospt Ecom; Purchase of Expenditure: TENANTS; Merchant Category: Government"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "table",
+      "requires_ocr": false,
+      "requires_table_reasoning": true
+    }
+  },
+  {
+    "qa_id": "qa_8",
+    "question": "What is the NET Amount for the supplier Cash Converters Yorkshir?",
+    "gold_answer": "99.99",
+    "answer_type": "short_text",
+    "question_type": "table_lookup",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_006"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_006",
+        "evidence_type": "sheet_row",
+        "sheet_name": "DataAnalysis",
+        "row_ref": "20",
+        "quote": "Transaction Date: 2025-04-01; Directorate: ADULTS, WELLBEING AND CULTURE; Department: ADULT SOCIAL CARE-CARE&SUPPORT; NET Amount: 99.99; Supplier Name: Cash Converters Yorkshir; Purchase of Expenditure: OTHER SERVICES; Merchant Category: Service Provider"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "table",
+      "requires_ocr": false,
+      "requires_table_reasoning": true
+    }
+  }
+]

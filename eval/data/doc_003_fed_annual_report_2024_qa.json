@@ -1,0 +1,132 @@
+[
+  {
+    "qa_id": "qa_1",
+    "question": "What is the title of the report?",
+    "gold_answer": "111th Annual Report of the Board of Governors of the Federal Reserve System",
+    "answer_type": "short_text",
+    "question_type": "ocr_extraction",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_003_fed_annual_report_2024"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_003_fed_annual_report_2024",
+        "evidence_type": "ocr_page",
+        "page": 1,
+        "quote": "111th Annual Report of the Board of Governors of the Federal Reserve System"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "ocr",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_2",
+    "question": "What year does the report cover?",
+    "gold_answer": "2024",
+    "answer_type": "short_text",
+    "question_type": "ocr_extraction",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_003_fed_annual_report_2024"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_003_fed_annual_report_2024",
+        "evidence_type": "ocr_page",
+        "page": 1,
+        "quote": "2024"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "ocr",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_3",
+    "question": "What organization issued the report?",
+    "gold_answer": "BOARD OF GOVERNORS OF THE FEDERAL RESERVE SYSTEM",
+    "answer_type": "short_text",
+    "question_type": "ocr_extraction",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_003_fed_annual_report_2024"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_003_fed_annual_report_2024",
+        "evidence_type": "ocr_page",
+        "page": 1,
+        "quote": "BOARD OF GOVERNORS OF THE FEDERAL RESERVE SYSTEM"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "ocr",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_4",
+    "question": "How many Federal Reserve Districts were created when the Federal Reserve System was established?",
+    "gold_answer": "12",
+    "answer_type": "short_text",
+    "question_type": "ocr_extraction",
+    "difficulty": "medium",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_003_fed_annual_report_2024"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_003_fed_annual_report_2024",
+        "evidence_type": "ocr_page",
+        "page": 5,
+        "quote": "the United States was divided geographically into 12 Districts"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "ocr",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_5",
+    "question": "On what date was the Federal Reserve created according to the report?",
+    "gold_answer": "December 23, 1913",
+    "answer_type": "short_text",
+    "question_type": "ocr_extraction",
+    "difficulty": "medium",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_003_fed_annual_report_2024"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_003_fed_annual_report_2024",
+        "evidence_type": "ocr_page",
+        "page": 5,
+        "quote": "The Federal Reserve was created by an act of Congress on December 23, 1913"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "ocr",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  }
+]

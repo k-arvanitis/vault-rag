@@ -1,0 +1,104 @@
+[
+  {
+    "qa_id": "qa_1",
+    "question": "Which document focuses on monitoring financial stability vulnerabilities, while the other focuses on reducing fragmentation, overlap, and duplication across the federal government?",
+    "gold_answer": "doc_003 focuses on financial stability vulnerabilities; doc_008 focuses on fragmentation, overlap, and duplication.",
+    "answer_type": "short_text",
+    "question_type": "cross_document_compare",
+    "difficulty": "medium",
+    "requires_cross_document": true,
+    "document_count": 2,
+    "reasoning_hops": 2,
+    "source_document_ids": [
+      "doc_003",
+      "doc_008"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_003",
+        "evidence_type": "page_span",
+        "page": 22,
+        "quote": "Each quarter, Federal Reserve Board staff assess a set of four vulnerabilities relevant for financial stability."
+      },
+      {
+        "doc_id": "doc_008",
+        "evidence_type": "page_span",
+        "page": 2,
+        "quote": "Additional Opportunities to Reduce Fragmentation, Overlap, and Duplication and Achieve Billions of Dollars in Financial Benefits"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "cross_document",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_2",
+    "question": "Which document states that the financial system remains sound and resilient, and which document reports about $667.5 billion in financial benefits?",
+    "gold_answer": "doc_003 states the financial system remains sound and resilient; doc_008 reports about $667.5 billion in financial benefits.",
+    "answer_type": "short_text",
+    "question_type": "cross_document_compare",
+    "difficulty": "medium",
+    "requires_cross_document": true,
+    "document_count": 2,
+    "reasoning_hops": 2,
+    "source_document_ids": [
+      "doc_003",
+      "doc_008"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_003",
+        "evidence_type": "page_span",
+        "page": 11,
+        "quote": "Financial stability. The financial system remains sound and resilient."
+      },
+      {
+        "doc_id": "doc_008",
+        "evidence_type": "page_span",
+        "page": 1,
+        "quote": "Actions by Congress and federal agencies in these areas have resulted in about $667.5 billion in financial benefits."
+      }
+    ],
+    "metadata": {
+      "modality_focus": "cross_document",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_3",
+    "question": "Which document identifies four key vulnerabilities, and which document identifies 42 new topic areas and 112 new matters and recommendations?",
+    "gold_answer": "doc_003 identifies four key vulnerabilities; doc_008 identifies 42 new topic areas and 112 new matters and recommendations.",
+    "answer_type": "short_text",
+    "question_type": "cross_document_compare",
+    "difficulty": "hard",
+    "requires_cross_document": true,
+    "document_count": 2,
+    "reasoning_hops": 2,
+    "source_document_ids": [
+      "doc_003",
+      "doc_008"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_003",
+        "evidence_type": "page_span",
+        "page": 22,
+        "quote": "The Federal Reserve assesses four key vulnerabilities in monitoring financial stability"
+      },
+      {
+        "doc_id": "doc_008",
+        "evidence_type": "page_span",
+        "page": 2,
+        "quote": "GAO identified 112 new matters and recommendations in 42 new topic areas for Congress or federal agencies to improve the efficiency and effectiveness of government."
+      }
+    ],
+    "metadata": {
+      "modality_focus": "cross_document",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  }
+]

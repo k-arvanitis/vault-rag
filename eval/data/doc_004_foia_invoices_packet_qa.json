@@ -1,0 +1,132 @@
+[
+  {
+    "qa_id": "qa_1",
+    "question": "What is the invoice number on the September 1, 2023 invoice?",
+    "gold_answer": "130114",
+    "answer_type": "short_text",
+    "question_type": "ocr_extraction",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_004_foia_invoices_packet"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_004_foia_invoices_packet",
+        "evidence_type": "ocr_page",
+        "page": 2,
+        "quote": "Invoice Number 130114"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "ocr",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_2",
+    "question": "Who is the supplier listed on the invoices?",
+    "gold_answer": "Simple Sanitation Inc",
+    "answer_type": "short_text",
+    "question_type": "ocr_extraction",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_004_foia_invoices_packet"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_004_foia_invoices_packet",
+        "evidence_type": "ocr_page",
+        "page": 2,
+        "quote": "Simple Sanitation Inc"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "ocr",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_3",
+    "question": "What is the amount due on invoice 130714?",
+    "gold_answer": "$230.00",
+    "answer_type": "short_text",
+    "question_type": "ocr_extraction",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_004_foia_invoices_packet"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_004_foia_invoices_packet",
+        "evidence_type": "ocr_page",
+        "page": 3,
+        "quote": "Amount Due $230.00"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "ocr",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_4",
+    "question": "What address is listed for the Village of Bensenville on the invoices?",
+    "gold_answer": "545 John St, Bensenville, IL 60106",
+    "answer_type": "short_text",
+    "question_type": "ocr_extraction",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_004_foia_invoices_packet"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_004_foia_invoices_packet",
+        "evidence_type": "ocr_page",
+        "page": 2,
+        "quote": "Village of Bensenville 545 John St Bensenville, IL 60106"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "ocr",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_5",
+    "question": "What is the due date for invoice 130114?",
+    "gold_answer": "Oct 1, 2023",
+    "answer_type": "short_text",
+    "question_type": "ocr_extraction",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_004_foia_invoices_packet"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_004_foia_invoices_packet",
+        "evidence_type": "ocr_page",
+        "page": 2,
+        "quote": "Due By Oct 1, 2023"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "ocr",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  }
+]

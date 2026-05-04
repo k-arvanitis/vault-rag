@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Vault RAG document manifest",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": [
+      "doc_id",
+      "title",
+      "publisher",
+      "source_url",
+      "accessed_at",
+      "file_name",
+      "format",
+      "source_type",
+      "parsing_path_expected",
+      "primary_role",
+      "modality_tags",
+      "retrieval_challenges",
+      "download_status"
+    ],
+    "properties": {
+      "doc_id": {"type": "string"},
+      "title": {"type": "string"},
+      "publisher": {"type": "string"},
+      "source_url": {"type": "string"},
+      "source_page_url": {"type": ["string", "null"]},
+      "accessed_at": {"type": "string"},
+      "sha256": {"type": ["string", "null"]},
+      "file_name": {"type": "string"},
+      "format": {"type": "string"},
+      "source_type": {"type": "string"},
+      "parsing_path_expected": {"type": "string"},
+      "primary_role": {"type": "string"},
+      "modality_tags": {
+        "type": "array",
+        "items": {"type": "string"}
+      },
+      "retrieval_challenges": {
+        "type": "array",
+        "items": {"type": "string"}
+      },
+      "download_status": {"type": "string"}
+    },
+    "additionalProperties": false
+  }
+}

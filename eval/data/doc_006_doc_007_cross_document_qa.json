@@ -1,0 +1,192 @@
+[
+  {
+    "qa_id": "qa_1",
+    "question": "For 2025-04-04 in CHIEF EXECUTIVE / HUMAN RESOURCES, which supplier is listed in doc_006 and which beneficiary is listed in doc_007?",
+    "gold_answer": "C2e922600775g Ukvi; RPS BUSINESS HEALTHCARE",
+    "answer_type": "short_text",
+    "question_type": "cross_document_compare",
+    "difficulty": "medium",
+    "requires_cross_document": true,
+    "document_count": 2,
+    "reasoning_hops": 2,
+    "source_document_ids": [
+      "doc_006",
+      "doc_007"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_006",
+        "evidence_type": "sheet_row",
+        "page": 1,
+        "sheet_name": "DataAnalysis",
+        "row_ref": "DataAnalysis!row 305",
+        "quote": "Transaction Date=2025-04-04; Directorate=CHIEF EXECUTIVE; Department=HUMAN RESOURCES; Supplier Name=C2e922600775g Ukvi; NET Amount=5239.00; Purchase of Expenditure=OTHER SERVICES; Merchant Category=Government"
+      },
+      {
+        "doc_id": "doc_007",
+        "evidence_type": "sheet_row",
+        "page": 1,
+        "sheet_name": null,
+        "row_ref": "row 16834",
+        "quote": "Date=04/04/2025; Directorate=CHIEF EXECUTIVE; Local Authority Dept=HUMAN RESOURCES; Beneficiary=RPS BUSINESS HEALTHCARE; Total=6925.00; Summary of Purpose of Expenditure 1=OCCUPATIONAL HEALTH; Summary of Purpose of Expenditure 2=OTHER PROFESSIONAL SERVICES; Merchant Category=PRIVATE CONTRACTORS; Transaction Number=6091587"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "cross_document",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_2",
+    "question": "For 2025-04-03 in PLACE / STREET SCENE, what is the purchase purpose and NET amount in doc_006, and what are the purpose summary and Total in doc_007?",
+    "gold_answer": "MATERIALS, 39.54; PLAY EQUIPMENT TEAM / PLANNED GROUNDS MAINT, 317.50",
+    "answer_type": "short_text",
+    "question_type": "cross_document_compare",
+    "difficulty": "medium",
+    "requires_cross_document": true,
+    "document_count": 2,
+    "reasoning_hops": 2,
+    "source_document_ids": [
+      "doc_006",
+      "doc_007"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_006",
+        "evidence_type": "sheet_row",
+        "page": 1,
+        "sheet_name": "DataAnalysis",
+        "row_ref": "DataAnalysis!row 232",
+        "quote": "Transaction Date=2025-04-03; Directorate=PLACE; Department=STREET SCENE; Supplier Name=Screwfix Direct; NET Amount=39.54; Purchase of Expenditure=MATERIALS; Merchant Category=Retail"
+      },
+      {
+        "doc_id": "doc_007",
+        "evidence_type": "sheet_row",
+        "page": 1,
+        "sheet_name": null,
+        "row_ref": "row 19086",
+        "quote": "Date=03/04/2025; Directorate=PLACE; Local Authority Dept=STREET SCENE; Beneficiary=AZTEC CHEMICALS LTD; Total=317.50; Summary of Purpose of Expenditure 1=PLAY EQUIPMENT TEAM; Summary of Purpose of Expenditure 2=PLANNED GROUNDS MAINT; Merchant Category=GROUNDS MAINTENANCE COSTS; Transaction Number=6089041"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "cross_document",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_3",
+    "question": "On 2025-04-07 for CORPORATE RESOURCES / ELECTORAL SERVICES, which merchant category is recorded in each document and what amount is attached to each row?",
+    "gold_answer": "Retail, 209.32; GENERAL OFFICE EXPENSES, 289.46",
+    "answer_type": "short_text",
+    "question_type": "cross_document_compare",
+    "difficulty": "medium",
+    "requires_cross_document": true,
+    "document_count": 2,
+    "reasoning_hops": 2,
+    "source_document_ids": [
+      "doc_006",
+      "doc_007"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_006",
+        "evidence_type": "sheet_row",
+        "page": 1,
+        "sheet_name": "DataAnalysis",
+        "row_ref": "DataAnalysis!row 455",
+        "quote": "Transaction Date=2025-04-07; Directorate=CORPORATE RESOURCES; Department=ELECTORAL SERVICES; Supplier Name=Amazon* R63ax3ge4; NET Amount=209.32; Purchase of Expenditure=EQUIPMENT; Merchant Category=Retail"
+      },
+      {
+        "doc_id": "doc_007",
+        "evidence_type": "sheet_row",
+        "page": 1,
+        "sheet_name": null,
+        "row_ref": "row 10822",
+        "quote": "Date=07/04/2025; Directorate=CORPORATE RESOURCES; Local Authority Dept=ELECTORAL SERVICES; Beneficiary=FINANCIAL DATA MANAGEMENT LTD (FDM LTD); Total=289.46; Summary of Purpose of Expenditure 1=REGISTRATION OF ELECTORS; Summary of Purpose of Expenditure 2=PHOTOCOPY&PRINTING-GENERAL; Merchant Category=GENERAL OFFICE EXPENSES; Transaction Number=6094111"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "cross_document",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_4",
+    "question": "For the 2025-04-09 row in CHIEF EXECUTIVE / SUSTAINABILITY, which counterparty appears in each document and how do the amounts compare?",
+    "gold_answer": "B&m 557 - Friars Gate at 3.45; GLOBAL GARDEN ECOLOGICAL ADVISORY at 500.00",
+    "answer_type": "short_text",
+    "question_type": "cross_document_compare",
+    "difficulty": "medium",
+    "requires_cross_document": true,
+    "document_count": 2,
+    "reasoning_hops": 2,
+    "source_document_ids": [
+      "doc_006",
+      "doc_007"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_006",
+        "evidence_type": "sheet_row",
+        "page": 1,
+        "sheet_name": "DataAnalysis",
+        "row_ref": "DataAnalysis!row 735",
+        "quote": "Transaction Date=2025-04-09; Directorate=CHIEF EXECUTIVE; Department=SUSTAINABILITY; Supplier Name=B&m 557 - Friars Gate; NET Amount=3.45; Purchase of Expenditure=EQUIPMENT; Merchant Category=Retail"
+      },
+      {
+        "doc_id": "doc_007",
+        "evidence_type": "sheet_row",
+        "page": 1,
+        "sheet_name": null,
+        "row_ref": "row 10666",
+        "quote": "Date=09/04/2025; Directorate=CHIEF EXECUTIVE; Local Authority Dept=SUSTAINABILITY; Beneficiary=GLOBAL GARDEN ECOLOGICAL ADVISORY; Total=500.00; Summary of Purpose of Expenditure 1=SUSTAINABILITY NATURAL ENVIRO; Summary of Purpose of Expenditure 2=; Merchant Category=MISCELLANEOUS EXPENSES; Transaction Number=6098084"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "cross_document",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_5",
+    "question": "On 2025-04-28 for CORPORATE RESOURCES / ICT & DIGITAL, what expenditure label appears in doc_006 and what purpose labels appear in doc_007?",
+    "gold_answer": "COMPUTING; COMPUTING EQUIPMENT / COMPUTER EQUIPMENT",
+    "answer_type": "short_text",
+    "question_type": "cross_document_compare",
+    "difficulty": "medium",
+    "requires_cross_document": true,
+    "document_count": 2,
+    "reasoning_hops": 2,
+    "source_document_ids": [
+      "doc_006",
+      "doc_007"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_006",
+        "evidence_type": "sheet_row",
+        "page": 1,
+        "sheet_name": "DataAnalysis",
+        "row_ref": "DataAnalysis!row 2078",
+        "quote": "Transaction Date=2025-04-28; Directorate=CORPORATE RESOURCES; Department=ICT & DIGITAL; Supplier Name=Foreign Exchange Fee; NET Amount=0.53; Purchase of Expenditure=COMPUTING; Merchant Category=Business Services"
+      },
+      {
+        "doc_id": "doc_007",
+        "evidence_type": "sheet_row",
+        "page": 1,
+        "sheet_name": null,
+        "row_ref": "row 5850",
+        "quote": "Date=28/04/2025; Directorate=CORPORATE RESOURCES; Local Authority Dept=ICT & DIGITAL; Beneficiary=BOXXE LIMITED; Total=950.00; Summary of Purpose of Expenditure 1=COMPUTING EQUIPMENT; Summary of Purpose of Expenditure 2=COMPUTER EQUIPMENT; Merchant Category=COMMUNICATIONS AND COMPUTING; Transaction Number=6121568"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "cross_document",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  }
+]

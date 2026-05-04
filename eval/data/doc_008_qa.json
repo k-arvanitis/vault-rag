@@ -1,0 +1,210 @@
+[
+  {
+    "qa_id": "qa_1",
+    "question": "According to Table 3, how many total matters and recommendations were closed-implemented as of March 2024?",
+    "gold_answer": "1,341",
+    "answer_type": "short_text",
+    "question_type": "numeric_lookup",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_008"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_008",
+        "evidence_type": "table_region",
+        "page": 9,
+        "quote": "Closed \u2013 implemented ... Total (percentage) 1,341 (66%)"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "table_or_figure",
+      "requires_ocr": false,
+      "requires_table_reasoning": true
+    }
+  },
+  {
+    "qa_id": "qa_2",
+    "question": "In Table 3, how many matters were open\u2014not addressed as of March 2024?",
+    "gold_answer": "64",
+    "answer_type": "short_text",
+    "question_type": "numeric_lookup",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_008"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_008",
+        "evidence_type": "table_region",
+        "page": 9,
+        "quote": "Open \u2013 not addressed 64 (46%)"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "table_or_figure",
+      "requires_ocr": false,
+      "requires_table_reasoning": true
+    }
+  },
+  {
+    "qa_id": "qa_3",
+    "question": "Figure 3 shows additional financial benefits identified in the 2024 annual report. What amount is shown?",
+    "gold_answer": "$71.3 billion",
+    "answer_type": "short_text",
+    "question_type": "figure_grounding",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_008"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_008",
+        "evidence_type": "page_span",
+        "page": 9,
+        "quote": "Additional financial benefits identified in this 2024 annual report $71.3 billion"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "table_or_figure",
+      "requires_ocr": false,
+      "requires_table_reasoning": true
+    }
+  },
+  {
+    "qa_id": "qa_4",
+    "question": "According to Figure 4, which mission achieved the largest total financial benefits, and what amount did it achieve?",
+    "gold_answer": "Defense, $197 billion",
+    "answer_type": "short_text",
+    "question_type": "figure_grounding",
+    "difficulty": "medium",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_008"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_008",
+        "evidence_type": "page_span",
+        "page": 10,
+        "quote": "Defense $197 billion"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "table_or_figure",
+      "requires_ocr": false,
+      "requires_table_reasoning": true
+    }
+  },
+  {
+    "qa_id": "qa_5",
+    "question": "In Table 4, what financial benefit is listed for Federal Buying Power?",
+    "gold_answer": "Cost savings of approximately $48.8 billion from fiscal years 2017 through 2021",
+    "answer_type": "short_text",
+    "question_type": "table_grounding",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_008"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_008",
+        "evidence_type": "table_region",
+        "page": 11,
+        "quote": "Cost savings of approximately $48.8 billion from fiscal years 2017 through 2021"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "table_or_figure",
+      "requires_ocr": false,
+      "requires_table_reasoning": true
+    }
+  },
+  {
+    "qa_id": "qa_6",
+    "question": "Which topic area in Table 4 is associated with federal savings of $27.1 billion in fiscal year 2023?",
+    "gold_answer": "COVID-19 Funding and Spending",
+    "answer_type": "short_text",
+    "question_type": "table_grounding",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_008"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_008",
+        "evidence_type": "table_region",
+        "page": 11,
+        "quote": "Federal savings of $27.1 billion in fiscal year 2023"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "table_or_figure",
+      "requires_ocr": false,
+      "requires_table_reasoning": true
+    }
+  },
+  {
+    "qa_id": "qa_7",
+    "question": "According to Table 6, what potential financial benefit is listed for the Public-Safety Broadband Network topic area?",
+    "gold_answer": "$15 billion over 15 years",
+    "answer_type": "short_text",
+    "question_type": "table_grounding",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_008"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_008",
+        "evidence_type": "table_region",
+        "page": 20,
+        "quote": "$15 billion over 15 years"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "table_or_figure",
+      "requires_ocr": false,
+      "requires_table_reasoning": true
+    }
+  },
+  {
+    "qa_id": "qa_8",
+    "question": "In Figure 5, what is the total number of open duplication and cost savings recommendations for the Department of Defense?",
+    "gold_answer": "99",
+    "answer_type": "short_text",
+    "question_type": "figure_grounding",
+    "difficulty": "medium",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_008"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_008",
+        "evidence_type": "page_span",
+        "page": 15,
+        "quote": "Department of Defense ... (99)"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "table_or_figure",
+      "requires_ocr": false,
+      "requires_table_reasoning": true
+    }
+  }
+]

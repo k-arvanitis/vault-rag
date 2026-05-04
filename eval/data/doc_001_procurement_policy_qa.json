@@ -1,0 +1,132 @@
+[
+  {
+    "qa_id": "qa_1",
+    "question": "What is the title of the policy document?",
+    "gold_answer": "POLICY FOR THE PROCUREMENT OF GOODS AND SERVICES (PGS)",
+    "answer_type": "short_text",
+    "question_type": "ocr_extraction",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_001_procurement_policy"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_001_procurement_policy",
+        "evidence_type": "ocr_page",
+        "page": 1,
+        "quote": "POLICY FOR THE PROCUREMENT OF GOODS AND SERVICES (PGS)"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "ocr",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_2",
+    "question": "When was the policy approved?",
+    "gold_answer": "September 4, 2024",
+    "answer_type": "short_text",
+    "question_type": "ocr_extraction",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_001_procurement_policy"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_001_procurement_policy",
+        "evidence_type": "ocr_page",
+        "page": 1,
+        "quote": "Approved on September 4, 2024"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "ocr",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_3",
+    "question": "Who is the authorizing manager of the policy?",
+    "gold_answer": "Ricki Contreras",
+    "answer_type": "short_text",
+    "question_type": "ocr_extraction",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_001_procurement_policy"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_001_procurement_policy",
+        "evidence_type": "ocr_page",
+        "page": 2,
+        "quote": "Authorizing Manager: Ricki Contreras"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "ocr",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_4",
+    "question": "What is the original issue date of the policy?",
+    "gold_answer": "December 15, 2005",
+    "answer_type": "short_text",
+    "question_type": "ocr_extraction",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_001_procurement_policy"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_001_procurement_policy",
+        "evidence_type": "ocr_page",
+        "page": 2,
+        "quote": "Original Issue Date: December 15, 2005"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "ocr",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_5",
+    "question": "What is the mandatory review date for the policy?",
+    "gold_answer": "September 2027",
+    "answer_type": "short_text",
+    "question_type": "ocr_extraction",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_001_procurement_policy"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_001_procurement_policy",
+        "evidence_type": "ocr_page",
+        "page": 2,
+        "quote": "Mandatory Review: September 2027"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "ocr",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  }
+]

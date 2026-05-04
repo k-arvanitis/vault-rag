@@ -1,0 +1,132 @@
+[
+  {
+    "qa_id": "qa_1",
+    "question": "What is the site ID listed on the invoice?",
+    "gold_answer": "0001",
+    "answer_type": "short_text",
+    "question_type": "ocr_extraction",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_005_fueling_records_invoice"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_005_fueling_records_invoice",
+        "evidence_type": "ocr_page",
+        "page": 1,
+        "quote": "Transactions for SITE ID: 0001"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "ocr",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_2",
+    "question": "What airport name is shown on the invoice?",
+    "gold_answer": "LLano Airport",
+    "answer_type": "short_text",
+    "question_type": "ocr_extraction",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_005_fueling_records_invoice"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_005_fueling_records_invoice",
+        "evidence_type": "ocr_page",
+        "page": 1,
+        "quote": "Transactions for SITE ID: 0001 LLano Airport"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "ocr",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_3",
+    "question": "What is the total cost for 25 transactions?",
+    "gold_answer": "3,309.04",
+    "answer_type": "short_text",
+    "question_type": "ocr_extraction",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_005_fueling_records_invoice"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_005_fueling_records_invoice",
+        "evidence_type": "ocr_page",
+        "page": 1,
+        "quote": "Total for 25 transactions 711.62 3,309.04"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "ocr",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_4",
+    "question": "What is the total quantity for the 25 transactions?",
+    "gold_answer": "711.62",
+    "answer_type": "short_text",
+    "question_type": "ocr_extraction",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_005_fueling_records_invoice"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_005_fueling_records_invoice",
+        "evidence_type": "ocr_page",
+        "page": 1,
+        "quote": "Total for 25 transactions 711.62 3,309.04"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "ocr",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_5",
+    "question": "What is the from date on the invoice?",
+    "gold_answer": "8/24/2012",
+    "answer_type": "short_text",
+    "question_type": "ocr_extraction",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_005_fueling_records_invoice"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_005_fueling_records_invoice",
+        "evidence_type": "ocr_page",
+        "page": 1,
+        "quote": "From Date: 8/24/2012"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "ocr",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  }
+]
