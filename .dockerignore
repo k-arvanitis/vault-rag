@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[oc]
+.venv/
+*.egg-info/
+
+# Environment
+.env
+*.env
+
+# Data (mounted as volumes at runtime)
+data/input/
+data/output/
+
+# Eval corpora and heavy artifacts
+eval/pdfs/
+eval/data/pdfs/
+eval/data/raw/
+eval/results/*.log
+
+# Git
+.git/
+.gitignore
+
+# Dev tooling
+.deepeval/
+.excel_cache/
+notebooks/
+output_test/
+test_independent.py
+
+# Docker configs (not needed inside the image)
+docker/
+
+# IDE
+*.code-workspace
+.vscode/
+
+# Docs / media (not needed inside the image)
+docs/screenshots/

@@ -429,6 +429,38 @@ GPU required for LightOn OCR. See [Setup](#setup) for full prerequisites and con
 
 ---
 
+## Docker deployment
+
+The root `docker-compose.yaml` brings up the full stack in one command — no local Python environment or Ollama installation required.
+
+```bash
+cp .env.example .env          # set GROQ_API_KEY (and OPENROUTER_API_KEY for chunking)
+docker compose up -d --build  # or: make docker-up
+```
+
+This starts four services:
+
+| Service | Image | Purpose |
+|---|---|---|
+| `qdrant` | `qdrant/qdrant:v1.17.0` | Vector database (dense + sparse) |
+| `litellm` | `ghcr.io/berriai/litellm` | LLM proxy — Groq primary, OpenRouter fallback |
+| `ollama` | `ollama/ollama:latest` | Local embedding model (nomic-embed-text pulled on first start) |
+| `app` | built from `Dockerfile` | Streamlit operator console at `http://localhost:8501` |
+
+The first start takes a few minutes while Ollama pulls the embedding model (~274 MB). Subsequent starts are instant.
+
+**With GPU (scanned PDF support):**
+
+```bash
+make docker-up-gpu            # adds the LightOn OCR vLLM container
+```
+
+Requires the NVIDIA container runtime and a CUDA 12+ GPU. Born-digital PDFs, Excel, and Markdown work without it.
+
+> **Image size note:** the `app` image is ~5 GB because PyTorch includes CUDA libraries even when running on CPU. This is normal for ML workloads — the reranker and embedding model run on CPU regardless.
+
+---
+
 ## Setup
 
 ### Prerequisites

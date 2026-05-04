@@ -3,8 +3,20 @@ include .env
 export
 endif
 
-.PHONY: up app slack docker-slack-build docker-slack-up litellm eval eval-cross test lint
+.PHONY: up docker-up docker-up-gpu docker-down app slack docker-slack-build docker-slack-up litellm eval eval-cross test lint
 
+# Full stack in Docker (Qdrant + LiteLLM + Ollama + Streamlit app)
+docker-up:
+	docker compose up -d --build
+
+# Same stack + GPU-backed LightOn OCR (requires NVIDIA container runtime)
+docker-up-gpu:
+	docker compose --profile gpu up -d --build
+
+docker-down:
+	docker compose down
+
+# Ingestion-stack only (Qdrant + LiteLLM + OCR — no Streamlit container)
 up:
 	docker compose -f docker/ingestion-stack/docker-compose.yaml up -d
 

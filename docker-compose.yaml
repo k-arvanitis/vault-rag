@@ -1,0 +1,155 @@
+services:
+
+  # ── Vector database ──────────────────────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:v1.17.0
+    container_name: qdrant-rag
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_REST_PORT:-7333}:6333"
+      - "${QDRANT_GRPC_PORT:-7334}:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - vault
+
+  # ── LLM proxy (Groq primary → OpenRouter fallback) ──────────────────────────
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: litellm-proxy
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./litellm_config.yaml:/app/config.yaml:ro
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-}
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "2"]
+    networks:
+      - vault
+
+  # ── Embeddings (nomic-embed-text pulled on first start) ──────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    # Serve in background, pull the embedding model, then keep serving
+    entrypoint: ["/bin/sh", "-c", "ollama serve & sleep 8 && ollama pull nomic-embed-text && wait"]
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list | grep -q nomic-embed-text"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+    networks:
+      - vault
+
+  # ── Streamlit operator console ───────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: vault-rag-app
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./eval/results:/app/eval/results
+    environment:
+      # API keys
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      # Services — use Docker service names, not localhost
+      - GENERATION_API_BASE=http://litellm:4000/v1
+      - GENERATION_MODEL=${GENERATION_MODEL:-qwen3-32b}
+      - OLLAMA_API_BASE=http://ollama:11434
+      - EMBED_API_BASE=http://ollama:11434
+      - OLLAMA_EMBED_MODEL=${OLLAMA_EMBED_MODEL:-nomic-embed-text}
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-documents_chunks}
+      # Chunking LLM (ingest time only)
+      - CHUNK_LLM_API_BASE=${CHUNK_LLM_API_BASE:-https://openrouter.ai/api/v1}
+      - CHUNK_LLM_MODEL=${CHUNK_LLM_MODEL:-google/gemma-4-31b-it:free}
+      - CHUNK_MAX_TOKENS=${CHUNK_MAX_TOKENS:-1024}
+      - CHUNK_MIN_TOKENS=${CHUNK_MIN_TOKENS:-256}
+      # Retrieval
+      - RERANKER_MODEL=${RERANKER_MODEL:-cross-encoder/ms-marco-MiniLM-L-6-v2}
+      - RERANKER_DEVICE=cpu
+      - RETRIEVAL_TOP_K=${RETRIEVAL_TOP_K:-100}
+      - RERANK_TOP_N=${RERANK_TOP_N:-10}
+      # VLM figure descriptions
+      - VLM_ENABLED=${VLM_ENABLED:-true}
+      - VLM_PROVIDER=${VLM_PROVIDER:-groq}
+      - VLM_MODEL=${VLM_MODEL:-meta-llama/llama-4-scout-17b-16e-instruct}
+      # OCR — only needed if the GPU profile is also running
+      - OCR_API_BASE=${OCR_API_BASE:-http://localhost:8002}
+      - OCR_MODEL=${OCR_MODEL:-lightonocr-2-1b-ocr-soup}
+      # Observability (optional)
+      - LANGFUSE_HOST=${LANGFUSE_HOST:-}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+    depends_on:
+      qdrant:
+        condition: service_started
+      litellm:
+        condition: service_started
+      ollama:
+        condition: service_healthy
+    networks:
+      - vault
+
+  # ── LightOn OCR — GPU only ───────────────────────────────────────────────────
+  # Start with: docker compose --profile gpu up
+  # Requires NVIDIA container runtime and a CUDA 12+ GPU.
+  # Born-digital PDFs, Excel, and Markdown work without this service.
+  lightonocr:
+    profiles: [gpu]
+    image: vllm/vllm-openai:v0.17.0
+    container_name: lightonocr-vllm
+    restart: unless-stopped
+    network_mode: host
+    ipc: host
+    environment:
+      - HF_TOKEN=${HUGGING_FACE_HUB_TOKEN}
+    volumes:
+      - hf_cache_lightonocr:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - ${LIGHTON_MODEL_TAG:-lightonai/lightonocr-2-1b-ocr-soup}
+      - --served-model-name
+      - ${LIGHTON_SERVED_MODEL_NAME:-lightonocr-2-1b-ocr-soup}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "${LIGHTON_PORT:-8002}"
+      - --tensor-parallel-size
+      - "1"
+      - --max-model-len
+      - "${LIGHTON_MAX_MODEL_LEN:-16384}"
+      - --gpu-memory-utilization
+      - "${LIGHTON_GPU_MEMORY_UTILIZATION:-0.30}"
+
+networks:
+  vault:
+    driver: bridge
+
+volumes:
+  qdrant_data:
+    name: vault_rag_qdrant
+  ollama_data:
+    name: vault_rag_ollama
+  hf_cache_lightonocr:
+    name: vault_rag_hf_cache
