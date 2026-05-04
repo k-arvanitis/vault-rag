@@ -157,6 +157,36 @@ def get_document_summary(url: str, collection: str, file_name: str) -> str | Non
     return points[0].get("payload", {}).get("content") or None
 
 
+def get_chunks_by_file(url: str, collection: str, source_file: str) -> list[dict]:
+    """Return all chunk payloads for a given source_file (used by the inspector)."""
+    base = url.rstrip("/")
+    payloads: list[dict] = []
+    offset = None
+    while True:
+        body: dict = {
+            "filter": {"must": [
+                {"key": "metadata.source_file", "match": {"value": source_file}},
+            ]},
+            "limit": 250,
+            "with_payload": True,
+            "with_vector": False,
+        }
+        if offset is not None:
+            body["offset"] = offset
+        try:
+            result = _request("POST", f"{base}/collections/{collection}/points/scroll", body)
+        except RuntimeError as exc:
+            if "404" in str(exc) or "doesn't exist" in str(exc):
+                return []
+            raise
+        points = result.get("result", {}).get("points", [])
+        payloads.extend(p.get("payload", {}) for p in points)
+        offset = result.get("result", {}).get("next_page_offset")
+        if not offset:
+            break
+    return payloads
+
+
 def delete_by_file(url: str, collection: str, file_name: str) -> int:
     """Delete all PDF chunk points for a given file_name. Returns deleted count."""
     base = url.rstrip("/")

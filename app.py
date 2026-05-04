@@ -358,91 +358,155 @@ with tab_chunks:
 
 
 # ── inspector tab ─────────────────────────────────────────────────────────────
+@st.cache_data(ttl=60)
+def _load_file_chunks(source_file: str) -> list[dict]:
+    """Load all Qdrant payloads for a given source file (cached 60 s)."""
+    from src.config import QDRANT_COLLECTION, QDRANT_URL
+    from src.vector_store import get_chunks_by_file
+    try:
+        return get_chunks_by_file(QDRANT_URL, QDRANT_COLLECTION, source_file)
+    except Exception:
+        return []
+
+
 with tab_inspect:
     ingested_files = _cached_files()
-    pdf_ingested = [f for f in ingested_files if f.lower().endswith(".pdf")]
 
-    if not pdf_ingested:
-        st.info("No PDFs ingested yet. Upload a PDF via the sidebar.")
+    if not ingested_files:
+        st.info("No documents ingested yet. Upload a file via the sidebar.")
     else:
         selected = st.selectbox(
             "Select a document",
-            options=pdf_ingested,
+            options=ingested_files,
             label_visibility="collapsed",
         )
-        pdf_path = _resolve_original_path(selected)
-        pdf_name = pdf_path.name
-        md_path = _resolve_markdown_path(selected)
+        suffix = Path(selected).suffix.lower()
 
-        # Show document summary if available
-        from src.config import QDRANT_COLLECTION, QDRANT_URL
-        from src.vector_store import get_document_summary
-        md_stem = Path(pdf_name).stem + ".md"
-        summary = get_document_summary(QDRANT_URL, QDRANT_COLLECTION, md_stem)
-        if summary:
-            with st.expander("Document Summary", expanded=True):
-                st.markdown(summary.replace("## Document Summary\n\n", ""))
+        # ── PDF inspector ──────────────────────────────────────────────────────
+        if suffix == ".pdf":
+            pdf_path = _resolve_original_path(selected)
+            pdf_name = pdf_path.name
+            md_path = _resolve_markdown_path(selected)
 
-        pdf_available = pdf_path.exists()
-        md_available = md_path.exists()
+            from src.config import QDRANT_COLLECTION, QDRANT_URL
+            from src.vector_store import get_document_summary
+            md_stem = Path(pdf_name).stem + ".md"
+            summary = get_document_summary(QDRANT_URL, QDRANT_COLLECTION, md_stem)
+            if summary:
+                with st.expander("Document Summary", expanded=True):
+                    st.markdown(summary.replace("## Document Summary\n\n", ""))
 
-        if not pdf_available:
-            st.warning("Original PDF not available locally — showing parsed markdown only.")
-        if not md_available:
-            st.info("Markdown not found. Re-ingest this PDF to generate it.")
+            pdf_available = pdf_path.exists()
+            md_available = md_path.exists()
 
-        if md_available:
-            import pypdfium2 as pdfium
-            md_text = re.sub(r"\[TABLE_START\]\n?|\[TABLE_END\]\n?", "", md_path.read_text(encoding="utf-8"))
-            page_sections, page_pipelines = _split_markdown_by_page(md_text)
-            has_markers = bool(page_sections)
+            if not pdf_available:
+                st.warning("Original PDF not available locally — showing parsed markdown only.")
+            if not md_available:
+                st.info("Markdown not found. Re-ingest this PDF to generate it.")
 
-            if pdf_available:
-                pdf_doc = pdfium.PdfDocument(str(pdf_path))
-                n_pages = len(pdf_doc)
-            else:
-                pdf_doc = None
-                n_pages = max(page_sections.keys()) if page_sections else 0
+            if md_available:
+                import pypdfium2 as pdfium
+                md_text = re.sub(r"\[TABLE_START\]\n?|\[TABLE_END\]\n?", "", md_path.read_text(encoding="utf-8"))
+                page_sections, page_pipelines = _split_markdown_by_page(md_text)
+                has_markers = bool(page_sections)
 
-            st.caption(f"{n_pages} pages · {'page-synced' if has_markers else 'no page markers — showing full markdown'}")
-            st.divider()
+                if pdf_available:
+                    pdf_doc = pdfium.PdfDocument(str(pdf_path))
+                    n_pages = len(pdf_doc)
+                else:
+                    pdf_doc = None
+                    n_pages = max(page_sections.keys()) if page_sections else 0
 
-            if has_markers:
-                for i in range(n_pages):
-                    page_num = i + 1
-                    pipeline = page_pipelines.get(page_num, "")
-                    badge = f" · `{pipeline}`" if pipeline else ""
+                st.caption(f"{n_pages} pages · {'page-synced' if has_markers else 'no page markers — showing full markdown'}")
+                st.divider()
 
+                if has_markers:
+                    for i in range(n_pages):
+                        page_num = i + 1
+                        pipeline = page_pipelines.get(page_num, "")
+                        badge = f" · `{pipeline}`" if pipeline else ""
+
+                        if pdf_available:
+                            col_pdf, col_md = st.columns(2)
+                            with col_pdf:
+                                st.caption(f"Page {page_num}")
+                                bitmap = pdf_doc[i].render(scale=2.0)
+                                st.image(bitmap.to_pil(), use_container_width=True)
+                            with col_md:
+                                st.caption(f"Parsed — page {page_num}{badge}")
+                                section = page_sections.get(page_num, "_No content for this page._")
+                                st.markdown(section, unsafe_allow_html=True)
+                        else:
+                            st.caption(f"Page {page_num}{badge}")
+                            section = page_sections.get(page_num, "_No content for this page._")
+                            st.markdown(section, unsafe_allow_html=True)
+                        st.divider()
+                else:
                     if pdf_available:
                         col_pdf, col_md = st.columns(2)
                         with col_pdf:
-                            st.caption(f"Page {page_num}")
-                            bitmap = pdf_doc[i].render(scale=2.0)
-                            st.image(bitmap.to_pil(), use_container_width=True)
+                            st.subheader("Original PDF")
+                            for i in range(n_pages):
+                                bitmap = pdf_doc[i].render(scale=2.0)
+                                st.image(bitmap.to_pil(), caption=f"Page {i+1}", use_container_width=True)
                         with col_md:
-                            st.caption(f"Parsed — page {page_num}{badge}")
-                            section = page_sections.get(page_num, "_No content for this page._")
-                            st.markdown(section, unsafe_allow_html=True)
+                            st.subheader("Parsed & enhanced markdown")
+                            st.markdown(md_text, unsafe_allow_html=True)
                     else:
-                        st.caption(f"Page {page_num}{badge}")
-                        section = page_sections.get(page_num, "_No content for this page._")
-                        st.markdown(section, unsafe_allow_html=True)
-                    st.divider()
-            else:
-                # Fallback: full markdown (optionally side-by-side with PDF)
-                if pdf_available:
-                    col_pdf, col_md = st.columns(2)
-                    with col_pdf:
-                        st.subheader("Original PDF")
-                        for i in range(n_pages):
-                            bitmap = pdf_doc[i].render(scale=2.0)
-                            st.image(bitmap.to_pil(), caption=f"Page {i+1}", use_container_width=True)
-                    with col_md:
                         st.subheader("Parsed & enhanced markdown")
                         st.markdown(md_text, unsafe_allow_html=True)
-                else:
-                    st.subheader("Parsed & enhanced markdown")
-                    st.markdown(md_text, unsafe_allow_html=True)
+
+        # ── Excel / CSV inspector ──────────────────────────────────────────────
+        elif suffix in {".xlsx", ".xls", ".csv"}:
+            all_payloads = _load_file_chunks(selected)
+
+            summary_payload = next(
+                (p for p in all_payloads if (p.get("metadata") or {}).get("chunk_type") == "document_summary"),
+                None,
+            )
+            data_payloads = [
+                p for p in all_payloads
+                if (p.get("metadata") or {}).get("chunk_type") != "document_summary"
+            ]
+
+            if not all_payloads:
+                st.info("No chunks found. Re-ingest this file to inspect its contents.")
+            else:
+                st.caption(f"{len(data_payloads)} data chunks indexed")
+
+                if summary_payload:
+                    with st.expander("Document Summary", expanded=True):
+                        summary_text = (summary_payload.get("content") or "").replace("## Document Summary\n\n", "")
+                        st.markdown(summary_text)
+
+                # Group by sheet
+                sheets: dict[str, list[dict]] = {}
+                for p in data_payloads:
+                    meta = p.get("metadata") or {}
+                    sheet = meta.get("sheet_name") or "—"
+                    sheets.setdefault(sheet, []).append(p)
+
+                for sheet_name, chunks in sheets.items():
+                    chunks_sorted = sorted(chunks, key=lambda p: (p.get("metadata") or {}).get("part", 0))
+                    st.subheader(f"Sheet: {sheet_name}")
+                    st.caption(f"{len(chunks_sorted)} chunks")
+                    for idx, payload in enumerate(chunks_sorted, start=1):
+                        meta = payload.get("metadata") or {}
+                        chunk_type = meta.get("chunk_type", "chunk")
+                        row_ref = meta.get("row_ref")
+                        num_rows = meta.get("num_rows")
+                        label_parts = [f"Chunk {idx}", chunk_type]
+                        if row_ref is not None:
+                            label_parts.append(f"rows {row_ref}–{row_ref + (num_rows or 1) - 1}")
+                        label = " · ".join(label_parts)
+                        content = payload.get("content") or "_No content._"
+                        with st.expander(label, expanded=idx == 1):
+                            st.code(content, language="text")
+                    st.divider()
+
+        # ── unsupported type ───────────────────────────────────────────────────
+        else:
+            st.info(f"Inspector view is available for PDF and Excel/CSV files. {suffix} files show chunks in the Retrieved Chunks tab after a query.")
 
 
 # ── evaluation tab ────────────────────────────────────────────────────────────
