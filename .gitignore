@@ -11,14 +11,22 @@ wheels/
 # Virtual environments
 .venv
 
-/data
 .env
 *.env
 assets/
 
-eval
-eval/pdfs
 .deepeval
+.excel_cache/
+output_test/
+test_independent.py
+# Data and heavy evaluation corpora
+/data
+eval/__pycache__/
+eval/pdfs/
+eval/data/pdfs/
+eval/data/raw/
+eval/financebench.json
+eval/results/*.log
 # Data directories (keep .gitkeep markers)
 data/input/*
 data/output/*
@@ -26,10 +34,11 @@ data/output/*
 !data/output/.gitkeep
 
 CLAUDE.md
-
+BLACKBOX.md 
 vault-rag.code-workspace
 
 /notebooks
 
 cheatsheet.md
 *.code-workspace
+.blackboxcli/

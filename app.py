@@ -10,6 +10,7 @@ Features:
 from __future__ import annotations
 
 import re
+import json
 from pathlib import Path
 
 import streamlit as st
@@ -20,8 +21,18 @@ load_dotenv(override=True)
 REPO_ROOT = Path(__file__).resolve().parent
 INPUT_DIR = REPO_ROOT / "data" / "input"
 TRANSLATED_DIR = REPO_ROOT / "data" / "output" / "processed"
+EVAL_RESULTS_DIR = REPO_ROOT / "eval" / "results"
+EVAL_SUMMARY_PATH = EVAL_RESULTS_DIR / "summary.json"
+EVAL_ANSWERS_PATH = EVAL_RESULTS_DIR / "answer_results.jsonl"
+EVAL_RETRIEVAL_PATH = EVAL_RESULTS_DIR / "retrieval_results.jsonl"
 INPUT_DIR.mkdir(parents=True, exist_ok=True)
 TRANSLATED_DIR.mkdir(parents=True, exist_ok=True)
+MARKDOWN_DIRS = (
+    TRANSLATED_DIR,
+    REPO_ROOT / "data" / "output" / "lightonocr",
+    REPO_ROOT / "data" / "output" / "pymupdf",
+    REPO_ROOT / "data" / "output" / "translated",
+)
 
 # ── page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -104,6 +115,32 @@ def _delete_file(file_name: str) -> None:
     delete_by_file(QDRANT_URL, QDRANT_COLLECTION, file_name)
 
 
+def _resolve_original_path(source: str) -> Path:
+    """Resolve an ingested source path to a local file if it is still present."""
+    source_path = Path(source)
+    candidates = []
+    if source_path.is_absolute():
+        candidates.append(source_path)
+    else:
+        candidates.append(REPO_ROOT / source_path)
+    candidates.append(INPUT_DIR / source_path.name)
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[-1]
+
+
+def _resolve_markdown_path(source: str) -> Path:
+    """Resolve parsed markdown for a PDF across the parser output directories."""
+    stem = Path(source).stem
+    candidates = [directory / f"{stem}.md" for directory in MARKDOWN_DIRS]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
+
+
 def _split_markdown_by_page(md_text: str) -> tuple[dict[int, str], dict[int, str]]:
     """Split markdown into page content and pipeline labels using <!-- PAGE N --> markers.
 
@@ -128,6 +165,83 @@ def _split_markdown_by_page(md_text: str) -> tuple[dict[int, str], dict[int, str
             pipelines[page_num] = label
         i += 3
     return pages, pipelines
+
+
+@st.cache_data(ttl=10)
+def _load_eval_summary() -> dict:
+    """Load the latest evaluation summary if present."""
+    if not EVAL_SUMMARY_PATH.exists():
+        return {}
+    try:
+        return json.loads(EVAL_SUMMARY_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+
+
+@st.cache_data(ttl=10)
+def _load_eval_answers() -> list[dict]:
+    """Load latest per-question evaluation rows if present."""
+    if not EVAL_ANSWERS_PATH.exists():
+        return []
+    rows: list[dict] = []
+    for line in EVAL_ANSWERS_PATH.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return rows
+
+
+@st.cache_data(ttl=10)
+def _load_eval_retrieval() -> dict[str, dict]:
+    """Load latest per-question retrieval rows keyed by qa_id."""
+    if not EVAL_RETRIEVAL_PATH.exists():
+        return {}
+    rows: dict[str, dict] = {}
+    for line in EVAL_RETRIEVAL_PATH.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        qa_id = row.get("qa_id")
+        if qa_id:
+            rows[qa_id] = row
+    return rows
+
+
+def _fmt_metric(value: object) -> str:
+    """Format a 0-1 metric as a percentage."""
+    if value is None:
+        return "n/a"
+    try:
+        return f"{float(value) * 100:.1f}%"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _hit_label(hit: dict, index: int) -> str:
+    """Build a compact label for a retrieved eval hit."""
+    doc_id = hit.get("doc_id") or "unknown"
+    chunk_type = hit.get("chunk_type") or "chunk"
+    sheet = hit.get("sheet_name")
+    row_ref = hit.get("row_ref")
+    location = f"sheet={sheet}" if sheet else ""
+    if row_ref is not None:
+        location = f"{location} row={row_ref}".strip()
+    score = hit.get("score")
+    score_text = f" · score={float(score):.3f}" if isinstance(score, int | float) else ""
+    return f"{index}. {doc_id} · {chunk_type}{(' · ' + location) if location else ''}{score_text}"
+
+
+def _hit_is_table(hit: dict) -> bool:
+    """Return True for retrieved spreadsheet/table evidence."""
+    chunk_type = str(hit.get("chunk_type") or "")
+    content = str(hit.get("content") or "")
+    return bool(hit.get("sheet_name")) or "sheet_" in chunk_type or "[File:" in content
 
 
 # ── session state ─────────────────────────────────────────────────────────────
@@ -194,7 +308,12 @@ with st.sidebar:
 
 
 # ── tabs ──────────────────────────────────────────────────────────────────────
-tab_chat, tab_chunks, tab_inspect = st.tabs(["💬 Chat", "🔎 Retrieved Chunks", "🔍 Document Inspector"])
+tab_chat, tab_chunks, tab_inspect, tab_eval = st.tabs([
+    "💬 Chat",
+    "🔎 Retrieved Chunks",
+    "🔍 Document Inspector",
+    "📊 Eval Results",
+])
 
 # ── chat tab ──────────────────────────────────────────────────────────────────
 with tab_chat:
@@ -251,9 +370,9 @@ with tab_inspect:
             options=pdf_ingested,
             label_visibility="collapsed",
         )
-        pdf_name = Path(selected).name  # strip any leading path like "data/input/"
-        pdf_path = INPUT_DIR / pdf_name
-        md_path = TRANSLATED_DIR / (Path(pdf_name).stem + ".md")
+        pdf_path = _resolve_original_path(selected)
+        pdf_name = pdf_path.name
+        md_path = _resolve_markdown_path(selected)
 
         # Show document summary if available
         from src.config import QDRANT_COLLECTION, QDRANT_URL
@@ -324,3 +443,135 @@ with tab_inspect:
                 else:
                     st.subheader("Parsed & enhanced markdown")
                     st.markdown(md_text, unsafe_allow_html=True)
+
+
+# ── evaluation tab ────────────────────────────────────────────────────────────
+with tab_eval:
+    summary = _load_eval_summary()
+    answer_rows = _load_eval_answers()
+    retrieval_rows = _load_eval_retrieval()
+
+    if not summary or not answer_rows:
+        st.info("No evaluation results found yet. Run `uv run python eval/run_eval.py` to generate them.")
+    else:
+        st.subheader("Latest Evaluation")
+
+        agent_metrics = summary.get("agent_answer_metrics", {})
+        retrieval_metrics = summary.get("retrieval_metrics", {})
+
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Correctness", _fmt_metric(agent_metrics.get("correctness")))
+        col2.metric("Faithfulness", _fmt_metric(agent_metrics.get("faithfulness")))
+        col3.metric("Answer relevancy", _fmt_metric(agent_metrics.get("answer_relevancy")))
+        col4.metric("Hit@10", _fmt_metric(retrieval_metrics.get("hit_at_10")))
+
+        col5, col6, col7, col8 = st.columns(4)
+        col5.metric("Questions", str(summary.get("question_count", len(answer_rows))))
+        col6.metric("Hit@5", _fmt_metric(retrieval_metrics.get("hit_at_5")))
+        col7.metric("Evidence recall@20", _fmt_metric(retrieval_metrics.get("evidence_recall_at_20")))
+        col8.metric("MRR", f"{retrieval_metrics.get('mrr', 0):.3f}" if retrieval_metrics.get("mrr") is not None else "n/a")
+
+        with st.expander("Run breakdown", expanded=False):
+            st.json({
+                "question_breakdown": summary.get("question_breakdown", {}),
+                "judge_breakdown": summary.get("judge_breakdown", {}),
+            })
+
+        st.divider()
+
+        # The answer result file does not currently store question_type, so infer
+        # useful demo filters from qa_id ranges used by the benchmark.
+        qa_filters = {
+            "All": lambda row: True,
+            "Single-doc factoid (qa_001-qa_032)": lambda row: "qa_001" <= row.get("qa_id", "") <= "qa_032",
+            "Table lookup (qa_033-qa_040)": lambda row: "qa_033" <= row.get("qa_id", "") <= "qa_040",
+            "Cross-document (qa_041-qa_050)": lambda row: "qa_041" <= row.get("qa_id", "") <= "qa_050",
+            "Unanswerable (qa_051-qa_056)": lambda row: "qa_051" <= row.get("qa_id", "") <= "qa_056",
+            "Needs review": lambda row: min(
+                float(row.get("correctness") or 0),
+                float(row.get("faithfulness") or 0),
+                float(row.get("answer_relevancy") or 0),
+            ) < 0.9,
+        }
+        selected_filter = st.selectbox("Filter QA pairs", options=list(qa_filters), label_visibility="collapsed")
+        filtered_rows = [row for row in answer_rows if qa_filters[selected_filter](row)]
+
+        table_rows = [
+            {
+                "qa_id": row.get("qa_id"),
+                "correctness": row.get("correctness"),
+                "faithfulness": row.get("faithfulness"),
+                "answer_relevancy": row.get("answer_relevancy"),
+                "judge": row.get("judge_used"),
+                "question": row.get("question"),
+            }
+            for row in filtered_rows
+        ]
+        st.dataframe(table_rows, use_container_width=True, hide_index=True)
+
+        if filtered_rows:
+            selected_qa = st.selectbox(
+                "Inspect QA pair",
+                options=[row.get("qa_id", "") for row in filtered_rows],
+                format_func=lambda qa_id: f"{qa_id} — {next((r.get('question', '')[:80] for r in filtered_rows if r.get('qa_id') == qa_id), '')}",
+            )
+            selected_row = next(row for row in filtered_rows if row.get("qa_id") == selected_qa)
+
+            st.markdown(f"**Question**  \n{selected_row.get('question', '')}")
+            gold_col, predicted_col = st.columns(2)
+            with gold_col:
+                st.caption("Gold answer")
+                st.markdown(selected_row.get("gold_answer") or "_No gold answer recorded._")
+            with predicted_col:
+                st.caption("Pipeline answer")
+                st.markdown(selected_row.get("predicted_answer") or "_No pipeline answer recorded._")
+
+            score_col1, score_col2, score_col3, score_col4 = st.columns(4)
+            score_col1.metric("Correctness", _fmt_metric(selected_row.get("correctness")))
+            score_col2.metric("Faithfulness", _fmt_metric(selected_row.get("faithfulness")))
+            score_col3.metric("Relevancy", _fmt_metric(selected_row.get("answer_relevancy")))
+            score_col4.metric("Judge", selected_row.get("judge_used", "n/a"))
+
+            retrieval_row = retrieval_rows.get(selected_qa, {})
+            hits = retrieval_row.get("hits") or []
+            matched = retrieval_row.get("matched_evidence") or []
+            if hits:
+                st.divider()
+                st.markdown("**Retrieved evidence**")
+
+                table_hits = [hit for hit in hits if _hit_is_table(hit)]
+                text_hits = [hit for hit in hits if not _hit_is_table(hit)]
+                evidence_scope = st.radio(
+                    "Evidence type",
+                    options=["All", "Tables/rows", "Text chunks"],
+                    horizontal=True,
+                    label_visibility="collapsed",
+                )
+                if evidence_scope == "Tables/rows":
+                    visible_hits = table_hits
+                elif evidence_scope == "Text chunks":
+                    visible_hits = text_hits
+                else:
+                    visible_hits = hits
+
+                st.caption(
+                    f"{len(hits)} retrieved hits · {len(table_hits)} table/row hits · "
+                    f"{len(matched)} gold evidence matches"
+                )
+
+                for hit_index, hit in enumerate(visible_hits[:10], start=1):
+                    label = _hit_label(hit, hit_index)
+                    expanded = hit_index <= 2 or (evidence_scope == "Tables/rows" and hit_index <= 4)
+                    with st.expander(label, expanded=expanded):
+                        meta_cols = st.columns(4)
+                        meta_cols[0].caption(f"doc_id: {hit.get('doc_id') or 'n/a'}")
+                        meta_cols[1].caption(f"type: {hit.get('chunk_type') or 'n/a'}")
+                        meta_cols[2].caption(f"sheet: {hit.get('sheet_name') or 'n/a'}")
+                        meta_cols[3].caption(f"row: {hit.get('row_ref') if hit.get('row_ref') is not None else 'n/a'}")
+                        content = hit.get("content") or "_No content recorded._"
+                        if _hit_is_table(hit):
+                            st.code(content, language="text")
+                        else:
+                            st.markdown(content)
+            elif retrieval_row:
+                st.info("Retrieval metrics are present for this QA pair, but no hit content was recorded.")

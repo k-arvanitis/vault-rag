@@ -1,4 +1,15 @@
-.PHONY: slack docker-slack-build docker-slack-up test lint
+ifneq (,$(wildcard .env))
+include .env
+export
+endif
+
+.PHONY: up app slack docker-slack-build docker-slack-up litellm eval eval-cross test lint
+
+up:
+	docker compose -f docker/ingestion-stack/docker-compose.yaml up -d
+
+app:
+	uv run streamlit run app.py
 
 slack:
 	uv run python slack_app.py
@@ -8,6 +19,18 @@ docker-slack-build:
 
 docker-slack-up:
 	cd docker/slack-stack && ./up.sh
+
+# Start the LiteLLM proxy (Groq primary → OpenRouter fallback)
+# Requires: pip install 'litellm[proxy]'
+# Reads API keys from .env via litellm_config.yaml (os.environ/ references)
+litellm:
+	DEBUG= litellm --config litellm_config.yaml --port 4000
+
+eval:
+	uv run python eval/run_eval.py
+
+eval-cross:
+	uv run python eval/run_eval.py --category cross_document
 
 test:
 	uv run pytest tests/ -v --tb=short

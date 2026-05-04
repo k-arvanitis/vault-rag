@@ -4,7 +4,11 @@
 ![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
 ![Qdrant](https://img.shields.io/badge/Qdrant-FF4136?style=for-the-badge&logoColor=white)
 ![Groq](https://img.shields.io/badge/Groq-F55036?style=for-the-badge&logo=groq&logoColor=white)
+![LangGraph](https://img.shields.io/badge/LangGraph-1C3C3C?style=for-the-badge&logoColor=white)
 ![Langfuse](https://img.shields.io/badge/Langfuse-111827?style=for-the-badge&logoColor=white)
+![Correctness](https://img.shields.io/badge/Correctness-96.4%25-2ea043?style=for-the-badge)
+![Faithfulness](https://img.shields.io/badge/Faithfulness-97.3%25-2ea043?style=for-the-badge)
+![Hit@10](https://img.shields.io/badge/Hit@10-98%25-2ea043?style=for-the-badge)
 
 # Vault RAG
 
@@ -12,7 +16,11 @@ A production-minded document intelligence platform for heterogeneous business do
 
 Vault RAG is built for the hard case most portfolio RAG demos avoid: messy enterprise document collections with mixed formats, mixed quality, and mixed retrieval needs. Instead of assuming one clean PDF and one chat UI, it ingests contracts, reports, spreadsheets, scanned PDFs, and figures into a single retrieval system, then exposes that system through separate operator and end-user interfaces.
 
+**Privacy callout:** raw document content is parsed and embedded locally; only retrieved chunks are sent to the generation model at query time unless you point those endpoints at a local server too.
+
 The Streamlit app is the operator control plane for ingestion, inspection, and tuning. Slack is the delivery surface for the rest of the team. Underneath both is the same retrieval backend: adaptive parsing, structure-aware chunking, hybrid retrieval, reranking, and cited answers.
+
+**Latest benchmark:** 56 questions over 8 mixed-format public documents: **96.4% correctness**, **97.3% faithfulness**, **98.2% answer relevancy**, and **98% Hit@10**. The cross-document slice scores **90.0% correctness**.
 
 ---
 
@@ -29,9 +37,9 @@ Most document RAG demos are optimized for the easiest possible setup: one clean 
 
 ---
 
-## Why this is not a tutorial project
+## Engineering scope
 
-Vault RAG is not just a chat wrapper around a vector database. It combines several product-grade subsystems that could each stand alone:
+Vault RAG combines several subsystems that are usually treated separately in document AI products:
 
 - **Adaptive ingestion engine** — routes born-digital and scanned pages differently, repairs OCR table failures, and enriches figures before indexing.
 - **Retrieval engine** — unifies structured and unstructured content with hybrid search, reranking, and agentic query decomposition.
@@ -40,7 +48,7 @@ Vault RAG is not just a chat wrapper around a vector database. It combines sever
 - **Deployment and privacy model** — designed for customer-isolated instances, local parsing/embedding, and controlled data exposure.
 - **Observability and evaluation hooks** — chunk inspection, pipeline labels, traces, and an evaluation harness make the system measurable and debuggable.
 
-The point of the project is not narrow benchmark performance on a single domain. The point is building a document intelligence system that can survive contact with real business data.
+The project is optimized for mixed-format document operations rather than a narrow single-domain benchmark.
 
 ---
 
@@ -62,6 +70,7 @@ Under the hood:
 - **Agentic answering** — a ReAct agent can issue multiple searches, reason across results, and return cited answers with Langfuse traces.
 
 Full technical breakdown in the Architecture and Chunking sections below.
+For a shorter engineering narrative, see [docs/CASE_STUDY.md](docs/CASE_STUDY.md).
 
 ---
 
@@ -110,6 +119,47 @@ See [Slack app setup](#slack-setup) for the full walkthrough.
 
 ---
 
+## Demo walkthrough
+
+The fastest way to see the system’s capabilities is to run the operator console and inspect the benchmark artifacts.
+
+```bash
+make up                 # Qdrant + OCR stack
+ollama pull nomic-embed-text
+make app                # Streamlit at http://localhost:8501
+make eval-cross         # quick cross-document benchmark
+make eval               # full 56-question benchmark
+```
+
+Suggested demo flow:
+
+1. Open **Chat** and ask a cross-document question.
+2. Open **Retrieved Chunks** to inspect the exact text/table snippets used by the answer.
+3. Open **Document Inspector** to compare the original PDF page with parsed Markdown.
+4. Open **Eval Results** to compare gold answers, generated answers, metrics, and retrieved evidence row by row.
+
+Demo questions:
+
+```text
+A procurement policy document and a services contract terms document both include rules about contract extension or renewal periods. Which allows the longer extension, and what is each period?
+
+In the two Doncaster Council spending documents, what are the amounts for the Google Ads2372193163 row and the SS SYSTEMS LTD row respectively?
+
+What is the salary of the CEO of Doncaster School Solutions?
+```
+
+Screenshots:
+
+| Chat | Retrieved chunks |
+|---|---|
+| ![Chat UI](docs/screenshots/chat.png) | ![Retrieved chunks](docs/screenshots/retrieved_chunks.png) |
+
+| Document inspector | Eval results |
+|---|---|
+| ![Document inspector](docs/screenshots/document_inspector.png) | ![Eval results](docs/screenshots/eval_results.png) |
+
+---
+
 ## Deployment model
 
 Each customer runs their own instance — their own Docker containers,
@@ -146,7 +196,7 @@ CONTENT:
 <original chunk text>
 ```
 
-The result is that each vector in the index captures both what the chunk is *about* and what it *says* — dramatically improving retrieval for short or indirect queries. This technique is known as **Contextual Retrieval** (Anthropic, 2024).
+The result is that each vector in the index captures both what the chunk is *about* and what it *says* — dramatically improving retrieval for short or indirect queries. This technique is known as **Contextual Retrieval** ([Anthropic, 2024](https://www.anthropic.com/news/contextual-retrieval)).
 
 ### Stage 5 — Table handling
 PDF tables detected during OCR are stored as a separate `[TABLE_START]...[TABLE_END]` block. The chunker parses these ASCII grid tables into row-sentence batches (up to 20 rows each), with column headers and part numbers prepended so every table chunk is self-contained. Tables are never split mid-row.
@@ -326,17 +376,17 @@ Instead of embedding the raw user question, the agent first generates a *hypothe
 
 | Component | Technology | Why |
 |-----------|-----------|-----|
-| PDF parsing — text layer | pymupdf4llm | CPU-only, no model, near-instant. Born-digital PDFs embed selectable text — reading it directly is lossless and avoids the transcription errors a vision model introduces on numbers, equations, and code |
-| PDF parsing — scanned | LightOn OCR (local vLLM) | Scanned pages have no text layer; a vision-language model running locally on GPU is the only option. Keeping it local means raw document bytes never leave the machine |
-| Figure descriptions | llama-4-scout-17b (Groq vision) | Converts embedded charts and diagrams to searchable text; both raster images and vector graphics (extracted as raw label text by pymupdf4llm) are rasterised and described before chunking |
-| Contextual summaries | llama-3.1-8b-instant (Groq) | Fast, cheap model writes one sentence per chunk at ingest time; improves retrieval without slowing queries |
-| Embeddings | nomic-embed-text (Ollama) | Strong open embedding model; fast on CPU; runs locally so document text stays on-prem |
-| Vector database | Qdrant | Native hybrid search (dense + sparse) with RRF fusion in a single query; straightforward Docker deployment |
-| Reranker | cross-encoder/ms-marco-MiniLM-L-6-v2 | Fast cross-encoder trained on MS MARCO; dramatically improves precision by comparing query and chunk together |
-| Generation | llama-3.3-70b-versatile (Groq) | Best-in-class open LLM for complex reasoning; Groq free tier has low latency and no GPU required |
-| UI | Streamlit | Rapid iteration on chat UI; built-in file upload handles the ingest trigger |
-| Agent | LangGraph (ReAct) | Structured multi-step reasoning with explicit tool calls; agent can search multiple times before answering |
-| Observability | Langfuse | Traces every agent run end-to-end; inspect tool calls, retrieved chunks, and token counts |
+| PDF parsing — text layer | pymupdf4llm | Chosen for born-digital pages because reading the existing text layer is faster and more faithful than OCR, especially for numbers, tables, equations, and code |
+| PDF parsing — scanned | LightOn OCR (local vLLM) | Chosen for scanned pages because they have no usable text layer; running OCR locally preserves privacy while still handling image-only documents |
+| Figure descriptions | llama-4-scout-17b (Groq vision) | Chosen to turn charts, diagrams, and embedded visuals into searchable text so evidence inside figures is retrievable instead of silently dropped |
+| Contextual summaries | llama-3.1-8b-instant (Groq) | Chosen because a fast, low-cost model can add chunk-level context at ingest time, improving retrieval quality without adding latency to every query |
+| Embeddings | nomic-embed-text (Ollama) | Chosen as a strong local embedding model so indexing stays on-prem and semantic search works without paying an external API for every chunk |
+| Vector database | Qdrant | Chosen because this project needs dense+sparse retrieval in one system, plus simple local Docker deployment for reproducible demos and self-hosting |
+| Reranker | cross-encoder/ms-marco-MiniLM-L-6-v2 | Chosen because first-pass retrieval maximizes recall over a broad candidate pool, then a lightweight cross-encoder recovers precision before generation |
+| Generation | llama-3.3-70b-versatile (Groq) | Chosen to get strong answer synthesis and multi-step reasoning without requiring a local high-end GPU for the final response stage |
+| UI | Streamlit | Chosen because the operator workflow is iterative and inspection-heavy, so a Python-native UI is faster to build and modify than a custom frontend |
+| Agent | LangGraph (ReAct) | Chosen because the answering flow sometimes needs iterative retrieval, query reformulation, and explicit tool state instead of a single retrieve-then-generate pass |
+| Observability | Langfuse | Chosen because retrieval systems fail in opaque ways, and end-to-end traces make it possible to inspect prompts, tool calls, retrieved chunks, and token usage |
 
 ---
 
@@ -355,9 +405,9 @@ Instead of embedding the raw user question, the agent first generates a *hypothe
 git clone https://github.com/k-arvanitis/vault-rag.git && cd vault-rag
 uv sync
 cp .env.example .env          # set GROQ_API_KEY
-cd docker/ingestion-stack && ./up.sh && cd ../..
+make up
 ollama pull nomic-embed-text
-uv run streamlit run app.py   # → http://localhost:8501
+make app                      # → http://localhost:8501
 ```
 
 GPU required for LightOn OCR. See [Setup](#setup) for full prerequisites and configuration options.
@@ -390,17 +440,21 @@ cp .env.example .env
 # Edit .env — at minimum set GROQ_API_KEY
 
 # Start Qdrant + LightOn OCR
-cd docker/ingestion-stack
-cp .env.example .env        # set HUGGING_FACE_HUB_TOKEN
-./up.sh                     # starts both services, waits for OCR to be ready
-cd ../..
+make up
 
 # Pull embedding model
 ollama pull nomic-embed-text
 
 # Start the app
-uv run streamlit run app.py
+make app
 ```
+
+### Optional services and fallback behavior
+
+- **Langfuse is optional** — if Langfuse env vars are unset, the app still runs; you just lose tracing and run inspection.
+- **LightOn OCR requires a CUDA GPU** for usable performance. Born-digital PDFs still work without it because they bypass OCR entirely, but scanned PDFs depend on the OCR server.
+- **If `OCR_API_BASE` is unavailable**, scanned-page ingestion fails for those pages; there is no automatic fallback parser for image-only PDFs. Born-digital pages continue through the text-layer path.
+- **No GPU available?** You can still use the project for born-digital PDFs, spreadsheets, Markdown, DOCX, and other non-scanned inputs. The main limitation is scanned/image-heavy PDFs.
 
 ---
 
@@ -485,38 +539,76 @@ Invite the bot to a channel: `/invite @vault-rag`
 
 ## Evaluation
 
-An evaluation harness lives in `eval/evaluate_rag.py`. It runs a set of question–answer pairs through the full pipeline and scores each answer with a GPT-4o-mini judge across four metrics: faithfulness, context recall, answer relevance, and context precision.
+56-question benchmark over 8 real public documents: procurement policies, legal contracts, government annual reports, scanned invoice packets, FOIA disclosures, and Excel/CSV spend reports. Questions span four categories: single-document factoid, table lookup, cross-document comparison, and unanswerable (questions with no supporting evidence).
 
-Results are saved to `eval/results/` and auto-rotated (current + previous run kept).
+Answer quality is judged by a controlled LLM-as-judge harness using `gpt-4o-mini`, exact-match short-circuiting for deterministic answers, and retrieved-context selection around the answer and gold evidence terms. Retrieval metrics are computed deterministically against gold evidence annotations.
 
-| Metric | Score |
-|--------|-------|
-| Faithfulness | TBD |
-| Context recall | TBD |
-| Answer relevance | TBD |
-| Context precision | TBD |
+DeepEval remains available as an ablation mode, but it is not the primary reported run. In this benchmark it made several schema-constrained calls per answer; with Qwen judges it produced invalid JSON, and with GPT-mini judges it frequently timed out or under-scored faithfulness when context was aggressively trimmed. The default evaluator therefore uses one compact JSON-only judge call per non-exact answer so the reported scores reflect the RAG pipeline rather than evaluator instability.
 
-Run evaluation:
+### Results
 
-```bash
-uv run python eval/evaluate_rag.py
-```
+| Category | Questions | Correctness |
+|---|---|---|
+| Single-doc factoid | 32 | Included in overall |
+| Table lookup | 8 | Included in overall |
+| Cross-document comparison | 10 | 90.0% |
+| Unanswerable | 6 | 100% exact-match short-circuit |
+| **Overall** | **56** | **96.4%** |
+
+| Answer metric | Score |
+|---|---:|
+| Correctness | 96.4% |
+| Faithfulness | 97.3% |
+| Answer relevancy | 98.2% |
+
+| Retrieval metric | Score |
+|---|---:|
+| Hit@5 | 98% |
+| Hit@10 | 98% |
+| Evidence recall@10 | 96% |
+| Evidence recall@20 | 98% |
+| MRR | 0.92 |
+
+Judge breakdown for the latest full run:
+
+| Judge path | Questions |
+|---|---:|
+| Exact-match short-circuit | 22 |
+| Custom LLM judge | 34 |
+
+**Retrieval is near-perfect.** The 98% hit@5/hit@10 and 0.92 MRR confirm the hybrid dense+sparse retrieval, HyDE expansion, and reranking pipeline is working. Evidence recall at 98% by rank 20 means nearly all gold evidence is present for the answerer.
+
+**Cross-document comparison is now strong.** The 10 cross-document questions require the agent to identify the right sources, run separate retrieval passes when needed, and synthesize values without mixing documents. The latest cross-document slice scores 90.0% correctness, 95.0% faithfulness, and 100% answer relevancy.
+
+**Unanswerable accuracy at 100%** means the agent correctly abstains on all six questions that have no supporting evidence in any indexed document — no hallucination under pressure.
+
+The main residual misses are OCR/source-quality issues in the scanned invoice packet, not the agentic cross-document retrieval path.
+
+Benchmark assets:
+- `eval/document_manifest.json` — frozen corpus metadata, hashes, and stable `doc_id`s
+- `eval/data/rag_eval_benchmark_56qa_revised.jsonl` — gold questions and evidence annotations
+- `eval/run_eval.py` — evaluation runner (custom LLM judge + deterministic retrieval metrics; DeepEval ablation available with `EVAL_JUDGE_MODE=deepeval`)
+- `eval/results/run_final_20260504_summary.json` — pinned final summary for the portfolio run
+- `eval/results/run_final_20260504_answer_results.jsonl` — pinned gold-vs-generated answer rows
+- `eval/results/run_final_20260504_retrieval_results.jsonl` — pinned retrieval/evidence rows
 
 ---
 
 ## Tests
 
-71 tests, all mocked — no live services (Ollama, Qdrant, Groq) required to run CI.
+126 tests, all mocked — no live services (Ollama, Qdrant, Groq) required to run CI.
 
 | File | Tests | What's covered |
 |------|-------|----------------|
 | `test_chunker.py` | 3 | Token limits, minimum chunk size, required output fields |
 | `test_config.py` | 5 | Config invariants: types, model family constraints |
-| `test_retriever.py` | 14 | Cosine similarity math, text filter shape, retrieve from local JSON, dense and hybrid Qdrant paths |
+| `test_retriever.py` | 17 | Cosine similarity math, text filter shape, retrieve from local JSON, dense and hybrid Qdrant paths |
 | `test_reranker.py` | 10 | BGEReranker and QwenReranker: output format, sort order, top-n, score ranges |
-| `test_rag_agent.py` | 17 | `ask_agent` history injection and answer extraction, `stream_agent` token streaming and `<think>` suppression, chunk collection, system prompt invariants |
-| `test_table_repair.py` | 16 | Three-pass table repair: two-row HTML headers, LaTeX column derivation, missing last-column recovery |
+| `test_rag_agent.py` | 52 | `ask_agent` history injection and answer extraction, `stream_agent` token streaming and `<think>` suppression, chunk collection, system prompt invariants, doc registry injection, cross-document repair |
+| `test_table_repair.py` | 13 | Three-pass table repair: two-row HTML headers, LaTeX column derivation, missing last-column recovery |
 | `test_pdf_parser.py` | 6 | Per-page routing (text-layer vs scanned), VLM enable/disable, VLM exception handling, mixed documents |
+| `test_excel_cleaner.py` | 4 | Excel sheet filtering, row-value skipping, no-data token handling |
+| `test_slack.py` | 16 | Slack bot message routing, DM handling, mention parsing, answer formatting |
 
 ```bash
 uv run pytest tests/ -v
@@ -526,16 +618,48 @@ uv run pytest tests/ -v
 
 ## Known limitations
 
+- **English-only retrieval/generation workflow** — the current prompting and retrieval setup is optimized for English. Non-English documents can be indexed, but cross-language retrieval is not supported.
+- **Scanned PDFs require a GPU-backed OCR service** — LightOn OCR needs a CUDA-capable GPU for practical use. Without it, the project still works for born-digital PDFs and tabular/text files, but scanned-page ingestion is not a viable path.
+- **No automatic fallback when OCR is unavailable** — if `OCR_API_BASE` is down, scanned-page ingestion fails for those pages instead of falling back to another parser. Born-digital pages are unaffected.
+- **Contextual enrichment adds ingest latency** — one LLM call is made per chunk, plus one more for the document summary. Large documents can produce hundreds of calls, so ingestion can take several minutes on rate-limited endpoints.
+- **Cross-document aggregation is limited** — the agent can retrieve evidence from multiple documents, but it is not designed as a spreadsheet engine for robust operations like summing Q3 revenue across all uploaded files.
 - **Very large Excel files** — files with 100k+ rows or 20+ sheets are ingested fully into memory. Expect slow ingestion and possible OOM errors; consider pre-filtering sheets before upload.
 - **Password-protected PDFs** — LightOn OCR receives the raw bytes and will fail or return empty output. There is no detection or user-facing warning; the file silently ingests as an empty document.
 - **Low-quality scans** — severely skewed, low-DPI, or handwritten content degrades LightOn OCR accuracy. Ingestion does not fail, but retrieved text may contain OCR artefacts that hurt retrieval precision. Born-digital pages are unaffected (they bypass OCR entirely).
 - **VLM figure descriptions** — vector graphics in PDFs (e.g. matplotlib charts exported as PDF vectors) are rasterised and sent to Groq for description. If `GROQ_API_KEY` is unset or the Groq API is unavailable, figures are replaced with `[Figure: description unavailable]` and ingestion continues. Set `VLM_ENABLED=false` to skip all figure description calls.
 - **Complex PDF table layouts** — merged cells, rotated headers, and tables spanning multiple pages are parsed heuristically. The three-pass table repair handles common academic/GHG-report patterns; novel layouts may produce misaligned row-sentence chunks.
-- **Very long documents (500+ pages)** — the contextual enrichment step makes one LLM call per chunk. A 500-page technical report can generate 600+ chunks; at Groq free-tier rate limits this takes several minutes and may hit the requests-per-minute cap.
-- **Multi-language documents** — cross-lingual retrieval (Greek ↔ English) was removed from the pipeline. Documents in non-English languages can still be ingested and searched in their native language, but English queries will not retrieve non-English content and vice versa.
 - **Streaming and context overflow** — the adaptive `rerank_top_n` retry on context overflow is implemented only in `ask_agent`. The streaming path (`stream_agent`) does not retry; it will raise a `BadRequestError` on overflow. Use `ask_agent` for large document collections.
 
 ---
+
+## Project structure
+
+```text
+vault-rag/
+├── app.py
+├── README.md
+├── src/
+│   ├── chunker.py
+│   ├── config.py
+│   ├── ingest.py
+│   ├── ingest_table_rows.py
+│   ├── rag_agent.py
+│   ├── retrieval.py
+│   ├── vector_store.py
+│   ├── parser/
+│   │   ├── pdf_parser.py
+│   │   └── lightonocr_parser.py
+│   └── ingestion/
+│       ├── ocr.py
+│       └── vlm.py
+├── tests/
+├── docker/
+│   └── ingestion-stack/
+├── data/
+│   ├── input/
+│   └── output/
+└── eval/
+```
 
 ## Failure modes
 
