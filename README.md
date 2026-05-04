@@ -80,11 +80,17 @@ Vault RAG separates the operator experience from the end-user experience.
 
 ### CLI — for scripted ingestion and querying
 
-`main.py` is an alternative entry point when you don't need the browser UI. Useful for batch ingestion and headless query testing.
+The module entry points are useful for batch ingestion and headless query testing without launching the browser UI.
 
 ```bash
-uv run python main.py ingest path/to/documents/
-uv run python main.py query "What are the payment terms?"
+# Ingest a PDF
+uv run python -m src.ingest --pdf data/input/report.pdf --collection documents_chunks
+
+# Ingest an Excel / CSV file
+uv run python -m src.ingest_table_rows data/input/tables.xlsx --collection documents_chunks
+
+# Ask a question
+uv run python -m src.rag_agent --query "What are the payment terms?"
 ```
 
 ### Streamlit UI — for testing and tuning
