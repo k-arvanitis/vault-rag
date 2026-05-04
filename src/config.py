@@ -44,7 +44,7 @@ CHUNK_LLM_API_KEY: str = os.getenv("CHUNK_LLM_API_KEY", os.getenv("OPENROUTER_AP
 OCR_API_BASE: str = os.getenv("OCR_API_BASE", "http://127.0.0.1:8002")
 OCR_MODEL: str = os.getenv("OCR_MODEL", "lightonocr-2-1b-ocr-soup")
 
-RERANKER_MODEL: str = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
+RERANKER_MODEL: str = os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
 RERANKER_DEVICE: str = os.getenv("RERANKER_DEVICE", "cpu")
 EMBED_DEVICE: str = os.getenv("EMBED_DEVICE", "cpu")
 
