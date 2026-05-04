@@ -477,6 +477,8 @@ with tab_inspect:
                 if summary_payload:
                     with st.expander("Document Summary", expanded=True):
                         summary_text = (summary_payload.get("content") or "").replace("## Document Summary\n\n", "")
+                        # Strip pandas datetime noise (" 00:00:00") from display
+                        summary_text = re.sub(r" 00:00:00", "", summary_text)
                         st.markdown(summary_text)
 
                 # Group by sheet
@@ -497,7 +499,11 @@ with tab_inspect:
                         num_rows = meta.get("num_rows")
                         label_parts = [f"Chunk {idx}", chunk_type]
                         if row_ref is not None:
-                            label_parts.append(f"rows {row_ref}–{row_ref + (num_rows or 1) - 1}")
+                            end_row = row_ref + (num_rows or 1) - 1
+                            if end_row == row_ref:
+                                label_parts.append(f"row {row_ref}")
+                            else:
+                                label_parts.append(f"rows {row_ref}–{end_row}")
                         label = " · ".join(label_parts)
                         content = payload.get("content") or "_No content._"
                         with st.expander(label, expanded=idx == 1):
