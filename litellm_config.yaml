@@ -1,0 +1,57 @@
+# LiteLLM Proxy — Vault RAG gateway
+#
+# Exposes a single OpenAI-compatible endpoint at http://localhost:4000/v1
+# Priority order (same model_name = automatic failover):
+#   1. Groq       — Llama 3.3 70B   (primary agent model)
+#   2. Groq       — Qwen3 32B       (fast fallback)
+#   3. NVIDIA NIM — Qwen3 Next 80B  (reasoning fallback, if configured)
+#
+# Start with:  make litellm
+#              OR  litellm --config litellm_config.yaml --port 4000
+
+model_list:
+  # ── Primary: Groq Llama ──────────────────────────────────────────────────
+  - model_name: llama-3.3-70b-versatile     # the name your app sends
+    litellm_params:
+      model: groq/llama-3.3-70b-versatile
+      api_key: os.environ/GROQ_API_KEY
+      max_tokens: 4096
+
+  # ── Fallback #1: Groq Qwen ───────────────────────────────────────────────
+  - model_name: llama-3.3-70b-versatile     # same name -> automatic fallback
+    litellm_params:
+      model: groq/qwen/qwen3-32b
+      api_key: os.environ/GROQ_API_KEY
+      max_tokens: 4096
+
+  # ── Fallback #2: NVIDIA NIM ───────────────────────────────────────────────
+  # Qwen3 Next is a reasoning fallback when your NIM key is available.
+  # Uses your existing NVIDIA_API_KEY; endpoint is OpenAI-compatible.
+  - model_name: llama-3.3-70b-versatile     # same name -> third-tier fallback
+    litellm_params:
+      model: nvidia_nim/qwen/qwen3-next-80b-a3b-thinking
+      api_base: https://integrate.api.nvidia.com/v1
+      api_key: os.environ/NVIDIA_API_KEY
+      max_tokens: 4096
+
+router_settings:
+  # How many times to retry a failed request before giving up
+  num_retries: 3
+  # Seconds to wait between retries
+  retry_after: 2
+  # Failures on a single provider before switching to the next
+  allowed_fails: 1
+  # Seconds to cool down a failed provider before trying it again
+  cooldown_time: 60
+  # Strategy: "simple-shuffle" tries providers in order; use "least-busy" for load balancing
+  routing_strategy: simple-shuffle
+
+litellm_settings:
+  # Drop unknown params so Groq/OpenRouter don't reject the request
+  drop_params: true
+  # Emit structured request/response logs to stdout
+  set_verbose: false
+
+general_settings:
+  # Optional: protect the proxy with a master key (set LITELLM_MASTER_KEY in .env)
+  master_key: os.environ/LITELLM_MASTER_KEY

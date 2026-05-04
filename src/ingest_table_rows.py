@@ -352,13 +352,22 @@ _MAX_EMBED_CHARS = int(os.getenv("MAX_EMBED_CHARS", "24000"))  # BGE-M3 supports
 
 
 def _embed(text: str) -> list[float]:
+    return _embed_batch([text])[0]
+
+
+def _embed_batch(texts: list[str], batch_size: int = 64) -> list[list[float]]:
     import httpx
     client = OpenAI(
         base_url=f"{_ollama_base()}/v1",
         api_key="ollama",
         http_client=httpx.Client(timeout=300),
     )
-    return client.embeddings.create(model=_embed_model(), input=text[:_MAX_EMBED_CHARS]).data[0].embedding
+    results: list[list[float]] = []
+    for i in range(0, len(texts), batch_size):
+        batch = [t[:_MAX_EMBED_CHARS] for t in texts[i : i + batch_size]]
+        response = client.embeddings.create(model=_embed_model(), input=batch)
+        results.extend([d.embedding for d in sorted(response.data, key=lambda d: d.index)])
+    return results
 
 def _qdrant_request(method: str, url: str, body: dict | None = None) -> dict:
     data = json.dumps(body).encode() if body else None
@@ -382,9 +391,10 @@ def _ensure_collection(collection: str, dim: int) -> None:
         })
         print(f"  Created collection '{collection}'")
 
-def _upsert(collection: str, points: list[dict]) -> None:
+def _upsert(collection: str, points: list[dict], batch_size: int = 200) -> None:
     base = _qdrant_url().rstrip("/")
-    _qdrant_request("PUT", f"{base}/collections/{collection}/points?wait=true", {"points": points})
+    for i in range(0, len(points), batch_size):
+        _qdrant_request("PUT", f"{base}/collections/{collection}/points?wait=true", {"points": points[i : i + batch_size]})
 
 
 def _build_vector_field(text: str, sparse_embedder: Any) -> Any:
@@ -407,6 +417,8 @@ def _build_table_point(
 ) -> dict[str, Any]:
     """Build one Qdrant point for a table-derived chunk."""
     prefix = "sheet" if chunk_type == "sheet_table" else "row"
+    parts = file_name.split("_")
+    doc_id = f"{parts[0]}_{parts[1]}" if len(parts) >= 2 else parts[0]
     return {
         "id": _point_id(file_name, sheet_name, f"{prefix}:{part_idx}"),
         "vector": vector_field,
@@ -415,9 +427,11 @@ def _build_table_point(
             "source_type": "table",
             "metadata": {
                 "source_file": file_name,
+                "doc_id": doc_id,
                 "sheet_name": sheet_name,
                 "chunk_type": chunk_type,
                 "part": part_idx,
+                "row_ref": part_idx if chunk_type == "sheet_row" else None,
                 "num_rows": num_rows,
             },
         },
@@ -433,6 +447,40 @@ def _point_id(file_name: str, sheet_name: str, key_suffix: Any) -> int:
 # ---------------------------------------------------------------------------
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _build_file_document_summary(
+    file_name: str,
+    sheet_summaries: list[str],
+    collection: str,
+) -> None:
+    """Upsert one document_summary point per table file so summary-based routing finds it.
+
+    The text aggregates all per-sheet summary headers (file, sheet, columns, categories)
+    — no LLM call needed.
+    """
+    if not sheet_summaries:
+        return
+    combined = f"## Document Summary\n\nFile: {file_name}\n\n" + "\n\n".join(sheet_summaries)
+    parts = file_name.split("_")
+    doc_id = f"{parts[0]}_{parts[1]}" if len(parts) >= 2 else parts[0]
+    vec = _embed(combined)
+    point_id = _point_id(file_name, "__summary__", "document_summary")
+    point = {
+        "id": point_id,
+        "vector": vec,
+        "payload": {
+            "content": combined,
+            "source_type": "table",
+            "metadata": {
+                "source_file": file_name,
+                "doc_id": doc_id,
+                "chunk_type": "document_summary",
+                "chunk_index": -1,
+            },
+        },
+    }
+    _upsert(collection, [point])
 
 
 def _save_chunks_json(file_path: str, all_chunks: list[dict]) -> Path:
@@ -462,6 +510,7 @@ def ingest_table_rows(
     file_name = Path(file_path).name
     sheets = load_sheets(file_path)
     all_chunks: list[dict] = []  # accumulate across all sheets for JSON output
+    sheet_summary_texts: list[str] = []  # per-sheet summary strings for document_summary point
 
     # Delete any existing points for this file before re-ingesting (deduplication)
     base = _qdrant_url().rstrip("/")
@@ -503,6 +552,7 @@ def ingest_table_rows(
 
         # Qualify duplicate column names with subheader content for better embeddings
         qualified_headers = _qualify_headers(headers, subheader_rows)
+        sheet_summary_texts.append(sheet_summary_text(file_name, sheet_name, qualified_headers, data_rows, sheet_title))
 
         # Split into chunks of MAX_ROWS_PER_CHUNK rows; then further split any window
         # whose rendered text exceeds MAX_CHARS_PER_TABLE_CHUNK (wide sheets have few rows
@@ -575,7 +625,9 @@ def ingest_table_rows(
                 vector_field=vector_field,
             ))
 
+        # Collect all row texts then batch-embed in one shot
         row_chunk_count = 0
+        row_items: list[tuple[int, str]] = []
         for row_idx, row in enumerate(data_rows):
             if _should_skip_data_row(row):
                 continue
@@ -591,12 +643,21 @@ def ingest_table_rows(
                     "num_rows": 1,
                 },
             })
+            row_items.append((row_idx, chunk_text))
 
-            try:
-                vector_field = _build_vector_field(chunk_text, sparse_embedder)
-            except Exception as e:
-                print(f"  [WARNING] Sparse embedding failed for row {row_idx}: {e}. Using dense only.")
-                vector_field = _embed(chunk_text)
+        row_texts = [t for _, t in row_items]
+        row_vecs = _embed_batch(row_texts) if row_texts else []
+
+        for (row_idx, chunk_text), vec in zip(row_items, row_vecs):
+            if sparse_embedder is not None:
+                try:
+                    indices, values = sparse_embedder.embed(chunk_text)
+                    vector_field: Any = {"": vec, "sparse": {"indices": indices, "values": values}}
+                except Exception as e:
+                    print(f"  [WARNING] Sparse embedding failed for row {row_idx}: {e}. Using dense only.")
+                    vector_field = vec
+            else:
+                vector_field = vec
             if not _ensure_collection_done:
                 vec_size = len(vector_field[""]) if isinstance(vector_field, dict) else len(vector_field)
                 _ensure_collection(collection, vec_size)
@@ -618,6 +679,10 @@ def ingest_table_rows(
         n_parts = len(row_windows)
         if verbose:
             print(f"    → {n_parts} table chunk(s) + {row_chunk_count} row chunk(s) upserted ({len(data_rows)} rows)")
+
+    _build_file_document_summary(file_name, sheet_summary_texts, collection)
+    if verbose:
+        print(f"  Upserted document_summary for '{file_name}'")
 
     out_path = _save_chunks_json(file_path, all_chunks)
     if verbose:

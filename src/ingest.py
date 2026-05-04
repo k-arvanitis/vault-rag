@@ -677,6 +677,7 @@ def _run_ingest_pdf(
         output_path=REPO_ROOT / "data/output/embeddings" / f"{md_path.stem}_chunks_embeddings.json",
         api_base=ollama_api_base,
         model_name=ollama_embed_model,
+        batch_size=2,
         verbose=verbose,
     )
     if not embeddings_path.exists():

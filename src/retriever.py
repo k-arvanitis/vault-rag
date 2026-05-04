@@ -2,6 +2,7 @@ import argparse
 import json
 import math
 import os
+import re
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -51,19 +52,167 @@ def _text_filter(token: str) -> dict:
     return {"must": [{"key": "content", "match": {"text": token}}]}
 
 
+_TABLE_CHUNK_TYPES = ["sheet_row", "sheet_table"]
+_TABLE_SCHEMA_CHUNK_TYPES = ["document_summary", "sheet_table"]
+
+
+def _metadata_filter(
+    *,
+    chunk_types: list[str] | None = None,
+    exclude_chunk_types: list[str] | None = None,
+    filter_token: str | None = None,
+    scope_doc_id: str | None = None,
+    scope_doc_key: str = "metadata.doc_id",
+) -> dict | None:
+    """Build a Qdrant filter for chunk-type routing and optional text filtering.
+
+    scope_doc_id restricts results to a stable doc_id when present. Older PDF
+    ingestions may not have metadata.doc_id yet, so callers can retry with
+    scope_doc_key="metadata.source_file" as a compatibility fallback.
+    """
+    must: list[dict] = []
+    must_not: list[dict] = []
+    if chunk_types:
+        must.append({"key": "metadata.chunk_type", "match": {"any": chunk_types}})
+    if exclude_chunk_types:
+        must_not.append({"key": "metadata.chunk_type", "match": {"any": exclude_chunk_types}})
+    if filter_token:
+        must.append({"key": "content", "match": {"text": filter_token}})
+    if scope_doc_id:
+        match = {"value": scope_doc_id} if scope_doc_key == "metadata.doc_id" else {"text": scope_doc_id}
+        must.append({"key": scope_doc_key, "match": match})
+    if not must and not must_not:
+        return None
+    result: dict = {}
+    if must:
+        result["must"] = must
+    if must_not:
+        result["must_not"] = must_not
+    return result
+
+
+_TABLE_STOP_WORDS = frozenset({
+    # Question structure words
+    "what", "which", "where", "when", "who", "how", "does", "according", "listed",
+    "appears", "dated", "where",
+    # Generic English connectives
+    "is", "the", "a", "an", "for", "on", "in", "at", "of", "to", "with", "and",
+    "that", "this", "from", "have", "been",
+    # Common table column names — these are structural words, not values
+    "row", "amount", "total", "date", "number", "net", "value",
+    "transaction", "transactions", "supplier", "beneficiary",
+    "merchant", "category", "purchase", "expenditure",
+    "department", "directorate", "authority",
+    # Context words that appear in table-query phrasing but are not entity values
+    "spreadsheet", "report", "spend", "published", "card",
+})
+
+_EXPLICIT_TABLE_TERMS = (
+    "row", "sheet", "csv", "xlsx", "spreadsheet", "column", "columns", "table",
+)
+_TABLE_SIGNAL_TERMS = (
+    "transaction", "supplier", "beneficiary", "merchant", "category", "department",
+    "amount", "total", "net", "paid", "listed", "purchase", "expenditure",
+)
+
+
+def _table_signal_count(query: str) -> int:
+    q = query.lower()
+    return sum(1 for term in _TABLE_SIGNAL_TERMS if term in q)
+
+
+def _extract_table_filter_token(query: str) -> str | None:
+    """Extract the most distinctive value token from a table lookup query for Qdrant text filtering.
+
+    Prefers numeric IDs (transaction numbers), then long proper-noun tokens not in the stop list.
+    """
+    # Prefer explicit numeric identifiers (transaction numbers, IDs) — skip 4-digit years
+    numeric = re.findall(r"\b\d{5,}\b", query)
+    if numeric:
+        return max(numeric, key=len)
+
+    # Plain alphanumeric tokens only — no & or . so cross-word combos aren't captured
+    words = re.findall(r"[A-Za-z0-9]+", query)
+    candidates = [w for w in words if w.lower() not in _TABLE_STOP_WORDS and len(w) >= 5]
+    if not candidates:
+        return None
+    # Prefer tokens that look like proper values: contain digits or start with uppercase
+    proper = [w for w in candidates if any(c.isdigit() for c in w) or w[0].isupper()]
+    pool = proper if proper else candidates
+    return max(pool, key=len)
+
+
+def _extract_table_filter_terms(query: str) -> list[str]:
+    """Return useful content terms for reordering table lookup hits.
+
+    Qdrant receives one high-precision filter token to keep recall reasonable.
+    The remaining distinctive terms are used as a soft row-match score after
+    retrieval, which helps cases where a supplier/beneficiary name has multiple
+    words or punctuation variants.
+    """
+    extra_stops = {"doncaster", "council", "q1", "april", "2025", "2026"}
+    terms: list[str] = []
+    for token in re.findall(r"[A-Za-z0-9]+", query):
+        lowered = token.lower()
+        if len(lowered) < 3:
+            continue
+        if lowered in _TABLE_STOP_WORDS or lowered in extra_stops:
+            continue
+        if lowered not in terms:
+            terms.append(lowered)
+    return terms
+
+
+def infer_query_chunk_types(query: str) -> tuple[list[str] | None, list[str] | None]:
+    """Infer chunk type routing for a query.
+
+    Returns (include_types, exclude_types) for Qdrant filtering.
+    - Table queries: include only sheet_row/sheet_table, no exclusions.
+    - Cross-doc queries: search everything (no include, no exclude).
+    - Factoid/figure queries: no include filter, but exclude table chunks so PDF
+      chunks aren't buried under thousands of sheet rows.
+    """
+    q = query.lower()
+    cross_doc_terms = ["which document", "both documents", "other document", "versus", "compare"]
+    if any(term in q for term in cross_doc_terms):
+        return None, None
+    if "column" in q or "columns" in q or "header" in q or "headers" in q:
+        return _TABLE_SCHEMA_CHUNK_TYPES, None
+    if any(term in q for term in _EXPLICIT_TABLE_TERMS):
+        return _TABLE_CHUNK_TYPES, None
+    # If a query has several transactional/table-like words but does not
+    # explicitly identify a spreadsheet/table/row/column, search all chunk
+    # types. PDF invoices and contracts often use the same vocabulary.
+    if _table_signal_count(query) >= 2:
+        return None, None
+    # Factoid / figure / numeric: exclude table chunks so PDF text isn't drowned out
+    return None, _TABLE_CHUNK_TYPES
+
+
 def _qdrant_search(
     qdrant_url: str,
     collection: str,
     query_vec: list[float],
     top_k: int,
     filter_token: str | None = None,
+    chunk_types: list[str] | None = None,
+    exclude_chunk_types: list[str] | None = None,
+    scope_doc_id: str | None = None,
+    scope_doc_key: str = "metadata.doc_id",
 ) -> list[dict[str, Any]]:
-    """Run a dense vector search against Qdrant, with optional keyword filter."""
+    """Run a dense vector search against Qdrant, with optional payload filters."""
     base = qdrant_url.rstrip("/")
     url = f"{base}/collections/{collection}/points/search"
     body: dict[str, Any] = {"vector": query_vec, "limit": top_k, "with_payload": True}
-    if filter_token:
-        body["filter"] = _text_filter(filter_token)
+    payload_filter = _metadata_filter(
+        chunk_types=chunk_types,
+        exclude_chunk_types=exclude_chunk_types,
+        filter_token=filter_token,
+        scope_doc_id=scope_doc_id,
+        scope_doc_key=scope_doc_key,
+    )
+    if payload_filter:
+        body["filter"] = payload_filter
     payload = json.dumps(body).encode("utf-8")
     req = Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
     try:
@@ -104,6 +253,10 @@ def _qdrant_hybrid_search(
     sparse_values: list[float],
     top_k: int,
     filter_token: str | None = None,
+    chunk_types: list[str] | None = None,
+    exclude_chunk_types: list[str] | None = None,
+    scope_doc_id: str | None = None,
+    scope_doc_key: str = "metadata.doc_id",
 ) -> list[dict[str, Any]]:
     """Hybrid search using dense prefetch + sparse prefetch + RRF fusion."""
     base = qdrant_url.rstrip("/")
@@ -117,8 +270,15 @@ def _qdrant_hybrid_search(
         "limit": top_k,
         "with_payload": True,
     }
-    if filter_token:
-        body["filter"] = _text_filter(filter_token)
+    payload_filter = _metadata_filter(
+        chunk_types=chunk_types,
+        exclude_chunk_types=exclude_chunk_types,
+        filter_token=filter_token,
+        scope_doc_id=scope_doc_id,
+        scope_doc_key=scope_doc_key,
+    )
+    if payload_filter:
+        body["filter"] = payload_filter
     payload = json.dumps(body).encode("utf-8")
     req = Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
     try:
@@ -138,6 +298,50 @@ def _qdrant_hybrid_search(
     return points
 
 
+def _qdrant_scroll_filter(
+    qdrant_url: str,
+    collection: str,
+    limit: int,
+    filter_token: str | None = None,
+    chunk_types: list[str] | None = None,
+    exclude_chunk_types: list[str] | None = None,
+    scope_doc_id: str | None = None,
+    scope_doc_key: str = "metadata.doc_id",
+) -> list[dict[str, Any]]:
+    """Fetch exact payload-filter matches without vector ranking."""
+    base = qdrant_url.rstrip("/")
+    url = f"{base}/collections/{collection}/points/scroll"
+    payload_filter = _metadata_filter(
+        chunk_types=chunk_types,
+        exclude_chunk_types=exclude_chunk_types,
+        filter_token=filter_token,
+        scope_doc_id=scope_doc_id,
+        scope_doc_key=scope_doc_key,
+    )
+    body: dict[str, Any] = {
+        "limit": limit,
+        "with_payload": True,
+        "with_vector": False,
+    }
+    if payload_filter:
+        body["filter"] = payload_filter
+    payload = json.dumps(body).encode("utf-8")
+    req = Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urlopen(req, timeout=300) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Qdrant scroll failed ({exc.code}): {detail}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Could not connect to Qdrant at {qdrant_url}.") from exc
+
+    points = body.get("result", {}).get("points", [])
+    if not isinstance(points, list):
+        raise RuntimeError(f"Unexpected Qdrant scroll response: {body}")
+    return [{**point, "score": 1.0} for point in points]
+
+
 def retrieve(
     query: str,
     embeddings_path: Path | None = None,
@@ -148,31 +352,185 @@ def retrieve(
     collection: str = "documents_chunks",
     use_qdrant: bool = True,
     filter_token: str | None = None,
+    force_chunk_types: list[str] | None = None,
+    force_exclude_chunk_types: list[str] | None = None,
+    scope_doc_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Retrieve top-k relevant chunks from the full collection."""
+    """Retrieve top-k relevant chunks from the full collection.
+
+    force_chunk_types / force_exclude_chunk_types bypass infer_query_chunk_types.
+    Use force_chunk_types=["document_summary"] for stage-1 doc routing.
+    Use force_exclude_chunk_types=["sheet_row","sheet_table"] to pin PDF-only retrieval
+    even when the query contains table-trigger keywords (e.g. "supplier", "invoice").
+    scope_doc_id restricts results to a single document (e.g. "doc_001") via Qdrant
+    source_file text filter — guarantees small docs appear even if globally outranked.
+    """
     query_vec = _ollama_embed_query(api_base=api_base, model_name=model_name, query=query)
 
     if use_qdrant:
-        if _collection_has_sparse(qdrant_url=qdrant_url, collection=collection):
-            from src.sparse_embedder import get_sparse_embedder
-            sparse_indices, sparse_values = get_sparse_embedder().embed(query)
-            points = _qdrant_hybrid_search(
+        if force_chunk_types is not None or force_exclude_chunk_types is not None:
+            chunk_types = force_chunk_types
+            exclude_chunk_types = force_exclude_chunk_types
+        else:
+            chunk_types, exclude_chunk_types = infer_query_chunk_types(query)
+        if filter_token is None and chunk_types == _TABLE_CHUNK_TYPES:
+            filter_token = _extract_table_filter_token(query)
+        soft_table_query = chunk_types == _TABLE_CHUNK_TYPES or _table_signal_count(query) >= 2
+        if filter_token is None and soft_table_query:
+            filter_token = _extract_table_filter_token(query)
+        filter_terms = _extract_table_filter_terms(query) if soft_table_query else []
+        qdrant_top_k = max(top_k, 100) if filter_terms else top_k
+
+        def _search_with_scope(scope_doc_key: str) -> list[dict[str, Any]]:
+            if _collection_has_sparse(qdrant_url=qdrant_url, collection=collection):
+                try:
+                    from src.sparse_embedder import get_sparse_embedder
+                    sparse_indices, sparse_values = get_sparse_embedder().embed(query)
+                    hybrid_points = _qdrant_hybrid_search(
+                        qdrant_url=qdrant_url,
+                        collection=collection,
+                        query_vec=query_vec,
+                        sparse_indices=sparse_indices,
+                        sparse_values=sparse_values,
+                        top_k=qdrant_top_k,
+                        filter_token=filter_token,
+                        chunk_types=chunk_types,
+                        exclude_chunk_types=exclude_chunk_types,
+                        scope_doc_id=scope_doc_id,
+                        scope_doc_key=scope_doc_key,
+                    )
+                    if hybrid_points:
+                        return hybrid_points
+                except Exception:
+                    pass
+                return _qdrant_search(
+                    qdrant_url=qdrant_url,
+                    collection=collection,
+                    query_vec=query_vec,
+                    top_k=qdrant_top_k,
+                    filter_token=filter_token,
+                    chunk_types=chunk_types,
+                    exclude_chunk_types=exclude_chunk_types,
+                    scope_doc_id=scope_doc_id,
+                    scope_doc_key=scope_doc_key,
+                )
+            return _qdrant_search(
                 qdrant_url=qdrant_url,
                 collection=collection,
                 query_vec=query_vec,
-                sparse_indices=sparse_indices,
-                sparse_values=sparse_values,
-                top_k=top_k,
+                top_k=qdrant_top_k,
                 filter_token=filter_token,
+                chunk_types=chunk_types,
+                exclude_chunk_types=exclude_chunk_types,
+                scope_doc_id=scope_doc_id,
+                scope_doc_key=scope_doc_key,
             )
+
+        if _collection_has_sparse(qdrant_url=qdrant_url, collection=collection):
+            try:
+                from src.sparse_embedder import get_sparse_embedder
+                sparse_indices, sparse_values = get_sparse_embedder().embed(query)
+                points = _qdrant_hybrid_search(
+                    qdrant_url=qdrant_url,
+                    collection=collection,
+                    query_vec=query_vec,
+                    sparse_indices=sparse_indices,
+                    sparse_values=sparse_values,
+                    top_k=qdrant_top_k,
+                    filter_token=filter_token,
+                    chunk_types=chunk_types,
+                    exclude_chunk_types=exclude_chunk_types,
+                    scope_doc_id=scope_doc_id,
+                )
+            except Exception:
+                points = _qdrant_search(
+                    qdrant_url=qdrant_url,
+                    collection=collection,
+                    query_vec=query_vec,
+                    top_k=qdrant_top_k,
+                    filter_token=filter_token,
+                    chunk_types=chunk_types,
+                    exclude_chunk_types=exclude_chunk_types,
+                    scope_doc_id=scope_doc_id,
+                )
         else:
             points = _qdrant_search(
                 qdrant_url=qdrant_url,
                 collection=collection,
                 query_vec=query_vec,
-                top_k=top_k,
+                top_k=qdrant_top_k,
                 filter_token=filter_token,
+                chunk_types=chunk_types,
+                exclude_chunk_types=exclude_chunk_types,
+                scope_doc_id=scope_doc_id,
             )
+        if scope_doc_id:
+            points = _search_with_scope("metadata.doc_id")
+            if not points:
+                points = _search_with_scope("metadata.source_file")
+            if not points and filter_token:
+                original_filter_token = filter_token
+                filter_token = None
+                points = _search_with_scope("metadata.doc_id")
+                if not points:
+                    points = _search_with_scope("metadata.source_file")
+                filter_token = original_filter_token
+        if filter_token and soft_table_query:
+            try:
+                scroll_chunk_types = chunk_types if chunk_types == _TABLE_CHUNK_TYPES else _TABLE_CHUNK_TYPES
+                exact_points = _qdrant_scroll_filter(
+                    qdrant_url=qdrant_url,
+                    collection=collection,
+                    limit=qdrant_top_k,
+                    filter_token=filter_token,
+                    chunk_types=scroll_chunk_types,
+                    exclude_chunk_types=exclude_chunk_types,
+                    scope_doc_id=scope_doc_id,
+                    scope_doc_key="metadata.doc_id",
+                )
+                if scope_doc_id and not exact_points:
+                    exact_points = _qdrant_scroll_filter(
+                        qdrant_url=qdrant_url,
+                        collection=collection,
+                        limit=qdrant_top_k,
+                        filter_token=filter_token,
+                        chunk_types=scroll_chunk_types,
+                        exclude_chunk_types=exclude_chunk_types,
+                        scope_doc_id=scope_doc_id,
+                        scope_doc_key="metadata.source_file",
+                    )
+                if not exact_points:
+                    alternate_terms = [
+                        term for term in sorted(filter_terms, key=len, reverse=True)
+                        if term != filter_token.lower() and len(term) >= 4
+                    ][:4]
+                    for term in alternate_terms:
+                        term_points = _qdrant_scroll_filter(
+                            qdrant_url=qdrant_url,
+                            collection=collection,
+                            limit=max(10, qdrant_top_k // 4),
+                            filter_token=term,
+                            chunk_types=scroll_chunk_types,
+                            exclude_chunk_types=exclude_chunk_types,
+                            scope_doc_id=scope_doc_id,
+                            scope_doc_key="metadata.doc_id",
+                        )
+                        if scope_doc_id and not term_points:
+                            term_points = _qdrant_scroll_filter(
+                                qdrant_url=qdrant_url,
+                                collection=collection,
+                                limit=max(10, qdrant_top_k // 4),
+                                filter_token=term,
+                                chunk_types=scroll_chunk_types,
+                                exclude_chunk_types=exclude_chunk_types,
+                                scope_doc_id=scope_doc_id,
+                                scope_doc_key="metadata.source_file",
+                            )
+                        exact_points.extend(term_points)
+                seen_ids = {point.get("id") for point in exact_points}
+                points = exact_points + [point for point in points if point.get("id") not in seen_ids]
+            except Exception:
+                pass
         scored_from_qdrant: list[dict[str, Any]] = []
         for point in points:
             payload = point.get("payload", {}) or {}
@@ -187,6 +545,13 @@ def retrieve(
                     "metadata": payload.get("metadata", {}),
                 }
             )
+        if filter_terms:
+            def _table_term_score(hit: dict[str, Any]) -> int:
+                content = (hit.get("content") or "").lower()
+                return sum(1 for term in filter_terms if term in content)
+
+            scored_from_qdrant.sort(key=lambda h: (_table_term_score(h), h.get("score", 0.0)), reverse=True)
+            return scored_from_qdrant[:top_k]
         return scored_from_qdrant
 
     if embeddings_path is None:

@@ -13,6 +13,8 @@ import tempfile
 from src.retriever import (
     _cosine_similarity,
     _text_filter,
+    _TABLE_CHUNK_TYPES,
+    infer_query_chunk_types,
     retrieve,
 )
 
@@ -54,6 +56,33 @@ class TestTextFilter:
     def test_token_embedded_in_filter(self):
         f = _text_filter("XYZ")
         assert f["must"][0]["match"]["text"] == "XYZ"
+
+
+# ---------------------------------------------------------------------------
+# query routing
+# ---------------------------------------------------------------------------
+
+class TestInferQueryChunkTypes:
+    def test_supplier_in_contract_question_does_not_force_table_chunks(self):
+        include, exclude = infer_query_chunk_types(
+            "How long must the Supplier keep records after the Agreement ends?"
+        )
+        assert include is None
+        assert exclude == _TABLE_CHUNK_TYPES
+
+    def test_explicit_spreadsheet_row_question_forces_table_chunks(self):
+        include, exclude = infer_query_chunk_types(
+            "In the spreadsheet row for transaction 12345, what is the amount?"
+        )
+        assert include == _TABLE_CHUNK_TYPES
+        assert exclude is None
+
+    def test_transactional_question_without_table_source_searches_all_chunks(self):
+        include, exclude = infer_query_chunk_types(
+            "What total cost is shown for the 25 transactions?"
+        )
+        assert include is None
+        assert exclude is None
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,22 @@
 services:
+  # ── LiteLLM proxy ──────────────────────────────────────────────────────────
+  # Routes generation requests: Groq (primary) → OpenRouter (fallback on 429/503)
+  # Exposes an OpenAI-compatible endpoint at http://localhost:4000/v1
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: litellm-proxy
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    volumes:
+      - ../../litellm_config.yaml:/app/config.yaml:ro
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY:-}
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-}
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "2"]
+
   qdrant:
     image: qdrant/qdrant:v1.17.0
     container_name: qdrant-rag

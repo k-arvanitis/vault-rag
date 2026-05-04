@@ -22,11 +22,18 @@ OLLAMA_EMBED_MODEL: str = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 QDRANT_URL: str = os.getenv("QDRANT_URL", "http://localhost:7333")
 QDRANT_COLLECTION: str = os.getenv("QDRANT_COLLECTION", "documents_chunks")
 
-GENERATION_API_BASE: str = os.getenv("GENERATION_API_BASE", "https://api.groq.com/openai/v1")
-GENERATION_MODEL: str = os.getenv("GENERATION_MODEL", "llama-3.3-70b-versatile")
+GENERATION_API_BASE: str = os.getenv("GENERATION_API_BASE", "http://localhost:4000/v1")
+GENERATION_MODEL: str = os.getenv("GENERATION_MODEL", "qwen3-32b")
 
 # Required — get a free key at console.groq.com
 GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+
+# Optional — NVIDIA NIM fallback (build.nvidia.com)
+NVIDIA_API_KEY: str = os.getenv("NVIDIA_API_KEY", "")
+
+# LiteLLM proxy master key — used as the API key when routing through the proxy.
+# Leave blank to run the proxy without authentication.
+LITELLM_MASTER_KEY: str = os.getenv("LITELLM_MASTER_KEY", "")
 
 # Contextual summary LLM used during chunking (smaller/faster model than generation)
 CHUNK_LLM_API_BASE: str = os.getenv("CHUNK_LLM_API_BASE", "https://openrouter.ai/api/v1")
@@ -45,7 +52,7 @@ EMBED_DEVICE: str = os.getenv("EMBED_DEVICE", "cpu")
 # Retrieval & ranking
 # ---------------------------------------------------------------------------
 RETRIEVAL_TOP_K: int = int(os.getenv("RETRIEVAL_TOP_K", "100"))
-RERANK_TOP_N: int = int(os.getenv("RERANK_TOP_N", "20"))
+RERANK_TOP_N: int = int(os.getenv("RERANK_TOP_N", "10"))
 DOC_MIN_SCORE: float = float(os.getenv("DOC_MIN_SCORE", "0.01"))
 
 # Max chars of a chunk/table shown to the LLM (prevents context overflow)
@@ -82,3 +89,12 @@ IMAGE_SIZE_LIMIT: float = float(os.getenv("IMAGE_SIZE_LIMIT", "0.05"))
 VLM_ENABLED: bool = os.getenv("VLM_ENABLED", "true").lower() not in ("false", "0", "no")
 VLM_PROVIDER: str = os.getenv("VLM_PROVIDER", "groq")
 VLM_MODEL: str = os.getenv("VLM_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
+
+# ---------------------------------------------------------------------------
+# Excel direct-query tool (temporary, pre-Postgres path)
+# ---------------------------------------------------------------------------
+EXCEL_CACHE_DIR: str = os.getenv("EXCEL_CACHE_DIR", ".excel_cache")
+# Comma-separated list of Excel file paths to load at agent startup
+EXCEL_FILES: list[str] = [
+    p.strip() for p in os.getenv("EXCEL_FILES", "").split(",") if p.strip()
+]

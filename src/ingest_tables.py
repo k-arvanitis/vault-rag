@@ -93,7 +93,7 @@ def _load_xlsx(path: Path) -> dict[str, list[list[Any]]]:
 
 def _load_csv(path: Path) -> dict[str, list[list[Any]]]:
     rows: list[list[Any]] = []
-    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+    with path.open("r", encoding="latin-1", newline="") as handle:
         reader = csv.reader(handle)
         for row in reader:
             if not any(str(v).strip() != "" for v in row):

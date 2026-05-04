@@ -202,6 +202,12 @@ def chunk_markdown(
         r'\[FIGURE_START\].*?\[FIGURE_END\]', re.DOTALL
     )
 
+    # Split at page-boundary markers emitted by pymupdf4llm before header splitting.
+    # Without this, a ## heading from page N and a table/figure starting on page N+1
+    # land in the same chunk — the reranker then sees the wrong lead content (the
+    # heading) and demotes the chunk for table/figure queries.
+    _page_marker_re = re.compile(r'(?=<!--\s*PAGE\s+\d+)', re.IGNORECASE)
+
     def _split_protecting_figures(content: str, metadata: dict) -> list[Chunk]:
         """Split content on token limit while keeping figure blocks atomic."""
         result: list[Chunk] = []
@@ -222,18 +228,26 @@ def chunk_markdown(
                 result.append(Chunk(content=figures[idx].strip(), metadata=dict(metadata)))
         return result
 
-    chunks: list[Chunk] = []
-    for section in header_splitter.split_text(text):
-        content = section.page_content.strip()
-        if not content:
-            continue
+    # Split by page boundaries first so each page is processed independently,
+    # then split each page by Markdown headers.
+    page_sections = _page_marker_re.split(text)
 
-        metadata = dict(section.metadata or {})
-        token_count = len(tokenizer.encode(content))
-        if token_count <= max_tokens:
-            chunks.append(Chunk(content=content, metadata=dict(metadata)))
-        else:
-            chunks.extend(_split_protecting_figures(content, metadata))
+    chunks: list[Chunk] = []
+    for page_text in page_sections:
+        page_text = page_text.strip()
+        if not page_text:
+            continue
+        for section in header_splitter.split_text(page_text):
+            content = section.page_content.strip()
+            if not content:
+                continue
+
+            metadata = dict(section.metadata or {})
+            token_count = len(tokenizer.encode(content))
+            if token_count <= max_tokens:
+                chunks.append(Chunk(content=content, metadata=dict(metadata)))
+            else:
+                chunks.extend(_split_protecting_figures(content, metadata))
 
     compact_chunks: list[Chunk] = []
     for chunk in chunks:
