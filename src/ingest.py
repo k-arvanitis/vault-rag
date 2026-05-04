@@ -19,7 +19,6 @@ from src.config import (  # noqa: E402
 from src.embedder import embed_chunks_file  # noqa: E402
 from src.ingest_table_rows import ingest_table_rows  # noqa: E402
 from src.parser.input_utils import resolve_to_pdf  # noqa: E402
-from src.parser.lightonocr_parser import pdf_to_markdown  # noqa: E402
 from src.parser.pdf_parser import parse_pdf  # noqa: E402
 from src.vector_store import delete_by_file, ingest_embeddings  # noqa: E402
 

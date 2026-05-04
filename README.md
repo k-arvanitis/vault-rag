@@ -78,6 +78,15 @@ For a shorter engineering narrative, see [docs/CASE_STUDY.md](docs/CASE_STUDY.md
 
 Vault RAG separates the operator experience from the end-user experience.
 
+### CLI — for scripted ingestion and querying
+
+`main.py` is an alternative entry point when you don't need the browser UI. Useful for batch ingestion and headless query testing.
+
+```bash
+uv run python main.py ingest path/to/documents/
+uv run python main.py query "What are the payment terms?"
+```
+
 ### Streamlit UI — for testing and tuning
 
 Before going live, use the Streamlit app to validate your document collection:
@@ -592,6 +601,8 @@ Benchmark assets:
 - `eval/results/run_final_20260504_answer_results.jsonl` — pinned gold-vs-generated answer rows
 - `eval/results/run_final_20260504_retrieval_results.jsonl` — pinned retrieval/evidence rows
 
+Full benchmark methodology, judge design decisions, and reproduction steps in [eval/README.md](eval/README.md).
+
 ---
 
 ## Tests
@@ -636,29 +647,55 @@ uv run pytest tests/ -v
 
 ```text
 vault-rag/
-├── app.py
-├── README.md
+├── app.py                     # Streamlit operator console
+├── slack_app.py               # Slack bot (Socket Mode)
+├── main.py                    # CLI entry point (ingest / query without the UI)
+├── litellm_config.yaml        # LiteLLM proxy config (Groq primary → OpenRouter fallback)
+├── Makefile
+├── pyproject.toml
 ├── src/
-│   ├── chunker.py
-│   ├── config.py
-│   ├── ingest.py
-│   ├── ingest_table_rows.py
-│   ├── rag_agent.py
-│   ├── retrieval.py
-│   ├── vector_store.py
+│   ├── config.py              # Single source of truth for all env vars
+│   ├── ingest.py              # File-type router → parser → chunker → embedder → Qdrant
+│   ├── ingest_table_rows.py   # Row-batched ingestion for Excel / CSV
+│   ├── ingest_tables.py       # Table-aware ingestion for PDF tables
+│   ├── chunker.py             # 5-stage chunking pipeline
+│   ├── embedder.py            # Dense embedding (Ollama nomic-embed-text)
+│   ├── sparse_embedder.py     # Sparse embedding (BM25 via fastembed)
+│   ├── retriever.py           # Hybrid search, HyDE, reranking
+│   ├── reranker.py            # Cross-encoder reranker (ms-marco-MiniLM)
+│   ├── table_processor.py     # Three-pass deterministic table repair
+│   ├── rag_agent.py           # LangGraph ReAct agent + streaming
+│   ├── vector_store.py        # Qdrant upsert / delete helpers
+│   ├── excel_tool.py          # Agent tool for structured Excel queries
 │   ├── parser/
-│   │   ├── pdf_parser.py
+│   │   ├── pdf_parser.py      # Per-page router (born-digital vs scanned)
 │   │   └── lightonocr_parser.py
-│   └── ingestion/
-│       ├── ocr.py
-│       └── vlm.py
+│   ├── ingestion/
+│   │   ├── ocr.py             # LightOn OCR (local vLLM)
+│   │   └── vlm.py             # VLM figure descriptions (Groq)
+│   └── preprocessing/
+│       ├── excel_cleaner.py   # Sheet normalisation and header repair
+│       └── chunk_builder.py   # SheetResult → chunk dicts
+├── scripts/
+│   ├── check_providers.py     # LiteLLM provider health check
+│   ├── embedding_server.py
+│   └── reset_tables.py
 ├── tests/
 ├── docker/
 │   └── ingestion-stack/
-├── data/
-│   ├── input/
-│   └── output/
-└── eval/
+├── eval/
+│   ├── README.md              # Benchmark design, judge methodology, and reproduction steps
+│   ├── run_eval.py            # Evaluation runner (LLM judge + deterministic retrieval metrics)
+│   ├── synthesize_qa.py       # Gold QA pair generation from documents
+│   ├── document_manifest.json # Frozen corpus metadata and stable doc_ids
+│   ├── data/                  # Gold QA files per document and cross-document slices
+│   └── results/               # Pinned run outputs (summary, answer rows, retrieval rows)
+├── docs/
+│   ├── CASE_STUDY.md
+│   └── screenshots/
+└── data/
+    ├── input/
+    └── output/
 ```
 
 ## Failure modes
