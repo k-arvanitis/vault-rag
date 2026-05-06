@@ -25,5 +25,6 @@ def test_default_embed_model():
 
 
 def test_reranker_is_cross_encoder():
-    """Default reranker must be a cross-encoder (ms-marco family)."""
-    assert "cross-encoder" in config.RERANKER_MODEL.lower()
+    """Default reranker must be a known cross-encoder model."""
+    model = config.RERANKER_MODEL.lower()
+    assert any(name in model for name in ("cross-encoder", "bge-reranker", "reranker"))

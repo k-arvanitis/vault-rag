@@ -45,8 +45,9 @@ class TestExtractRefs:
         assert "[1]" in refs
         assert "[2]" in refs
 
-    def test_no_matches_returns_fallback(self):
-        assert _extract_refs("no chunk headers here") == "(no results)"
+    def test_no_matches_returns_preview(self):
+        # Non-chunk content returns a short preview (for query_excel output etc.)
+        assert _extract_refs("no chunk headers here") == "no chunk headers here"
 
     def test_empty_string_returns_fallback(self):
         assert _extract_refs("") == "(no results)"
