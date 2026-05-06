@@ -33,16 +33,13 @@ The benchmark therefore combines custom retrieval/evidence metrics with a contro
 
 Target corpus size: **8 documents**
 
-Current QA size: **56 questions**
-- 32 single-document
-- 8 table lookup
-- 10 cross-document
-- 6 unanswerable
+Current QA size: **70 questions** across 13 files in `data/qa_pairs/`
+- Question types: `ocr_extraction`, `numeric_lookup`, `table_lookup`, `table_grounding`, `figure_grounding`, `cross_document_compare`, `unanswerable`
 
 ## Files in this directory
 
 - `document_manifest.json` — frozen corpus metadata
-- `data/rag_eval_benchmark_56qa_revised.jsonl` — benchmark question set
+- `data/qa_pairs/` — one JSON file per document (or document pair), loaded at eval time
 - `run_eval.py` — benchmark runner
 - `schema/manifest.schema.json` — manifest schema
 - `schema/questions.schema.json` — QA schema
@@ -72,12 +69,5 @@ Current QA size: **56 questions**
 
 ## Latest result
 
-Latest full run:
-
-| Metric | Score |
-|---|---:|
-| Correctness | 96.4% |
-| Faithfulness | 97.3% |
-| Answer relevancy | 98.2% |
-| Hit@10 | 98.0% |
-| Evidence recall@20 | 98.0% |
+Pending re-run after retrieval de-scoping (no `scope_doc_id`) and qa_pairs migration.
+Previous scoped-retrieval numbers (for reference): Correctness 96.4%, Hit@10 98.0%.

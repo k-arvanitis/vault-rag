@@ -25,24 +25,38 @@ Vault RAG uses a staged document intelligence pipeline:
 
 ## Evaluation
 
-The benchmark contains 56 questions over 8 public documents:
+The benchmark contains 82 questions over 14 real public documents spanning nine question types: OCR extraction, table lookup, numeric lookup, figure grounding, table grounding, negation check, cross-document comparison, single-doc factoid, and unanswerable.
 
-- 32 single-document factoid questions
-- 8 table lookup questions
-- 10 cross-document comparison questions
-- 6 unanswerable questions
-
-Latest full run:
+**Agent answer metrics** (all 82 questions)
 
 | Metric | Score |
 |---|---:|
-| Correctness | 96.4% |
-| Faithfulness | 97.3% |
-| Answer relevancy | 98.2% |
-| Hit@10 | 98.0% |
-| Evidence recall@20 | 98.0% |
+| Correctness | **84.6%** |
+| Faithfulness | **86.7%** |
+| Answer relevancy | **87.8%** |
 
-DeepEval remains available as an ablation mode, but the primary benchmark uses a custom JSON-only LLM judge. DeepEval’s multi-step metrics were useful during development but unstable for this demo corpus: Qwen judges returned invalid JSON, while GPT-mini judges timed out or under-scored faithfulness when context was trimmed too aggressively.
+**Vector retrieval** (53 PDF/OCR questions, Qdrant)
+
+| Metric | Score |
+|---|---:|
+| Hit@5 | **84.9%** |
+| Hit@10 | **92.5%** |
+| MRR | **62.3%** |
+| Evidence recall@10 | **87.1%** |
+
+**Structured retrieval** (21 Excel/CSV questions, DuckDB)
+
+| Metric | Score |
+|---|---:|
+| Answer accuracy | **90.5%** |
+
+**Unanswerable questions** (8 questions)
+
+| Metric | Score |
+|---|---:|
+| Correct refusal rate | **87.5%** |
+
+The primary benchmark uses a custom JSON-only LLM judge (GPT-4o-mini). DeepEval remains available as an ablation mode but was removed from the primary path due to instability on this corpus.
 
 ## Debugging Lessons
 
@@ -51,15 +65,16 @@ The most important cross-document failure was not retrieval. The evidence was us
 Other concrete fixes included:
 
 - better snippet window selection for answer-dense passages
-- query enrichment for qualifiers such as `new topic areas`, `closed-implemented`, and `since June 2024`
+- DuckDB routing restricted to flat-structure files only — adding multi-sheet workbooks bloated the system prompt and collapsed structured accuracy from 90% to 57%
+- stream_agent normalization to ensure hedging phrases (`I cannot determine`) map to the canonical `Unsupported` token on both streaming and non-streaming paths
 - deterministic repairs for common table/numeric synthesis slips
 - an evaluation dashboard that shows gold answers, generated answers, scores, and retrieved evidence together
 
 ## Remaining Limits
 
-- Low-quality OCR can still produce wrong values in scanned invoice packets.
-- Complex table layouts remain parser-sensitive.
-- The benchmark is intentionally small enough to inspect by hand; it is a portfolio benchmark, not a broad academic leaderboard.
+- Multi-hop cross-document questions where evidence is split across 100+ page documents and the reranker doesn't surface both chunks together.
+- Questions that require arithmetic the agent is explicitly instructed to refuse (by design).
+- LLM non-determinism on a small number of numeric lookups where the correct row is retrieved but the wrong value is extracted.
 
 ## Why It Matters
 

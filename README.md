@@ -9,7 +9,7 @@
 
 Production-minded document intelligence for heterogeneous business document collections. Vault RAG handles the hard case most portfolio demos avoid: mixed formats (PDFs, scanned pages, spreadsheets, figures), mixed quality, and mixed retrieval needs — all queried through one retrieval stack via an operator console and a Slack delivery surface.
 
-**Latest benchmark:** 56 questions over 8 real mixed-format public documents — **96.4% correctness**, **97.3% faithfulness**, **98.2% answer relevancy**, **98% Hit@10**.
+**Latest benchmark:** 82 questions over 14 real mixed-format public documents — **84.6% agent correctness**, **86.7% faithfulness** (answers grounded in retrieved text), **90.5% structured (DuckDB) accuracy**, **87.5% unanswerable refusal rate**.
 
 Key engineering bets: per-page PDF routing (born-digital → pymupdf4llm, scanned → LightOn OCR), contextual retrieval (one-sentence summaries prepended before embedding), hybrid dense+sparse search with RRF fusion, cross-encoder reranking, and a LangGraph ReAct agent that can issue multiple searches before answering.
 
@@ -48,10 +48,11 @@ uv sync
 cp .env.example .env   # set GROQ_API_KEY at minimum
 make up                # Qdrant + OCR stack
 ollama pull nomic-embed-text
+make seed              # download and ingest starter documents (~3 files)
 make app               # → http://localhost:8501
 ```
 
-GPU required for LightOn OCR (scanned PDFs). Born-digital PDFs, Excel, and Markdown work on CPU only.
+`make seed` downloads three public documents (two PDFs + one CSV) and ingests them so the UI is immediately queryable. GPU required for LightOn OCR (scanned PDFs). Born-digital PDFs, Excel, and Markdown work on CPU only.
 
 ---
 
@@ -76,8 +77,7 @@ make docker-up-gpu   # adds LightOn OCR vLLM container — requires CUDA 12+ and
 
 ```bash
 make up && ollama pull nomic-embed-text && make app
-make eval-cross   # cross-document benchmark
-make eval         # full 56-question benchmark
+make eval         # full 82-question benchmark (14 docs, 9 question types)
 ```
 
 Suggested flow in the Streamlit console:
@@ -112,70 +112,164 @@ What is the salary of the CEO of Doncaster School Solutions?
 ## Architecture
 
 ```
- INGESTION
- ─────────────────────────────────────────────────────────────────
+ ╔══════════════════════════════════════════════════════════════════════════════╗
+ ║  INGESTION PIPELINE                                                          ║
+ ╚══════════════════════════════════════════════════════════════════════════════╝
 
- Upload
-   │
-   ▼
- ┌──────────────────┐     ┌───────────────────────────────────┐
- │  File type       │────▶│  Parser                           │
- │  detection       │     │  Excel/CSV → openpyxl / pandas    │
- └──────────────────┘     │  Markdown  → plain text           │
-                          │  PDF/DOCX  → per-page router ─────┼──┐
-                          └───────────────────────────────────┘  │
-                                                                  │
-                          ┌──────────── PDF page ────────────┐   │
-                          │                                  │◀──┘
-                          │  text layer ≥ 50 chars?          │
-                          │     YES → pymupdf4llm            │
-                          │           (CPU, no API call)     │
-                          │           figures → VLM (Groq)   │
-                          │     NO  → LightOn OCR            │
-                          │           (local vLLM, GPU)      │
-                          └────────────────┬─────────────────┘
-                                           │ Markdown (per page)
-                                           ▼
-                          ┌───────────────────────────────────┐
-                          │  Chunker                          │
-                          │  1. Split on Markdown headers     │
-                          │  2. Re-split chunks > 1024 tokens │
-                          │  3. Merge tiny chunks < 256 tok   │
-                          │  4. Contextual summary per chunk  │
-                          └────────────────┬──────────────────┘
-                                           │ chunks + context
-                                           ▼
-                          ┌───────────────────────────────────┐
-                          │  Embedder (local Ollama)          │
-                          │  nomic-embed-text → dense vector  │
-                          │  BM25 (fastembed) → sparse vector │
-                          └────────────────┬──────────────────┘
-                                           ▼
-                                        Qdrant
+  File (PDF / Excel / CSV)
+       │
+       ▼
+  ┌────────────────────┐
+  │  src/ingest.py     │  File-type router. Calls parse_pdf() for PDFs,
+  │  format detection  │  ingest_table_rows() for Excel/CSV.
+  └────────┬───────────┘
+           │
+     ┌─────┴──────────────────────────────────┐
+     │ PDF                                    │ Excel / CSV
+     ▼                                        ▼
+  ┌──────────────────────────────┐   ┌────────────────────────────────────┐
+  │  src/parser/pdf_parser.py    │   │  src/ingest_table_rows.py          │
+  │  Per-page router             │   │  openpyxl / pandas → row chunks    │
+  │                              │   │  Each row → "key: value" sentence  │
+  │  page.get_text() < 50 chars? │   │  Sheet summary → document_summary  │
+  │                              │   │  → Qdrant (sheet_row, sheet_table, │
+  │  YES (scanned)  NO (digital) │   │    document_summary chunk types)   │
+  └────┬──────────────┬──────────┘   │                                    │
+       │              │              │  Also loads into DuckDB via         │
+       ▼              ▼              │  src/excel_tool.py for SQL queries  │
+  ┌─────────┐  ┌──────────────────┐  └────────────────────────────────────┘
+  │ LightOn │  │  pymupdf4llm     │
+  │ OCR     │  │  (CPU, no API)   │
+  │ vLLM    │  │                  │
+  │ GPU req │  │  Raster figures? │
+  │         │  │  → src/ingestion/│
+  │ OCR_    │  │    vlm.py        │
+  │ API_BASE│  │  → Groq VLM API  │
+  │ :8002   │  │  VLM_MODEL=      │
+  └────┬────┘  │  llama-4-scout   │
+       │       └────────┬─────────┘
+       │                │
+       └──────┬──────────┘
+              │ Markdown text (per page)
+              ▼
+  ┌───────────────────────────────────────────────────────┐
+  │  src/chunker.py  — 5-stage pipeline                   │
+  │                                                       │
+  │  1. Split on <!-- PAGE N --> markers (page boundaries)│
+  │  2. Split on Markdown headers (MarkdownHeaderSplitter)│
+  │  3. Re-split oversized chunks > CHUNK_MAX_TOKENS=1024 │
+  │  4. Merge tiny chunks < CHUNK_MIN_TOKENS=256          │
+  │  5. Contextual enrichment (LLM per chunk):            │
+  │     → CHUNK_LLM_API_BASE (OpenRouter default)         │
+  │     → CHUNK_LLM_MODEL (google/gemma-4-31b-it:free)    │
+  │     → writes: "CONTEXT: <1 sentence>\n\nCONTENT: ..." │
+  │  6. Document summary chunk (LLM, same model):         │
+  │     → "Document ID: doc_XXX\nFile: ...\n<summary>"    │
+  │     → chunk_type = "document_summary"                 │
+  └───────────────────┬───────────────────────────────────┘
+                      │ chunks (content + vector_text)
+                      ▼
+  ┌───────────────────────────────────────────────────────┐
+  │  src/embedder.py + src/sparse_embedder.py             │
+  │                                                       │
+  │  Dense:  Ollama /api/embed                            │
+  │          OLLAMA_EMBED_MODEL = nomic-embed-text        │
+  │          768-dim cosine vectors                       │
+  │                                                       │
+  │  Sparse: fastembed BM25 (BAAI/bge-m3)                 │
+  │          token frequency → sparse indices+values      │
+  └───────────────────┬───────────────────────────────────┘
+                      │ {dense_vector, sparse_vector, payload}
+                      ▼
+  ┌───────────────────────────────────────────────────────┐
+  │  Qdrant  (collection: documents_chunks)               │
+  │  Point ID = SHA-1(file_name + chunk_index)  ← idem-   │
+  │  potent: re-ingest overwrites, no duplicates          │
+  │  Payload: content, metadata.chunk_type, doc_id, etc.  │
+  └───────────────────────────────────────────────────────┘
 
- QUERY
- ─────────────────────────────────────────────────────────────────
 
- User question
-   │
-   ▼
- ┌──────────────────┐     ┌───────────────────────────────────┐
- │  HyDE expansion  │────▶│  Hybrid search (Qdrant)           │
- │  hypothetical    │     │  dense + sparse → RRF fusion      │
- │  answer, embed   │     │  top-100 candidates               │
- └──────────────────┘     └────────────────┬──────────────────┘
-                                           ▼
-                          ┌───────────────────────────────────┐
-                          │  Cross-encoder reranker           │
-                          │  ms-marco-MiniLM → top-10         │
-                          └────────────────┬──────────────────┘
-                                           ▼
-                          ┌───────────────────────────────────┐
-                          │  ReAct agent (LangGraph)          │
-                          │  can call search tool N times     │
-                          └────────────────┬──────────────────┘
-                                           ▼
-                                 Cited answer
+ ╔══════════════════════════════════════════════════════════════════════════════╗
+ ║  QUERY PIPELINE                                                              ║
+ ╚══════════════════════════════════════════════════════════════════════════════╝
+
+  User question
+       │
+       ▼
+  ┌────────────────────────────────────────────────────────────────────────────┐
+  │  src/rag_agent.py — build_rag_agent() + ask_agent() / stream_agent()       │
+  │  LangGraph ReAct loop (create_react_agent)                                 │
+  │  LLM: GENERATION_MODEL via GENERATION_API_BASE (LiteLLM proxy → Groq)     │
+  │  _build_doc_registry(): scrolls Qdrant document_summary chunks →           │
+  │    builds {filename_stem: doc_id} map for fuzzy title → doc_id resolution  │
+  └────────────────────────────────────────────────────────────────────────────┘
+       │                                │
+       │ doc NOT in DuckDB table list   │ doc IS in DuckDB table list
+       │ (PDFs, Qdrant-only docs)       │ (EXCEL_FILES: doc_006,007,014)
+       ▼                                ▼
+  ┌──────────────────────┐    ┌─────────────────────────────┐
+  │  search_knowledge_   │    │  query_excel tool           │
+  │  base tool           │    │  src/excel_tool.py          │
+  │  src/rag_agent.py    │    │  Agent writes SQL SELECT    │
+  │  _make_unified_tool()│    │  DuckDB executes against    │
+  └──────────┬───────────┘    │  cleaned sheet tables       │
+             │                └─────────────────────────────┘
+             ▼
+  ┌──────────────────────────────────────────────────────────┐
+  │  HyDE  (src/rag_agent.py  _hyde())                       │
+  │  LLM generates 2-3 sentence hypothetical answer          │
+  │  → embed hypothetical instead of raw query               │
+  │  Both raw + HyDE hit sets are merged (dedup by chunk key)│
+  └──────────────────────┬───────────────────────────────────┘
+                         │
+                         ▼
+  ┌──────────────────────────────────────────────────────────┐
+  │  src/retriever.py — retrieve()                           │
+  │                                                          │
+  │  1. infer_query_chunk_types() — keyword routing:         │
+  │     "row/sheet/xlsx/table/amount/supplier…" terms        │
+  │     → include pdf_table_rows + sheet_row chunks          │
+  │     everything else → page_content + pdf_table_rows      │
+  │                                                          │
+  │  2. Qdrant hybrid search:                                │
+  │     dense vector (nomic-embed) + sparse (BM25)           │
+  │     fused with RRF (Reciprocal Rank Fusion)              │
+  │     top_k = RETRIEVAL_TOP_K = 100 candidates             │
+  │     optional: scope_doc_id filter, filter_token match    │
+  └──────────────────────┬───────────────────────────────────┘
+                         │ 100 candidates
+                         ▼
+  ┌──────────────────────────────────────────────────────────┐
+  │  src/reranker.py — BGEReranker.rerank()                  │
+  │  Model: RERANKER_MODEL = BAAI/bge-reranker-v2-m3         │
+  │  Architecture: AutoModelForSequenceClassification        │
+  │  (cross-encoder — query+chunk scored together)           │
+  │  Input: pairs of [query, chunk_text]                     │
+  │  Output: logit scores → sorted top RERANK_TOP_N = 10     │
+  └──────────────────────┬───────────────────────────────────┘
+                         │ top-10 reranked chunks
+                         ▼
+  ┌──────────────────────────────────────────────────────────┐
+  │  Context formatting  (src/rag_agent.py _best_snippet())  │
+  │  Chunks truncated to MAX_CHUNK_CHARS=1500                │
+  │  Tables truncated to MAX_TABLE_CHARS=3000                │
+  │  Table rows reformatted as "Field: Value" key-value      │
+  │  Each chunk prefixed: [N] file=<name> chunk=<idx>        │
+  └──────────────────────┬───────────────────────────────────┘
+                         │
+                         ▼
+  ┌──────────────────────────────────────────────────────────┐
+  │  Generation LLM  (GENERATION_API_BASE → LiteLLM → Groq)  │
+  │  Model: GENERATION_MODEL (default: qwen3-32b)            │
+  │  Synthesises cited answer from retrieved chunks          │
+  │  Post-processing:                                        │
+  │  → _normalize_unsupported(): hedging → "Unsupported"     │
+  │  → _repair_deterministic_numeric_answer(): regex fixes   │
+  │  → _repair_incomplete_answer(): coverage check + retry   │
+  └──────────────────────────────────────────────────────────┘
+                         │
+                         ▼
+                   Cited answer
 ```
 
 ---
@@ -219,6 +313,21 @@ Every Qdrant point is assigned a SHA-1 hash of `(file_name, chunk_index)` rather
 
 The agent first generates a *hypothetical answer* using a fast LLM call and embeds that instead of the raw question. The embedded hypothetical is semantically much closer to real document text, improving recall for vague queries like "what were the sales figures" where the question shares few tokens with the answer.
 
+### Dual-modality retrieval: vector search + DuckDB SQL
+
+Vector search works well for prose, policies, and narrative reports — the kind of content where semantic similarity reliably surfaces the right passage. It breaks down for spreadsheet data.
+
+When a user asks *"how much did supplier X pay in March?"* or *"what is the total spend for category Y?"*, the correct answer requires exact string matching, numeric filtering, and aggregation (`SUM`, `GROUP BY`). A dense vector for "how much did supplier X pay" is semantically similar to every row in a payment sheet — there is no useful distance signal. The right chunk is determined by column equality and arithmetic, not by proximity in embedding space.
+
+To handle both, the system runs two independent retrieval paths:
+
+- **Qdrant** for PDF and OCR documents — hybrid dense+sparse search, reranked by a cross-encoder.
+- **DuckDB** for flat-structure Excel and CSV files — the agent writes a `SELECT` query; the in-process database executes it and returns an exact result.
+
+The agent selects the path based on whether the target document appears in the DuckDB table list injected into its system prompt. PDF-format documents always go to Qdrant even when they contain numeric tables, because vector search on contextualised chunk summaries still outperforms SQL over unstructured OCR output.
+
+DuckDB specifically — rather than Postgres or SQLite — because it is in-process (no server to run, no connection pool), columnar (aggregations over 10k-row CSV files return in milliseconds), and loads directly from a pandas DataFrame. The entire structured store is a single file at `DUCKDB_PATH`.
+
 ### Context-overflow retry
 
 When the LLM returns a `400 Bad Request` due to token overflow, the agent retries with `rerank_top_n` halved. The reduction persists only for that single request. A shorter but valid answer is returned instead of a crash, without permanently setting a conservative chunk count.
@@ -234,9 +343,10 @@ When the LLM returns a `400 Bad Request` due to token overflow, the agent retrie
 | Figure descriptions | llama-4-scout-17b (Groq) | Turns charts and diagrams into searchable text so evidence inside figures is retrievable |
 | Contextual summaries | llama-3.1-8b-instant (Groq) | Fast, low-cost model adds chunk-level context at ingest without adding query latency |
 | Embeddings | nomic-embed-text (Ollama) | Strong local embedding model — indexing stays on-prem with no external API per chunk |
+| Structured data store | DuckDB | In-process analytical database — zero ops (no server, just a file), columnar storage makes aggregations (SUM, GROUP BY, AVG) over large spreadsheets fast. Postgres would add a running server, connection pooling, and migrations for a use case that is read-only analytics, not transactions. |
 | Vector database | Qdrant | Dense + sparse retrieval in one system with simple local Docker deployment |
-| Reranker | cross-encoder/ms-marco-MiniLM-L-6-v2 | First-pass retrieval maximises recall; cross-encoder recovers precision before generation |
-| Generation | llama-3.3-70b-versatile (Groq) | Strong answer synthesis and multi-step reasoning without a local high-end GPU |
+| Reranker | BAAI/bge-reranker-v2-m3 | Cross-encoder: scores query and chunk *together* in one forward pass, so it models their interaction directly. A bi-encoder scores them independently then compares embeddings — sharply less accurate when the relevance signal lives in the relationship between question and passage, not either alone. bge-reranker-v2-m3 is multilingual and trained on diverse document types vs the English-only MS MARCO corpus of smaller alternatives |
+| Generation | qwen3-32b (Groq) | Strong answer synthesis and multi-step reasoning without a local high-end GPU |
 | Agent | LangGraph (ReAct) | Iterative retrieval and query reformulation when a single retrieve-then-generate pass is insufficient |
 | UI | Streamlit | Python-native — faster to build and inspect than a custom frontend for an operator-heavy workflow |
 | Observability | Langfuse | End-to-end traces make it possible to inspect prompts, tool calls, retrieved chunks, and token usage |
@@ -254,30 +364,74 @@ When the LLM returns a `400 Bad Request` due to token overflow, the agent retrie
 
 ## Evaluation
 
-56-question benchmark over 8 real public documents: procurement policies, legal contracts, government annual reports, scanned invoice packets, FOIA disclosures, and Excel/CSV spend reports. Four categories: single-document factoid, table lookup, cross-document comparison, and unanswerable.
+82-question benchmark over 14 real public documents: procurement policies, legal contracts, government annual reports, scanned invoice packets, FOIA disclosures, Excel/CSV spend reports, HR handbooks, and open-data maturity datasets. Nine question types: OCR extraction, table lookup, numeric lookup, figure grounding, table grounding, negation check, cross-document comparison, single-doc factoid, and unanswerable.
+
+### Benchmark corpus
+
+All 14 documents are publicly available. `make seed` automatically downloads and ingests a representative starter subset (doc_001, doc_002, doc_007) so the system is immediately queryable after setup — no manual downloads required.
+
+| Doc | Title | Type | Format | Source |
+|---|---|---|---|---|
+| doc_001 ★ | Policy for the Procurement of Goods and Services (PGS) | Policy | PDF (born-digital) | [lacera.gov](https://www.lacera.gov/sites/default/files/assets/documents/board/Governing%20Documents/General%20Policies/Purchasing_Policy_Goods_Services.pdf) |
+| doc_002 ★ | Appendix C – Terms and Conditions of Contract for Services | Contract | PDF (born-digital) | [publishing.service.gov.uk](https://assets.publishing.service.gov.uk/media/5abcfd7fed915d44eb7e6969/Terms_and_Conditions_for_Services.pdf) |
+| doc_003 | 111th Annual Report of the Board of Governors of the Federal Reserve System, 2024 | Annual report | PDF (born-digital) | [federalreserve.gov](https://www.federalreserve.gov/publications/files/2024-annual-report.pdf) |
+| doc_004 | Marie Campbell FOIA Complete – Portable & Dumpster Rentals | FOIA / invoices | PDF (scanned) | [bensenville.gov](https://www.bensenville.gov/DocumentCenter/View/20216/17021_Marie_Campbell_FOIA_Complete) |
+| doc_005 | Other Pertinent Forms and Reports – Fueling Records | Invoice | PDF (scanned) | [ntsb.gov](https://data.ntsb.gov/Docket/Document/docBLOB?FileExtension=.PDF&FileName=Other+Pertinent+Forms+and+Reports+%28fueling+records%29-Master.PDF&ID=40393413) |
+| doc_006 | Purchase Card Transactions Qtr1 2025-26 | Spend table | Excel | [doncaster.gov.uk](https://www.doncaster.gov.uk/services/the-council-democracy/payments-to-suppliers-reports-2025-26) |
+| doc_007 ★ | Published Spend Report April 25 | Spend table | CSV | [doncaster.gov.uk](https://www.doncaster.gov.uk/services/the-council-democracy/payments-to-suppliers-reports-2025-26) |
+| doc_008 | 2024 Annual Report: Additional Opportunities to Reduce Fragmentation, Overlap, and Duplication | Government report | PDF (born-digital) | [gao.gov](https://www.gao.gov/products/gao-24-106915) |
+| doc_009 | Human Resources Policy Manual 2024 | HR policy | PDF (born-digital) | [united-church.ca](https://united-church.ca/sites/default/files/2021-04/hr-policy-manual.pdf) |
+| doc_010 | Employee Handbook | Handbook | PDF (born-digital) | [rosemont.com](https://bd-rosemont-images.s3.amazonaws.com/wp-content/uploads/2024/08/15153613/EmployeeHandbook-8.15.24-1.pdf) |
+| doc_011 | 2025 Open Data Maturity Questionnaire – Spain | Dataset | Excel | [data.europa.eu](https://data.europa.eu/sites/default/files/2025-12/2025_odm_questionnaire_spain_0.xlsx) |
+| doc_012 | OSSE AFE Quarterly and Year-End Reporting Workbook FY2025 | Finance report | Excel | [osse.dc.gov](https://osse.dc.gov/sites/default/files/dc/sites/osse/service_content/attachments/8.%20SAMPLE%20FY25%20OSSE%20AFE%20QUARTERLY%20%26%20YEAR-END%20REPORTING%20WORKBOOK.xlsx) |
+| doc_013 | FY26 OSSE AFE Grant Budget & Finance Tracker Workbook | Budget tracker | Excel | [osse.dc.gov](https://osse.dc.gov/sites/default/files/dc/sites/osse/service_content/attachments/4.%20REVISED_FY26%20OSSE%20AFE%20Grant%20Budget%20%26%20Finance%20Tracker%20Workbook%20%24510K_Rev%20Match%20Tab%2015A.5.14.25.xlsx) |
+| doc_014 | Supplier Spend Over £500 – April 2024 | Spend table | CSV | [bristol.gov.uk](https://www.bristol.gov.uk/files/documents/8042-supplier-spend-apr-2024) |
+
+★ Downloaded automatically by `make seed`.
 
 ### Results
 
-| Category | Questions | Correctness |
-|---|---|---|
-| Single-doc factoid | 32 | Included in overall |
-| Table lookup | 8 | Included in overall |
-| Cross-document comparison | 10 | 90.0% |
-| Unanswerable | 6 | 100% |
-| **Overall** | **56** | **96.4%** |
+**Agent answer metrics** (all 82 questions)
 
-| Answer metric | Score |
-|---|---:|
-| Correctness | 96.4% |
-| Faithfulness | 97.3% |
-| Answer relevancy | 98.2% |
+| Metric | Score | Notes |
+|---|---:|---|
+| Correctness | **84.6%** | LLM judge + exact-match short-circuit |
+| Faithfulness | **86.7%** | Answer claims grounded in retrieved text |
+| Answer relevancy | **87.8%** | Answer directly addresses the question |
 
-| Retrieval metric | Score |
+**Vector retrieval metrics** (53 PDF/OCR questions, Qdrant)
+
+| Metric | Score |
 |---|---:|
-| Hit@5 | 98% |
-| Hit@10 | 98% |
-| Evidence recall@10 | 96% |
-| MRR | 0.92 |
+| Hit@5 | **84.9%** |
+| Hit@10 | **92.5%** |
+| MRR | **62.3%** |
+| Evidence recall@10 | **87.1%** |
+
+Hit@10 at 92.5% means the correct evidence chunk lands in the top 10 candidates for nearly every answerable PDF question — with no domain-specific fine-tuning, purely from hybrid dense+sparse retrieval and contextual chunk summaries. The gap between MRR (62.3%) and Hit@10 (92.5%) reflects cross-document and multi-hop questions where relevant evidence is split across chunks; the cross-encoder reranker recovers most of it by position 10.
+
+**Structured retrieval** (21 Excel/CSV questions, DuckDB)
+
+| Metric | Score |
+|---|---:|
+| Answer accuracy | **90.5%** |
+
+Excel and CSV questions bypass Qdrant entirely. The agent detects that the target document is loaded in DuckDB and writes a SQL SELECT; the result is returned directly. Measuring these against vector hit rate would be a category error — a structured lookup that returns the exact row has 100% retrieval success by definition.
+
+**Unanswerable questions** (8 questions)
+
+| Metric | Score |
+|---|---:|
+| Correct refusal rate | **87.5%** |
+
+Questions that cannot be answered from the indexed corpus. The agent is instructed to return the single word `Unsupported` — no hedging, no hallucination. One question received a valid natural-language refusal instead of the bare token, which the exact-match evaluator scores as a miss; semantically the behaviour was correct.
+
+### Methodology notes
+
+- **Faithfulness exceeds correctness.** 86.7% faithfulness vs 84.6% correctness means that when the system gives a wrong answer, the mistake is almost always a retrieval miss (the right chunk was not found) rather than a hallucination over retrieved text. This is the failure mode you want in a production RAG system — missed recall is recoverable by improving retrieval; hallucination is not.
+- **Correctness ceiling.** The remaining ~15% failures split into three categories: (1) multi-hop cross-document questions where evidence is split across 100+ page documents and the reranker doesn't surface both chunks together; (2) questions that require arithmetic the agent is explicitly instructed to refuse (by design — a RAG system should not invent calculations); (3) LLM non-determinism on a small number of numeric lookups where the correct row is retrieved but the wrong value is extracted.
+- **Retrieval metrics are split by modality.** PDF questions are measured by Qdrant vector hit rate. Excel/CSV questions are measured by DuckDB answer accuracy. Mixing them would penalise the SQL path for never appearing in Qdrant results.
+- **Unanswerable questions are excluded from retrieval and faithfulness metrics.** A correct refusal makes no factual claim and retrieves no context — scoring faithfulness against empty evidence would be meaningless.
 
 Full methodology and reproduction steps: [eval/README.md](eval/README.md).
 

@@ -42,3 +42,6 @@ vault-rag.code-workspace
 cheatsheet.md
 *.code-workspace
 .blackboxcli/
+run_spot_check.py
+.duckdb/
+docs/CODEBASE_GUIDE.md

@@ -3,7 +3,7 @@ include .env
 export
 endif
 
-.PHONY: up docker-up docker-up-gpu docker-down app slack docker-slack-build docker-slack-up litellm eval eval-cross test lint
+.PHONY: up docker-up docker-up-gpu docker-down app slack docker-slack-build docker-slack-up litellm seed eval eval-cross test lint
 
 # Full stack in Docker (Qdrant + LiteLLM + Ollama + Streamlit app)
 docker-up:
@@ -37,6 +37,9 @@ docker-slack-up:
 # Reads API keys from .env via litellm_config.yaml (os.environ/ references)
 litellm:
 	DEBUG= litellm --config litellm_config.yaml --port 4000
+
+seed:
+	uv run python scripts/seed.py
 
 eval:
 	uv run python eval/run_eval.py

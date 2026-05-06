@@ -1,5 +1,5 @@
 [project]
-name = "ragforge"
+name = "vault-rag"
 version = "0.1.0"
 description = "Production-grade self-hosted RAG: hybrid search, HyDE, reranking, multi-modal ingestion"
 readme = "README.md"
@@ -43,6 +43,7 @@ dependencies = [
   "slack-bolt>=1.18.0",
   "datasets>=4.8.4",
   "deepeval>=3.9.7",
+  "duckdb>=1.5.2",
 ]
 
 [dependency-groups]
