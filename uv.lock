@@ -1884,85 +1884,6 @@ wheels = [
 ]
 
 [[package]]
-name = "ragforge"
-version = "0.1.0"
-source = { virtual = "." }
-dependencies = [
-    { name = "accelerate" },
-    { name = "chandra-ocr" },
-    { name = "datasets" },
-    { name = "deepeval" },
-    { name = "duckdb" },
-    { name = "fastembed" },
-    { name = "httpx" },
-    { name = "langchain" },
-    { name = "langchain-core" },
-    { name = "langchain-openai" },
-    { name = "langchain-text-splitters" },
-    { name = "langfuse" },
-    { name = "langgraph" },
-    { name = "openai" },
-    { name = "openpyxl" },
-    { name = "pandas" },
-    { name = "pillow" },
-    { name = "pydantic" },
-    { name = "pymupdf4llm" },
-    { name = "pypdf" },
-    { name = "pypdfium2" },
-    { name = "python-dotenv" },
-    { name = "requests" },
-    { name = "slack-bolt" },
-    { name = "streamlit" },
-    { name = "tiktoken" },
-    { name = "torch" },
-    { name = "transformers" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "accelerate", specifier = ">=0.30.0" },
-    { name = "chandra-ocr", specifier = ">=0.2.0" },
-    { name = "datasets", specifier = ">=4.8.4" },
-    { name = "deepeval", specifier = ">=3.9.7" },
-    { name = "duckdb", specifier = ">=1.5.2" },
-    { name = "fastembed", specifier = ">=0.3.0" },
-    { name = "httpx", specifier = ">=0.27.0" },
-    { name = "langchain", specifier = ">=0.3.0" },
-    { name = "langchain-core", specifier = ">=0.3.0" },
-    { name = "langchain-openai", specifier = ">=0.2.0" },
-    { name = "langchain-text-splitters", specifier = ">=1.1.1" },
-    { name = "langfuse", specifier = ">=2.0.0,<3.0.0" },
-    { name = "langgraph", specifier = ">=0.2.0" },
-    { name = "openai", specifier = ">=1.0.0" },
-    { name = "openpyxl", specifier = ">=3.1.5" },
-    { name = "pandas", specifier = ">=2.0.0" },
-    { name = "pillow", specifier = ">=12.1.1" },
-    { name = "pydantic", specifier = ">=2.0.0" },
-    { name = "pymupdf4llm", specifier = ">=1.27.2.2" },
-    { name = "pypdf", specifier = ">=4.0.0" },
-    { name = "pypdfium2", specifier = ">=5.6.0" },
-    { name = "python-dotenv", specifier = ">=1.0.0" },
-    { name = "requests", specifier = ">=2.33.0" },
-    { name = "slack-bolt", specifier = ">=1.18.0" },
-    { name = "streamlit", specifier = ">=1.35.0" },
-    { name = "tiktoken", specifier = ">=0.5.0" },
-    { name = "torch", specifier = ">=2.2.0", index = "https://download.pytorch.org/whl/cu126" },
-    { name = "transformers", specifier = ">=4.40.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.0.0" },
-    { name = "ruff", specifier = ">=0.4.0" },
-]
-
-[[package]]
 name = "referencing"
 version = "0.37.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2488,6 +2409,85 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/b3/20/049418d094d396dfa6606b30af925cc68a6670c3b9103b23e6990f84b589/uuid_utils-0.14.1-pp311-pypy311_pp73-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:50fffc2827348c1e48972eed3d1c698959e63f9d030aa5dd82ba451113158a62", size = 476731, upload-time = "2026-02-20T22:50:30.589Z" },
     { url = "https://files.pythonhosted.org/packages/77/a1/0857f64d53a90321e6a46a3d4cc394f50e1366132dcd2ae147f9326ca98b/uuid_utils-0.14.1-pp311-pypy311_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:c1dbe718765f70f5b7f9b7f66b6a937802941b1cc56bcf642ce0274169741e01", size = 338902, upload-time = "2026-02-20T22:50:33.927Z" },
     { url = "https://files.pythonhosted.org/packages/ed/d0/5bf7cbf1ac138c92b9ac21066d18faf4d7e7f651047b700eb192ca4b9fdb/uuid_utils-0.14.1-pp311-pypy311_pp73-manylinux_2_5_i686.manylinux1_i686.whl", hash = "sha256:258186964039a8e36db10810c1ece879d229b01331e09e9030bc5dcabe231bd2", size = 364700, upload-time = "2026-02-20T22:50:21.732Z" },
+]
+
+[[package]]
+name = "vault-rag"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "accelerate" },
+    { name = "chandra-ocr" },
+    { name = "datasets" },
+    { name = "deepeval" },
+    { name = "duckdb" },
+    { name = "fastembed" },
+    { name = "httpx" },
+    { name = "langchain" },
+    { name = "langchain-core" },
+    { name = "langchain-openai" },
+    { name = "langchain-text-splitters" },
+    { name = "langfuse" },
+    { name = "langgraph" },
+    { name = "openai" },
+    { name = "openpyxl" },
+    { name = "pandas" },
+    { name = "pillow" },
+    { name = "pydantic" },
+    { name = "pymupdf4llm" },
+    { name = "pypdf" },
+    { name = "pypdfium2" },
+    { name = "python-dotenv" },
+    { name = "requests" },
+    { name = "slack-bolt" },
+    { name = "streamlit" },
+    { name = "tiktoken" },
+    { name = "torch" },
+    { name = "transformers" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "accelerate", specifier = ">=0.30.0" },
+    { name = "chandra-ocr", specifier = ">=0.2.0" },
+    { name = "datasets", specifier = ">=4.8.4" },
+    { name = "deepeval", specifier = ">=3.9.7" },
+    { name = "duckdb", specifier = ">=1.5.2" },
+    { name = "fastembed", specifier = ">=0.3.0" },
+    { name = "httpx", specifier = ">=0.27.0" },
+    { name = "langchain", specifier = ">=0.3.0" },
+    { name = "langchain-core", specifier = ">=0.3.0" },
+    { name = "langchain-openai", specifier = ">=0.2.0" },
+    { name = "langchain-text-splitters", specifier = ">=1.1.1" },
+    { name = "langfuse", specifier = ">=2.0.0,<3.0.0" },
+    { name = "langgraph", specifier = ">=0.2.0" },
+    { name = "openai", specifier = ">=1.0.0" },
+    { name = "openpyxl", specifier = ">=3.1.5" },
+    { name = "pandas", specifier = ">=2.0.0" },
+    { name = "pillow", specifier = ">=12.1.1" },
+    { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "pymupdf4llm", specifier = ">=1.27.2.2" },
+    { name = "pypdf", specifier = ">=4.0.0" },
+    { name = "pypdfium2", specifier = ">=5.6.0" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
+    { name = "requests", specifier = ">=2.33.0" },
+    { name = "slack-bolt", specifier = ">=1.18.0" },
+    { name = "streamlit", specifier = ">=1.35.0" },
+    { name = "tiktoken", specifier = ">=0.5.0" },
+    { name = "torch", specifier = ">=2.2.0", index = "https://download.pytorch.org/whl/cu126" },
+    { name = "transformers", specifier = ">=4.40.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.0.0" },
+    { name = "ruff", specifier = ">=0.4.0" },
 ]
 
 [[package]]
