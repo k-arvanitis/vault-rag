@@ -307,18 +307,23 @@ def chunk_markdown(
         if verbose:
             _debug("Generating document summary chunk")
         doc_summary = generate_document_summary(client, model_name, markdown)
+        doc_id_match = re.search(r"doc_\d+", file_name)
+        doc_id = doc_id_match.group(0) if doc_id_match else ""
+        id_header = f"Document ID: {doc_id}\nFile: {file_name}\n\n" if doc_id else f"File: {file_name}\n\n"
+        summary_content = f"## Document Summary\n\n{id_header}{doc_summary}"
         summary_chunk = Chunk(
-            content=f"## Document Summary\n\n{doc_summary}",
+            content=summary_content,
             metadata={
                 "chunk_type": "document_summary",
+                "doc_id": doc_id,
                 "file_name": file_name,
                 "source_file": source_file,
                 "chunk_index": -1,
-                "chunk_size_chars": len(doc_summary),
-                "token_count": len(tokenizer.encode(doc_summary)),
+                "chunk_size_chars": len(summary_content),
+                "token_count": len(tokenizer.encode(summary_content)),
             },
         )
-        summary_chunk.vector_text = f"DOCUMENT SUMMARY:\n{doc_summary}"
+        summary_chunk.vector_text = f"DOCUMENT SUMMARY:\n{id_header}{doc_summary}"
         compact_chunks.insert(0, summary_chunk)
 
     output_chunks = []

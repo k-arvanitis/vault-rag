@@ -108,11 +108,11 @@ _TABLE_STOP_WORDS = frozenset({
 })
 
 _EXPLICIT_TABLE_TERMS = (
-    "row", "sheet", "csv", "xlsx", "spreadsheet", "column", "columns", "table",
+    "row", "sheet", "csv", "xlsx", "spreadsheet", "column", "columns",
 )
 _TABLE_SIGNAL_TERMS = (
     "transaction", "supplier", "beneficiary", "merchant", "category", "department",
-    "amount", "total", "net", "paid", "listed", "purchase", "expenditure",
+    "amount", "total", "net", "paid", "listed", "purchase", "expenditure", "table",
 )
 
 
@@ -468,12 +468,17 @@ def retrieve(
             points = _search_with_scope("metadata.doc_id")
             if not points:
                 points = _search_with_scope("metadata.source_file")
+            if not points:
+                # Fall back to file_name text index (works for PDF chunks that lack doc_id)
+                points = _search_with_scope("metadata.file_name")
             if not points and filter_token:
                 original_filter_token = filter_token
                 filter_token = None
                 points = _search_with_scope("metadata.doc_id")
                 if not points:
                     points = _search_with_scope("metadata.source_file")
+                if not points:
+                    points = _search_with_scope("metadata.file_name")
                 filter_token = original_filter_token
         if filter_token and soft_table_query:
             try:
