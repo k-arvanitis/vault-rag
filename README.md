@@ -295,6 +295,8 @@ CONTENT:
 
 Each vector in the index captures both what the chunk is *about* and what it *says* — improving recall for short or indirect queries. Implementation of [Anthropic Contextual Retrieval (2024)](https://www.anthropic.com/news/contextual-retrieval).
 
+The context sentence is also stored as `metadata.context` in the Qdrant payload alongside the raw chunk content. This means the Document Inspector can display the generated note next to the original text, and the eval pipeline can surface it per chunk — the enrichment is inspectable, not a black box.
+
 ### Three-pass deterministic table repair
 
 Research papers and GHG inventory reports contain tables that OCR cannot handle correctly. Three specific failure modes are fixed without any LLM involvement:
