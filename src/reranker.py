@@ -37,12 +37,10 @@ class BGEReranker:
 
 
 class QwenReranker:
-    def __init__(self, model_name="Qwen/Qwen3-Reranker-0.6B", device="cuda"):
-        """
-        Initializes the Qwen3 Reranker.
-        0.6B is fast for CPU/low-end GPU. 
-        4B or 7B are better for complex reasoning.
-        """
+    """Generative reranker using Qwen3 token-probability scoring (yes/no)."""
+
+    def __init__(self, model_name: str = "Qwen/Qwen3-Reranker-0.6B", device: str = "cuda") -> None:
+        """0.6B is fast for CPU/low-end GPU; 4B or 7B for complex reasoning."""
         self.device = device if torch.cuda.is_available() else "cpu"
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side='left')
         self.model = AutoModelForCausalLM.from_pretrained(
@@ -60,7 +58,7 @@ class QwenReranker:
         self.user_prefix = "<|im_start|>user\n"
         self.assistant_suffix = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
 
-    def _format_input(self, query, doc, instruction):
+    def _format_input(self, query: str, doc: str, instruction: str) -> str:
         return (
             f"{self.system_prompt}{self.user_prefix}"
             f"<Instruct>: {instruction}\n"
@@ -69,7 +67,7 @@ class QwenReranker:
         )
 
     @torch.no_grad()
-    def rerank(self, query, documents, top_n=5, instruction="Given a search query, retrieve relevant passages that answer the query."):
+    def rerank(self, query: str, documents: list[str], top_n: int = 5, instruction: str = "Given a search query, retrieve relevant passages that answer the query.") -> list[dict]:
         """
         Scores a list of documents against a query.
         Returns: List of dictionaries containing the original index, text, and relevance score.
