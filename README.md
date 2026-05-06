@@ -131,12 +131,12 @@ What is the salary of the CEO of Doncaster School Solutions?
   │  src/parser/pdf_parser.py    │   │  src/ingest_table_rows.py          │
   │  Per-page router             │   │  openpyxl / pandas → rows          │
   │                              │   │                                    │
-  │  page.get_text() < 50 chars? │   │  document_summary → Qdrant (always)│
-  │                              │   │  If NOT in EXCEL_FILES:            │
-  │  YES (scanned)  NO (digital) │   │    sheet_row, sheet_table → Qdrant │
-  └────┬──────────────┬──────────┘   │  If in EXCEL_FILES (DuckDB path):  │
-       │              │              │    rows → DuckDB only; Qdrant gets  │
-       ▼              ▼              │    summary only (--only-summary)    │
+  │  page.get_text() < 50 chars? │   │  document_summary → Qdrant         │
+  │                              │   │    (enables doc discovery)         │
+  │  YES (scanned)  NO (digital) │   │  rows → DuckDB only                │
+  └────┬──────────────┬──────────┘   │    (agent writes SQL SELECT;       │
+       │              │              │     Qdrant never sees row data)     │
+       ▼              ▼              │                                    │
   ┌─────────┐  ┌──────────────────┐  └────────────────────────────────────┘
   │ LightOn │  │  pymupdf4llm     │
   │ OCR     │  │  (CPU, no API)   │
