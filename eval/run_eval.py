@@ -19,25 +19,22 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv(override=True)
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
 
 from src.config import (  # noqa: E402
-    EXCEL_CACHE_DIR,
+    DUCKDB_PATH,
     EXCEL_FILES,
     GENERATION_API_BASE,
     GENERATION_MODEL,
     LITELLM_MASTER_KEY,
     QDRANT_COLLECTION,
     QDRANT_URL,
-    RERANK_TOP_N,
-    RETRIEVAL_TOP_K,
-    RERANKER_MODEL,
 )
-from src.excel_tool import ExcelStore  # noqa: E402
+from src.excel_tool import DuckDBStore  # noqa: E402
 from src.rag_agent import ask_agent, build_rag_agent, stream_agent  # noqa: E402
 from src.retriever import retrieve  # noqa: E402
 
@@ -231,16 +228,44 @@ def _custom_judge_answer(
 # from src.rag_agent import _hyde
 
 EVAL_DIR = REPO_ROOT / "eval"
-QUESTIONS_PATH = EVAL_DIR / "data/rag_eval_benchmark_56qa_revised.jsonl"
+QA_PAIRS_DIR = EVAL_DIR / "data/qa_pairs"
 RESULTS_DIR = EVAL_DIR / "results"
 ANSWER_RESULTS_PATH = RESULTS_DIR / "answer_results.jsonl"
 RETRIEVAL_RESULTS_PATH = RESULTS_DIR / "retrieval_results.jsonl"
 SUMMARY_PATH = RESULTS_DIR / "summary.json"
 
 
-def load_questions(path: Path) -> list[dict[str, Any]]:
-    """Load benchmark questions from a JSONL file."""
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+def _normalise_question(item: dict[str, Any], file_stem: str, idx: int) -> dict[str, Any]:
+    """Normalise a qa_pairs JSON item to the format expected by the eval runner.
+
+    Handles:
+    - qa_id: prefix with file_stem to avoid collisions across files
+    - evidence: renamed from gold_evidence, keeping only doc_id and quote
+    """
+    qa_id = f"{file_stem}__{item.get('qa_id') or f'q{idx}'}"
+    raw_evidence = item.get("gold_evidence") or item.get("evidence") or []
+    evidence = [
+        {
+            "doc_id": ev.get("doc_id", ""),
+            "quote": ev.get("quote", ""),
+            "evidence_type": ev.get("evidence_type", ""),
+        }
+        for ev in raw_evidence
+    ]
+    return {**item, "qa_id": qa_id, "evidence": evidence}
+
+
+def load_questions(qa_dir: Path) -> list[dict[str, Any]]:
+    """Load all QA pairs from *.json files in qa_dir, normalising schemas."""
+    questions: list[dict[str, Any]] = []
+    for path in sorted(qa_dir.glob("*.json")):
+        items = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(items, list):
+            items = [items]
+        stem = path.stem
+        for idx, item in enumerate(items, start=1):
+            questions.append(_normalise_question(item, stem, idx))
+    return questions
 
 
 def strip_think_blocks(text: str) -> str:
@@ -251,29 +276,14 @@ def strip_think_blocks(text: str) -> str:
     return cleaned.strip()
 
 
-_UNSUPPORTED_PATTERNS = re.compile(
-    r"i (can'?t|cannot|don'?t|do not) (have access|provide|find|know|answer|help|determine|locate)"
-    r"|not (?:\w+ ){0,2}(mentioned|found|stated|provided|available|present|included|covered|discussed)"
-    r"|(no|not any) (information|data|details?|record|mention|reference) .{0,40}(available|found|provided|retrieved|in the)"
-    r"|unable to (find|locate|provide|answer|access|determine)"
-    r"|(does|do|did) not (appear|exist|mention|contain|include|have|show|list|specify)"
-    r"|cannot (be found|determine|locate|provide|answer|identify|confirm)"
-    r"|is not (in|part of|within|present in|included in|available in).{0,30}(document|context|text|retriev|source)"
-    r"|based on (the )?(provided |available )?(context|documents?|information|retrieved|sources?).{0,60}(cannot|do not|does not|unable|no |not )"
-    r"|no (such|relevant|matching) (information|data|detail|record|entry|result)"
-    r"|this (information|detail|data|answer) (is not|was not|cannot be).{0,30}(found|provided|available|retrieved|present)"
-    r"|is there anything (else|i can)",
-    re.IGNORECASE,
-)
-
-
 def normalize_unsupported(text: str) -> str:
-    """Map model hedging and refusal patterns to the canonical eval label 'Unsupported'.
+    """Accept only the literal word 'Unsupported' (case-insensitive) as a valid refusal.
 
-    Responses like 'not explicitly mentioned' or 'I can't provide that information'
-    are semantically equivalent to 'Unsupported' for unanswerable questions.
+    The agent prompt already mandates this exact output. Hedging phrases are intentionally
+    NOT converted here — they count as wrong answers so we can measure whether the agent
+    actually follows its own instructions.
     """
-    if _UNSUPPORTED_PATTERNS.search(text):
+    if text.strip().lower() == "unsupported":
         return "Unsupported"
     return text
 
@@ -366,38 +376,57 @@ def _summarize_hit(hit: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def evaluate_retrieval(question: dict[str, Any], top_k: int = 20) -> dict[str, Any]:
-    """Evaluate evidence retrieval deterministically using annotated doc_id scopes."""
-    evidence = question.get("evidence") or []
-    if not evidence:
-        return {
-            "qa_id": question["qa_id"],
-            "question_type": question.get("question_type"),
-            "evidence_count": 0,
-            "hits": [],
-            "hit_at_5": None,
-            "hit_at_10": None,
-            "mrr": None,
-            "recall_at_10": None,
-            "recall_at_20": None,
-            "matched_evidence": [],
-        }
+_EXCEL_EVIDENCE_TYPES = {"sheet_row", "sheet_table"}
 
-    all_hits: list[dict[str, Any]] = []
+
+def _is_excel_question(question: dict[str, Any]) -> bool:
+    """True when all gold evidence comes from structured Excel/CSV sources."""
+    evidence = question.get("evidence") or []
+    return bool(evidence) and all(ev.get("evidence_type", "") in _EXCEL_EVIDENCE_TYPES for ev in evidence)
+
+
+def evaluate_retrieval(question: dict[str, Any], top_k: int = 20) -> dict[str, Any]:
+    """Evaluate evidence retrieval, routing by evidence modality.
+
+    - Unanswerable (no evidence): method=none, all metrics None.
+    - Excel questions (sheet_row/sheet_table evidence): method=structured, skip Qdrant.
+      Accuracy is derived later from agent answer correctness.
+    - PDF questions: method=vector, Qdrant hit@K with no chunk-type routing filter
+      (force_chunk_types=[]) so PDF table/figure questions are not zero-hit.
+    """
+    evidence = question.get("evidence") or []
+    base = {
+        "qa_id": question["qa_id"],
+        "question_type": question.get("question_type"),
+        "evidence_count": len(evidence),
+        "hits": [],
+        "hit_at_5": None,
+        "hit_at_10": None,
+        "mrr": None,
+        "recall_at_10": None,
+        "recall_at_20": None,
+        "matched_evidence": [],
+    }
+    if not evidence:
+        return {**base, "retrieval_method": "none"}
+    if _is_excel_question(question):
+        return {**base, "retrieval_method": "structured"}
+
+    hits = retrieve(
+        question["question"],
+        top_k=top_k,
+        qdrant_url=QDRANT_URL,
+        collection=QDRANT_COLLECTION,
+        use_qdrant=True,
+        force_chunk_types=[],  # bypass routing filter so PDF table questions are not zero-hit
+    )
+
+    all_hits: list[dict[str, Any]] = list(hits)
     matched_evidence: list[dict[str, Any]] = []
     ranks: list[int | None] = []
 
     for ev_idx, ev in enumerate(evidence):
         doc_id = ev.get("doc_id") or ""
-        hits = retrieve(
-            question["question"],
-            top_k=top_k,
-            qdrant_url=QDRANT_URL,
-            collection=QDRANT_COLLECTION,
-            use_qdrant=True,
-            scope_doc_id=doc_id,
-        )
-        all_hits.extend(hits)
         rank = None
         for idx, hit in enumerate(hits, start=1):
             if _evidence_matches_hit(ev.get("quote", ""), hit.get("content", "")):
@@ -412,6 +441,7 @@ def evaluate_retrieval(question: dict[str, Any], top_k: int = 20) -> dict[str, A
         "qa_id": question["qa_id"],
         "question_type": question.get("question_type"),
         "evidence_count": len(evidence),
+        "retrieval_method": "vector",
         "hits": [_summarize_hit(hit) for hit in all_hits[:top_k]],
         "hit_at_5": 1.0 if any(rank is not None and rank <= 5 for rank in ranks) else 0.0,
         "hit_at_10": 1.0 if any(rank is not None and rank <= 10 for rank in ranks) else 0.0,
@@ -443,10 +473,12 @@ def evaluate_answer(question: dict[str, Any], answer: str, retrieved_contexts: l
 
     # Short-circuit for exact match — avoids DeepEval non-determinism on trivial cases
     # (e.g. normalized_answer == gold_answer == "Unsupported" scoring 0.0).
+    is_unanswerable = question.get("question_type") == "unanswerable"
+
     if normalized_answer.strip().lower() == gold_answer.strip().lower():
         return {
             "correctness": 1.0,
-            "faithfulness": 1.0,
+            "faithfulness": None if is_unanswerable else 1.0,
             "answer_relevancy": 1.0,
             "judge_used": "exact_match_shortcircuit",
             "clean_answer": normalized_answer,
@@ -455,6 +487,8 @@ def evaluate_answer(question: dict[str, Any], answer: str, retrieved_contexts: l
     if os.getenv("EVAL_JUDGE_MODE", "custom").lower() != "deepeval":
         try:
             judged = _custom_judge_answer(question, normalized_answer, gold_answer, retrieved_contexts)
+            if is_unanswerable:
+                judged["faithfulness"] = None
             judged["clean_answer"] = normalized_answer
             return judged
         except BaseException as exc:
@@ -586,10 +620,23 @@ def evaluate_answer(question: dict[str, Any], answer: str, retrieved_contexts: l
 # def _doc_id_from_hit(hit): ...
 
 
-def run(category_filter: str | None = None) -> dict[str, Any]:
+def run(
+    category_filter: str | None = None,
+    qa_files: list[str] | None = None,
+) -> dict[str, Any]:
     """Run the full-agent benchmark and write per-question results plus a summary."""
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    questions = load_questions(QUESTIONS_PATH)
+    if qa_files:
+        questions = []
+        for f in qa_files:
+            items = json.loads(Path(f).read_text(encoding="utf-8"))
+            if not isinstance(items, list):
+                items = [items]
+            stem = Path(f).stem
+            for idx, item in enumerate(items, start=1):
+                questions.append(_normalise_question(item, stem, idx))
+    else:
+        questions = load_questions(QA_PAIRS_DIR)
     if category_filter:
         questions = [q for q in questions if q.get("question_type") == category_filter]
 
@@ -599,7 +646,7 @@ def run(category_filter: str | None = None) -> dict[str, Any]:
         encoding="utf-8",
     )
 
-    excel_store = ExcelStore(EXCEL_FILES, cache_dir=EXCEL_CACHE_DIR) if EXCEL_FILES else None
+    excel_store = DuckDBStore(EXCEL_FILES, db_path=DUCKDB_PATH) if EXCEL_FILES else None
     agent = build_rag_agent(excel_store=excel_store)
 
     answer_rows: list[dict[str, Any]] = []
@@ -643,22 +690,45 @@ def run(category_filter: str | None = None) -> dict[str, Any]:
     answer_relevancy = [r["answer_relevancy"] for r in answer_rows if r.get("answer_relevancy") is not None]
     judge_breakdown = dict(Counter(r.get("judge_used", "unknown") for r in answer_rows))
 
-    retrieval_answerable = [r for r in retrieval_rows if r["evidence_count"]]
-    hit_at_5 = [r["hit_at_5"] for r in retrieval_answerable if r.get("hit_at_5") is not None]
-    hit_at_10 = [r["hit_at_10"] for r in retrieval_answerable if r.get("hit_at_10") is not None]
-    mrr = [r["mrr"] for r in retrieval_answerable if r.get("mrr") is not None]
-    recall_at_10 = [r["recall_at_10"] for r in retrieval_answerable if r.get("recall_at_10") is not None]
-    recall_at_20 = [r["recall_at_20"] for r in retrieval_answerable if r.get("recall_at_20") is not None]
+    # Split retrieval rows by modality
+    vector_rows = [r for r in retrieval_rows if r.get("retrieval_method") == "vector"]
+    structured_qids = {r["qa_id"] for r in retrieval_rows if r.get("retrieval_method") == "structured"}
+    unanswerable_qids = {r["qa_id"] for r in retrieval_rows if r.get("retrieval_method") == "none"}
+
+    hit_at_5 = [r["hit_at_5"] for r in vector_rows if r.get("hit_at_5") is not None]
+    hit_at_10 = [r["hit_at_10"] for r in vector_rows if r.get("hit_at_10") is not None]
+    mrr = [r["mrr"] for r in vector_rows if r.get("mrr") is not None]
+    recall_at_10 = [r["recall_at_10"] for r in vector_rows if r.get("recall_at_10") is not None]
+    recall_at_20 = [r["recall_at_20"] for r in vector_rows if r.get("recall_at_20") is not None]
+
+    # Structured accuracy: token-overlap between agent answer and gold answer
+    answer_by_qid = {r["qa_id"]: r for r in answer_rows}
+    excel_rows = [answer_by_qid[qid] for qid in structured_qids if qid in answer_by_qid]
+    excel_correct = sum(1 for r in excel_rows if (r.get("correctness") or 0) >= 1.0)
+
+    # Unanswerable: fraction where agent correctly refused
+    unanswerable_rows = [answer_by_qid[qid] for qid in unanswerable_qids if qid in answer_by_qid]
+    unanswerable_correct = sum(1 for r in unanswerable_rows if (r.get("correctness") or 0) >= 1.0)
 
     summary = {
         "question_count": len(questions),
-        "retrieval_metrics": {
-            "answerable_question_count": len(retrieval_answerable),
+        "vector_retrieval_metrics": {
+            "scope": "PDF/OCR questions only (Qdrant dense search)",
+            "question_count": len(vector_rows),
             "hit_at_5": sum(hit_at_5) / len(hit_at_5) if hit_at_5 else None,
             "hit_at_10": sum(hit_at_10) / len(hit_at_10) if hit_at_10 else None,
             "mrr": sum(mrr) / len(mrr) if mrr else None,
             "evidence_recall_at_10": sum(recall_at_10) / len(recall_at_10) if recall_at_10 else None,
             "evidence_recall_at_20": sum(recall_at_20) / len(recall_at_20) if recall_at_20 else None,
+        },
+        "structured_retrieval_metrics": {
+            "scope": "Excel/CSV questions (DuckDB-served, not Qdrant)",
+            "question_count": len(excel_rows),
+            "answer_accuracy": excel_correct / len(excel_rows) if excel_rows else None,
+        },
+        "unanswerable_metrics": {
+            "question_count": len(unanswerable_rows),
+            "correct_refusal_rate": unanswerable_correct / len(unanswerable_rows) if unanswerable_rows else None,
         },
         "agent_answer_metrics": {
             "correctness": sum(correctness) / len(correctness) if correctness else None,
@@ -678,6 +748,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--category", default=None, help="Filter to a single question_type (e.g. cross_document)")
+    parser.add_argument("--category", default=None, help="Filter to a single question_type (e.g. table_lookup)")
+    parser.add_argument("--qa-files", nargs="+", default=None, help="Run only these QA JSON files")
     args = parser.parse_args()
-    print(json.dumps(run(category_filter=args.category), ensure_ascii=False, indent=2))
+    print(json.dumps(run(category_filter=args.category, qa_files=args.qa_files), ensure_ascii=False, indent=2))

@@ -1,0 +1,45 @@
+[
+  {
+    "qa_id": "qa_1",
+    "question": "In the bristol supplier spend april 2024 dataset (doc_014), what is being recorded?",
+    "gold_answer": "supplier expenditure records",
+    "answer_type": "short_text",
+    "question_type": "single_doc_factoid",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_014"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_014",
+        "quote": "supplier spend"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "table",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_2",
+    "question": "In the bristol supplier spend april 2024 dataset (doc_014), what is the VAT registration number for the supplier with the largest payment?",
+    "gold_answer": "Unsupported",
+    "answer_type": "numeric",
+    "question_type": "numeric_reasoning",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_014"
+    ],
+    "gold_evidence": [],
+    "metadata": {
+      "modality_focus": "table",
+      "requires_ocr": false,
+      "requires_table_reasoning": true
+    }
+  }
+]

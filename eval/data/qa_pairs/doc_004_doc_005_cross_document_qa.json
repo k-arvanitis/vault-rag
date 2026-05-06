@@ -36,7 +36,7 @@
   {
     "qa_id": "qa_2",
     "question": "What is the difference between the total amount due across the two Simple Sanitation invoices in doc_004 and the total cost shown in doc_005?",
-    "gold_answer": "$2,849.04",
+    "gold_answer": "Unsupported",
     "answer_type": "short_text",
     "question_type": "cross_document_compare",
     "difficulty": "hard",

@@ -82,7 +82,7 @@
   },
   {
     "qa_id": "qa_4",
-    "question": "Which Merchant Category is listed for the supplier Hm Passport Office on the 88.5 transaction?",
+    "question": "In the purchase card transactions dataset (doc_006), which Merchant Category is listed for the supplier Hm Passport Office on the 88.5 NET Amount transaction?",
     "gold_answer": "Government",
     "answer_type": "short_text",
     "question_type": "table_lookup",

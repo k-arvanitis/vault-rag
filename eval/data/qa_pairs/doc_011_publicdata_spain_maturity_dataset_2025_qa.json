@@ -1,0 +1,45 @@
+[
+  {
+    "qa_id": "qa_1",
+    "question": "In the spain open data maturity dataset (doc_011), what year does the dataset refer to?",
+    "gold_answer": "2025",
+    "answer_type": "short_text",
+    "question_type": "single_doc_factoid",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_011"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_011",
+        "quote": "2025"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "table",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_2",
+    "question": "In the spain open data maturity dataset (doc_011), what is Spain rank among EU member states in open data maturity?",
+    "gold_answer": "Unsupported",
+    "answer_type": "short_text",
+    "question_type": "unanswerable",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_011"
+    ],
+    "gold_evidence": [],
+    "metadata": {
+      "modality_focus": "table",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  }
+]

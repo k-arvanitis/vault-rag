@@ -1,0 +1,50 @@
+[
+  {
+    "qa_id": "qa_1",
+    "question": "According to the rosemont policy manual (doc_009), are employees guaranteed long-term employment?",
+    "gold_answer": "No",
+    "answer_type": "boolean",
+    "question_type": "negation_check",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_009"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_009",
+        "quote": "employees are employed at-will... may terminate... at any time"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "text",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_2",
+    "question": "In the rosemont policy manual (doc_009), who can terminate employment at any time?",
+    "gold_answer": "either the Village or the employee",
+    "answer_type": "short_text",
+    "question_type": "single_doc_factoid",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_009"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_009",
+        "quote": "either the Village or the employee may terminate"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "text",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  }
+]

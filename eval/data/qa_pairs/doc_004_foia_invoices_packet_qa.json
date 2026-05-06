@@ -1,7 +1,7 @@
 [
   {
     "qa_id": "qa_1",
-    "question": "What is the invoice number on the September 1, 2023 invoice?",
+    "question": "In the Bensenville FOIA invoices packet (doc_004), what is the invoice number on the September 1, 2023 invoice?",
     "gold_answer": "130114",
     "answer_type": "short_text",
     "question_type": "ocr_extraction",
@@ -27,7 +27,7 @@
   },
   {
     "qa_id": "qa_2",
-    "question": "Who is the supplier listed on the invoices?",
+    "question": "In the Bensenville FOIA invoices packet (doc_004), who is the supplier listed on the invoices?",
     "gold_answer": "Simple Sanitation Inc",
     "answer_type": "short_text",
     "question_type": "ocr_extraction",
@@ -53,7 +53,7 @@
   },
   {
     "qa_id": "qa_3",
-    "question": "What is the amount due on invoice 130714?",
+    "question": "In the Bensenville FOIA invoices packet (doc_004), what is the amount due on invoice 130714?",
     "gold_answer": "$230.00",
     "answer_type": "short_text",
     "question_type": "ocr_extraction",
@@ -79,7 +79,7 @@
   },
   {
     "qa_id": "qa_4",
-    "question": "What address is listed for the Village of Bensenville on the invoices?",
+    "question": "In the Bensenville FOIA invoices packet (doc_004), what address is listed for the Village of Bensenville on the invoices?",
     "gold_answer": "545 John St, Bensenville, IL 60106",
     "answer_type": "short_text",
     "question_type": "ocr_extraction",
@@ -105,7 +105,7 @@
   },
   {
     "qa_id": "qa_5",
-    "question": "What is the due date for invoice 130114?",
+    "question": "In the Bensenville FOIA invoices packet (doc_004), what is the due date for invoice 130114?",
     "gold_answer": "Oct 1, 2023",
     "answer_type": "short_text",
     "question_type": "ocr_extraction",

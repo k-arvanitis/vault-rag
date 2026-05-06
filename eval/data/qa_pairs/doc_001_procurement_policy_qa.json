@@ -1,22 +1,22 @@
 [
   {
     "qa_id": "qa_1",
-    "question": "What is the title of the report?",
-    "gold_answer": "111th Annual Report of the Board of Governors of the Federal Reserve System",
+    "question": "What is the title of the LACERA procurement policy document (doc_001)?",
+    "gold_answer": "POLICY FOR THE PROCUREMENT OF GOODS AND SERVICES (PGS)",
     "answer_type": "short_text",
     "question_type": "ocr_extraction",
     "difficulty": "easy",
     "requires_cross_document": false,
     "document_count": 1,
     "source_document_ids": [
-      "doc_003_fed_annual_report_2024"
+      "doc_001_procurement_policy"
     ],
     "gold_evidence": [
       {
-        "doc_id": "doc_003_fed_annual_report_2024",
+        "doc_id": "doc_001_procurement_policy",
         "evidence_type": "ocr_page",
         "page": 1,
-        "quote": "111th Annual Report of the Board of Governors of the Federal Reserve System"
+        "quote": "POLICY FOR THE PROCUREMENT OF GOODS AND SERVICES (PGS)"
       }
     ],
     "metadata": {
@@ -27,22 +27,22 @@
   },
   {
     "qa_id": "qa_2",
-    "question": "What year does the report cover?",
-    "gold_answer": "2024",
+    "question": "When was the LACERA procurement policy (doc_001) approved?",
+    "gold_answer": "September 4, 2024",
     "answer_type": "short_text",
     "question_type": "ocr_extraction",
     "difficulty": "easy",
     "requires_cross_document": false,
     "document_count": 1,
     "source_document_ids": [
-      "doc_003_fed_annual_report_2024"
+      "doc_001_procurement_policy"
     ],
     "gold_evidence": [
       {
-        "doc_id": "doc_003_fed_annual_report_2024",
+        "doc_id": "doc_001_procurement_policy",
         "evidence_type": "ocr_page",
         "page": 1,
-        "quote": "2024"
+        "quote": "Approved on September 4, 2024"
       }
     ],
     "metadata": {
@@ -53,22 +53,22 @@
   },
   {
     "qa_id": "qa_3",
-    "question": "What organization issued the report?",
-    "gold_answer": "BOARD OF GOVERNORS OF THE FEDERAL RESERVE SYSTEM",
+    "question": "Who is the authorizing manager listed in the LACERA procurement policy (doc_001)?",
+    "gold_answer": "Ricki Contreras",
     "answer_type": "short_text",
     "question_type": "ocr_extraction",
     "difficulty": "easy",
     "requires_cross_document": false,
     "document_count": 1,
     "source_document_ids": [
-      "doc_003_fed_annual_report_2024"
+      "doc_001_procurement_policy"
     ],
     "gold_evidence": [
       {
-        "doc_id": "doc_003_fed_annual_report_2024",
+        "doc_id": "doc_001_procurement_policy",
         "evidence_type": "ocr_page",
-        "page": 1,
-        "quote": "BOARD OF GOVERNORS OF THE FEDERAL RESERVE SYSTEM"
+        "page": 2,
+        "quote": "Authorizing Manager: Ricki Contreras"
       }
     ],
     "metadata": {
@@ -79,22 +79,22 @@
   },
   {
     "qa_id": "qa_4",
-    "question": "How many Federal Reserve Districts were created when the Federal Reserve System was established?",
-    "gold_answer": "12",
+    "question": "What is the original issue date of the LACERA procurement policy (doc_001)?",
+    "gold_answer": "December 15, 2005",
     "answer_type": "short_text",
     "question_type": "ocr_extraction",
-    "difficulty": "medium",
+    "difficulty": "easy",
     "requires_cross_document": false,
     "document_count": 1,
     "source_document_ids": [
-      "doc_003_fed_annual_report_2024"
+      "doc_001_procurement_policy"
     ],
     "gold_evidence": [
       {
-        "doc_id": "doc_003_fed_annual_report_2024",
+        "doc_id": "doc_001_procurement_policy",
         "evidence_type": "ocr_page",
-        "page": 5,
-        "quote": "the United States was divided geographically into 12 Districts"
+        "page": 2,
+        "quote": "Original Issue Date: December 15, 2005"
       }
     ],
     "metadata": {
@@ -105,22 +105,22 @@
   },
   {
     "qa_id": "qa_5",
-    "question": "On what date was the Federal Reserve created according to the report?",
-    "gold_answer": "December 23, 1913",
+    "question": "What is the mandatory review date listed in the LACERA procurement policy (doc_001)?",
+    "gold_answer": "September 2027",
     "answer_type": "short_text",
     "question_type": "ocr_extraction",
-    "difficulty": "medium",
+    "difficulty": "easy",
     "requires_cross_document": false,
     "document_count": 1,
     "source_document_ids": [
-      "doc_003_fed_annual_report_2024"
+      "doc_001_procurement_policy"
     ],
     "gold_evidence": [
       {
-        "doc_id": "doc_003_fed_annual_report_2024",
+        "doc_id": "doc_001_procurement_policy",
         "evidence_type": "ocr_page",
-        "page": 5,
-        "quote": "The Federal Reserve was created by an act of Congress on December 23, 1913"
+        "page": 2,
+        "quote": "Mandatory Review: September 2027"
       }
     ],
     "metadata": {

@@ -35,7 +35,7 @@
   },
   {
     "qa_id": "qa_2",
-    "question": "Which document explicitly requires legal review or approval before contracts proceed, while the other focuses instead on customer-issued notices for varying the service scope?",
+    "question": "Between the LACERA procurement policy (doc_001) and the Government Property Agency services contract terms (doc_002), which explicitly requires legal review or approval before contracts proceed, while the other focuses instead on customer-issued notices for varying the service scope?",
     "gold_answer": "The procurement policy requires Legal Office review and approval of all contracts, while the services contract terms focus on written notice from the Customer to request a variation to the scope of the Services.",
     "answer_type": "short_text",
     "question_type": "cross_document_compare",
@@ -69,7 +69,7 @@
   },
   {
     "qa_id": "qa_3",
-    "question": "Which document sets a shorter deadline tied to information requests, and what are the two deadlines?",
+    "question": "Between the LACERA procurement policy (doc_001) and the Government Property Agency services contract terms (doc_002), which sets a shorter deadline tied to information requests, and what are the two deadlines?",
     "gold_answer": "The services contract terms set the shorter deadline: transfer Requests for Information within 2 Working Days, while the procurement policy requires emergency purchase documentation within 7 calendar days.",
     "answer_type": "short_text",
     "question_type": "cross_document_compare",
@@ -103,7 +103,7 @@
   },
   {
     "qa_id": "qa_4",
-    "question": "Which document explicitly prohibits evergreen arrangements, while the other instead states that the agreement runs from the Start Date to the Expiry Date unless extended or terminated?",
+    "question": "Between the LACERA procurement policy (doc_001) and the Government Property Agency services contract terms (doc_002), which explicitly prohibits evergreen arrangements, while the other instead states that the agreement runs from the Start Date to the Expiry Date unless extended or terminated?",
     "gold_answer": "The procurement policy prohibits evergreen contracts, while the services contract terms state that the agreement runs from the Start Date to the Expiry Date unless extended or terminated.",
     "answer_type": "short_text",
     "question_type": "cross_document_compare",

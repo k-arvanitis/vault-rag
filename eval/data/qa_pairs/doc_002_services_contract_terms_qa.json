@@ -1,22 +1,22 @@
 [
   {
     "qa_id": "qa_1",
-    "question": "What is the title of the policy document?",
-    "gold_answer": "POLICY FOR THE PROCUREMENT OF GOODS AND SERVICES (PGS)",
+    "question": "What is the title of the services contract terms document (doc_002)?",
+    "gold_answer": "Appendix C – Terms and Conditions of Contract for Services",
     "answer_type": "short_text",
     "question_type": "ocr_extraction",
     "difficulty": "easy",
     "requires_cross_document": false,
     "document_count": 1,
     "source_document_ids": [
-      "doc_001_procurement_policy"
+      "doc_002_services_contract_terms"
     ],
     "gold_evidence": [
       {
-        "doc_id": "doc_001_procurement_policy",
+        "doc_id": "doc_002_services_contract_terms",
         "evidence_type": "ocr_page",
         "page": 1,
-        "quote": "POLICY FOR THE PROCUREMENT OF GOODS AND SERVICES (PGS)"
+        "quote": "Appendix C – Terms and Conditions of Contract for Services"
       }
     ],
     "metadata": {
@@ -27,22 +27,22 @@
   },
   {
     "qa_id": "qa_2",
-    "question": "When was the policy approved?",
-    "gold_answer": "September 4, 2024",
+    "question": "In the Government Property Agency services contract terms (doc_002), which agency is listed in the document header?",
+    "gold_answer": "Government Property Agency",
     "answer_type": "short_text",
     "question_type": "ocr_extraction",
     "difficulty": "easy",
     "requires_cross_document": false,
     "document_count": 1,
     "source_document_ids": [
-      "doc_001_procurement_policy"
+      "doc_002_services_contract_terms"
     ],
     "gold_evidence": [
       {
-        "doc_id": "doc_001_procurement_policy",
+        "doc_id": "doc_002_services_contract_terms",
         "evidence_type": "ocr_page",
         "page": 1,
-        "quote": "Approved on September 4, 2024"
+        "quote": "Government Property Agency"
       }
     ],
     "metadata": {
@@ -53,22 +53,22 @@
   },
   {
     "qa_id": "qa_3",
-    "question": "Who is the authorizing manager of the policy?",
-    "gold_answer": "Ricki Contreras",
+    "question": "What is the version number shown in the Government Property Agency services contract terms document (doc_002)?",
+    "gold_answer": "V2.0",
     "answer_type": "short_text",
     "question_type": "ocr_extraction",
     "difficulty": "easy",
     "requires_cross_document": false,
     "document_count": 1,
     "source_document_ids": [
-      "doc_001_procurement_policy"
+      "doc_002_services_contract_terms"
     ],
     "gold_evidence": [
       {
-        "doc_id": "doc_001_procurement_policy",
+        "doc_id": "doc_002_services_contract_terms",
         "evidence_type": "ocr_page",
-        "page": 2,
-        "quote": "Authorizing Manager: Ricki Contreras"
+        "page": 1,
+        "quote": "V2.0 01/04/2018"
       }
     ],
     "metadata": {
@@ -79,22 +79,22 @@
   },
   {
     "qa_id": "qa_4",
-    "question": "What is the original issue date of the policy?",
-    "gold_answer": "December 15, 2005",
+    "question": "In the Government Property Agency services contract terms (doc_002), what does “FOIA” stand for?",
+    "gold_answer": "Freedom of Information Act 2000",
     "answer_type": "short_text",
     "question_type": "ocr_extraction",
-    "difficulty": "easy",
+    "difficulty": "medium",
     "requires_cross_document": false,
     "document_count": 1,
     "source_document_ids": [
-      "doc_001_procurement_policy"
+      "doc_002_services_contract_terms"
     ],
     "gold_evidence": [
       {
-        "doc_id": "doc_001_procurement_policy",
+        "doc_id": "doc_002_services_contract_terms",
         "evidence_type": "ocr_page",
-        "page": 2,
-        "quote": "Original Issue Date: December 15, 2005"
+        "page": 1,
+        "quote": "“FOIA” means the Freedom of Information Act 2000;"
       }
     ],
     "metadata": {
@@ -105,22 +105,22 @@
   },
   {
     "qa_id": "qa_5",
-    "question": "What is the mandatory review date for the policy?",
-    "gold_answer": "September 2027",
+    "question": "What law governs the agreement according to the Government Property Agency services contract terms (doc_002)?",
+    "gold_answer": "English law",
     "answer_type": "short_text",
     "question_type": "ocr_extraction",
-    "difficulty": "easy",
+    "difficulty": "medium",
     "requires_cross_document": false,
     "document_count": 1,
     "source_document_ids": [
-      "doc_001_procurement_policy"
+      "doc_002_services_contract_terms"
     ],
     "gold_evidence": [
       {
-        "doc_id": "doc_001_procurement_policy",
+        "doc_id": "doc_002_services_contract_terms",
         "evidence_type": "ocr_page",
-        "page": 2,
-        "quote": "Mandatory Review: September 2027"
+        "page": 14,
+        "quote": "shall be governed by English law"
       }
     ],
     "metadata": {

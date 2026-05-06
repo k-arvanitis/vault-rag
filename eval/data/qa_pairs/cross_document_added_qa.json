@@ -1,0 +1,60 @@
+[
+  {
+    "qa_id": "qa_1",
+    "question": "Which document defines employment rules and which tracks financial data: doc_009 or doc_013?",
+    "gold_answer": "doc_009: employment rules; doc_013: budget tracking",
+    "answer_type": "short_text",
+    "question_type": "cross_document_compare",
+    "difficulty": "easy",
+    "requires_cross_document": true,
+    "document_count": 2,
+    "source_document_ids": [
+      "doc_009",
+      "doc_013"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_009",
+        "quote": "employment relationship"
+      },
+      {
+        "doc_id": "doc_013",
+        "quote": "Budget & Finance Tracker"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "text",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_2",
+    "question": "Which document refers to employee policies and which to supplier payments: doc_010 or doc_014?",
+    "gold_answer": "doc_010: employee policies; doc_014: supplier payments",
+    "answer_type": "short_text",
+    "question_type": "cross_document_compare",
+    "difficulty": "easy",
+    "requires_cross_document": true,
+    "document_count": 2,
+    "source_document_ids": [
+      "doc_010",
+      "doc_014"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_010",
+        "quote": "Employee Handbook"
+      },
+      {
+        "doc_id": "doc_014",
+        "quote": "supplier spend"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "text",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  }
+]

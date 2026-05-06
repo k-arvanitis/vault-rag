@@ -1,22 +1,22 @@
 [
   {
     "qa_id": "qa_1",
-    "question": "What is the site ID listed on the invoice?",
-    "gold_answer": "0001",
+    "question": "What is the full title of the Federal Reserve 2024 Annual Report (doc_003)?",
+    "gold_answer": "111th Annual Report of the Board of Governors of the Federal Reserve System",
     "answer_type": "short_text",
     "question_type": "ocr_extraction",
     "difficulty": "easy",
     "requires_cross_document": false,
     "document_count": 1,
     "source_document_ids": [
-      "doc_005_fueling_records_invoice"
+      "doc_003_fed_annual_report_2024"
     ],
     "gold_evidence": [
       {
-        "doc_id": "doc_005_fueling_records_invoice",
+        "doc_id": "doc_003_fed_annual_report_2024",
         "evidence_type": "ocr_page",
         "page": 1,
-        "quote": "Transactions for SITE ID: 0001"
+        "quote": "111th Annual Report of the Board of Governors of the Federal Reserve System"
       }
     ],
     "metadata": {
@@ -27,22 +27,22 @@
   },
   {
     "qa_id": "qa_2",
-    "question": "What airport name is shown on the invoice?",
-    "gold_answer": "LLano Airport",
+    "question": "What year does the Federal Reserve Annual Report (doc_003) cover?",
+    "gold_answer": "2024",
     "answer_type": "short_text",
     "question_type": "ocr_extraction",
     "difficulty": "easy",
     "requires_cross_document": false,
     "document_count": 1,
     "source_document_ids": [
-      "doc_005_fueling_records_invoice"
+      "doc_003_fed_annual_report_2024"
     ],
     "gold_evidence": [
       {
-        "doc_id": "doc_005_fueling_records_invoice",
+        "doc_id": "doc_003_fed_annual_report_2024",
         "evidence_type": "ocr_page",
         "page": 1,
-        "quote": "Transactions for SITE ID: 0001 LLano Airport"
+        "quote": "2024"
       }
     ],
     "metadata": {
@@ -53,22 +53,22 @@
   },
   {
     "qa_id": "qa_3",
-    "question": "What is the total cost for 25 transactions?",
-    "gold_answer": "3,309.04",
+    "question": "What organization issued the Federal Reserve Annual Report (doc_003)?",
+    "gold_answer": "BOARD OF GOVERNORS OF THE FEDERAL RESERVE SYSTEM",
     "answer_type": "short_text",
     "question_type": "ocr_extraction",
     "difficulty": "easy",
     "requires_cross_document": false,
     "document_count": 1,
     "source_document_ids": [
-      "doc_005_fueling_records_invoice"
+      "doc_003_fed_annual_report_2024"
     ],
     "gold_evidence": [
       {
-        "doc_id": "doc_005_fueling_records_invoice",
+        "doc_id": "doc_003_fed_annual_report_2024",
         "evidence_type": "ocr_page",
         "page": 1,
-        "quote": "Total for 25 transactions 711.62 3,309.04"
+        "quote": "BOARD OF GOVERNORS OF THE FEDERAL RESERVE SYSTEM"
       }
     ],
     "metadata": {
@@ -79,22 +79,22 @@
   },
   {
     "qa_id": "qa_4",
-    "question": "What is the total quantity for the 25 transactions?",
-    "gold_answer": "711.62",
+    "question": "According to the Federal Reserve Annual Report (doc_003), how many Federal Reserve Districts were created when the Federal Reserve System was established?",
+    "gold_answer": "12",
     "answer_type": "short_text",
     "question_type": "ocr_extraction",
-    "difficulty": "easy",
+    "difficulty": "medium",
     "requires_cross_document": false,
     "document_count": 1,
     "source_document_ids": [
-      "doc_005_fueling_records_invoice"
+      "doc_003_fed_annual_report_2024"
     ],
     "gold_evidence": [
       {
-        "doc_id": "doc_005_fueling_records_invoice",
+        "doc_id": "doc_003_fed_annual_report_2024",
         "evidence_type": "ocr_page",
-        "page": 1,
-        "quote": "Total for 25 transactions 711.62 3,309.04"
+        "page": 5,
+        "quote": "the United States was divided geographically into 12 Districts"
       }
     ],
     "metadata": {
@@ -105,22 +105,22 @@
   },
   {
     "qa_id": "qa_5",
-    "question": "What is the from date on the invoice?",
-    "gold_answer": "8/24/2012",
+    "question": "On what date was the Federal Reserve created according to the Federal Reserve Annual Report (doc_003)?",
+    "gold_answer": "December 23, 1913",
     "answer_type": "short_text",
     "question_type": "ocr_extraction",
-    "difficulty": "easy",
+    "difficulty": "medium",
     "requires_cross_document": false,
     "document_count": 1,
     "source_document_ids": [
-      "doc_005_fueling_records_invoice"
+      "doc_003_fed_annual_report_2024"
     ],
     "gold_evidence": [
       {
-        "doc_id": "doc_005_fueling_records_invoice",
+        "doc_id": "doc_003_fed_annual_report_2024",
         "evidence_type": "ocr_page",
-        "page": 1,
-        "quote": "From Date: 8/24/2012"
+        "page": 5,
+        "quote": "The Federal Reserve was created by an act of Congress on December 23, 1913"
       }
     ],
     "metadata": {

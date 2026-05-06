@@ -1,22 +1,22 @@
 [
   {
     "qa_id": "qa_1",
-    "question": "What is the title of the document?",
-    "gold_answer": "Appendix C \u2013 Terms and Conditions of Contract for Services",
+    "question": "In the NTSB fueling records invoice (doc_005), what is the site ID listed on the invoice?",
+    "gold_answer": "0001",
     "answer_type": "short_text",
     "question_type": "ocr_extraction",
     "difficulty": "easy",
     "requires_cross_document": false,
     "document_count": 1,
     "source_document_ids": [
-      "doc_002_services_contract_terms"
+      "doc_005_fueling_records_invoice"
     ],
     "gold_evidence": [
       {
-        "doc_id": "doc_002_services_contract_terms",
+        "doc_id": "doc_005_fueling_records_invoice",
         "evidence_type": "ocr_page",
         "page": 1,
-        "quote": "Appendix C \u2013 Terms and Conditions of Contract for Services"
+        "quote": "Transactions for SITE ID: 0001"
       }
     ],
     "metadata": {
@@ -27,22 +27,22 @@
   },
   {
     "qa_id": "qa_2",
-    "question": "Which agency is listed in the document header?",
-    "gold_answer": "Government Property Agency",
+    "question": "In the NTSB fueling records invoice (doc_005), what airport name is shown on the invoice?",
+    "gold_answer": "LLano Airport",
     "answer_type": "short_text",
     "question_type": "ocr_extraction",
     "difficulty": "easy",
     "requires_cross_document": false,
     "document_count": 1,
     "source_document_ids": [
-      "doc_002_services_contract_terms"
+      "doc_005_fueling_records_invoice"
     ],
     "gold_evidence": [
       {
-        "doc_id": "doc_002_services_contract_terms",
+        "doc_id": "doc_005_fueling_records_invoice",
         "evidence_type": "ocr_page",
         "page": 1,
-        "quote": "Government Property Agency"
+        "quote": "Transactions for SITE ID: 0001 LLano Airport"
       }
     ],
     "metadata": {
@@ -53,22 +53,22 @@
   },
   {
     "qa_id": "qa_3",
-    "question": "What is the version number of the document?",
-    "gold_answer": "V2.0",
+    "question": "In the NTSB fueling records invoice (doc_005), what is the total cost for 25 transactions?",
+    "gold_answer": "3,309.04",
     "answer_type": "short_text",
     "question_type": "ocr_extraction",
     "difficulty": "easy",
     "requires_cross_document": false,
     "document_count": 1,
     "source_document_ids": [
-      "doc_002_services_contract_terms"
+      "doc_005_fueling_records_invoice"
     ],
     "gold_evidence": [
       {
-        "doc_id": "doc_002_services_contract_terms",
+        "doc_id": "doc_005_fueling_records_invoice",
         "evidence_type": "ocr_page",
         "page": 1,
-        "quote": "V2.0 01/04/2018"
+        "quote": "Total for 25 transactions 711.62 3,309.04"
       }
     ],
     "metadata": {
@@ -79,22 +79,22 @@
   },
   {
     "qa_id": "qa_4",
-    "question": "What does \"FOIA\" stand for in the document?",
-    "gold_answer": "Freedom of Information Act 2000",
+    "question": "In the NTSB fueling records invoice (doc_005), what is the total quantity for the 25 transactions?",
+    "gold_answer": "711.62",
     "answer_type": "short_text",
     "question_type": "ocr_extraction",
-    "difficulty": "medium",
+    "difficulty": "easy",
     "requires_cross_document": false,
     "document_count": 1,
     "source_document_ids": [
-      "doc_002_services_contract_terms"
+      "doc_005_fueling_records_invoice"
     ],
     "gold_evidence": [
       {
-        "doc_id": "doc_002_services_contract_terms",
+        "doc_id": "doc_005_fueling_records_invoice",
         "evidence_type": "ocr_page",
         "page": 1,
-        "quote": "\u201cFOIA\u201d means the Freedom of Information Act 2000;"
+        "quote": "Total for 25 transactions 711.62 3,309.04"
       }
     ],
     "metadata": {
@@ -105,22 +105,22 @@
   },
   {
     "qa_id": "qa_5",
-    "question": "What law governs the agreement according to the document?",
-    "gold_answer": "English law",
+    "question": "In the NTSB fueling records invoice (doc_005), what is the from date on the invoice?",
+    "gold_answer": "8/24/2012",
     "answer_type": "short_text",
     "question_type": "ocr_extraction",
-    "difficulty": "medium",
+    "difficulty": "easy",
     "requires_cross_document": false,
     "document_count": 1,
     "source_document_ids": [
-      "doc_002_services_contract_terms"
+      "doc_005_fueling_records_invoice"
     ],
     "gold_evidence": [
       {
-        "doc_id": "doc_002_services_contract_terms",
+        "doc_id": "doc_005_fueling_records_invoice",
         "evidence_type": "ocr_page",
-        "page": 14,
-        "quote": "shall be governed by English law"
+        "page": 1,
+        "quote": "From Date: 8/24/2012"
       }
     ],
     "metadata": {

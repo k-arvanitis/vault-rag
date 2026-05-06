@@ -1,0 +1,50 @@
+[
+  {
+    "qa_id": "qa_1",
+    "question": "In the rosemont employee handbook (doc_010), what is the maximum time allowed to complete a harassment investigation?",
+    "gold_answer": "30 days",
+    "answer_type": "numeric",
+    "question_type": "numeric_lookup",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_010"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_010",
+        "quote": "will take no longer than thirty (30) days"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "table",
+      "requires_ocr": false,
+      "requires_table_reasoning": true
+    }
+  },
+  {
+    "qa_id": "qa_2",
+    "question": "Does the rosemont employee handbook (doc_010) allow retaliation against employees who report harassment?",
+    "gold_answer": "No",
+    "answer_type": "boolean",
+    "question_type": "negation_check",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_010"
+    ],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_010",
+        "quote": "will not tolerate retaliation against any employee"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "text",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  }
+]
