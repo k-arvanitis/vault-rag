@@ -536,6 +536,17 @@ vault-rag/
 
 ---
 
+## Known limitations
+
+- **Multi-hop cross-document recall** — questions that require evidence from two large documents (100+ pages each) sometimes fail because the cross-encoder reranker doesn't surface both chunks together in the top 10. Hit@10 is 92.5% for single-document questions; it drops for queries that need two separate passages from different files.
+- **No arithmetic** — the agent is explicitly instructed to refuse calculations. Numeric answers must be present verbatim in a chunk; the system will not sum or derive values. This is by design to avoid hallucinated arithmetic.
+- **Scanned PDFs require GPU** — LightOn OCR runs on a local vLLM server with CUDA. Born-digital PDFs, Excel, and CSV ingest on CPU only.
+- **Contextual summaries send chunk text to Groq** — at ingest time, each chunk is sent to `CHUNK_LLM_API_BASE` (OpenRouter by default) to generate a one-sentence context note. Air-gapped ingest requires pointing this at a local vLLM endpoint.
+- **Reranker cold-start** — the first query after a fresh container start takes ~30 s while the cross-encoder model weights download (~270 MB). The Dockerfile pre-downloads weights at build time; bare `uv run` does not.
+- **Single Qdrant collection** — all documents share one collection. There is no per-user or per-tenant isolation; this is a single-operator deployment model.
+
+---
+
 ## Failure modes
 
 | Component | What fails | Symptom | Fix |
