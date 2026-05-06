@@ -1,7 +1,5 @@
 import pytest
-import pandas as pd
 import json
-import os
 import openpyxl
 from src.preprocessing.excel_cleaner import process_file, heuristic_fallback, _parse_llm_json, find_data_end_row
 

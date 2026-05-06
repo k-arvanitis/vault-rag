@@ -106,7 +106,7 @@ class TestFixHtmlMultirowHeader:
         """The R@1 / R@5 / R@10 header row must not appear as a data row."""
         result = _fix_html_multirow_header(self._SAMPLE_HTML)
         assert result is not None
-        lines = [l for l in result.splitlines() if l.startswith("|")]
+        lines = [ln for ln in result.splitlines() if ln.startswith("|")]
         # Data rows should only contain numeric values or dataset names, not bare "R@1"
         data_rows = lines[2:]  # skip header and separator
         for row in data_rows:
