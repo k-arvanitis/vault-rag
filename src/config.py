@@ -44,7 +44,7 @@ CHUNK_LLM_API_KEY: str = os.getenv("CHUNK_LLM_API_KEY", os.getenv("OPENROUTER_AP
 OCR_API_BASE: str = os.getenv("OCR_API_BASE", "http://127.0.0.1:8002")
 OCR_MODEL: str = os.getenv("OCR_MODEL", "lightonocr-2-1b-ocr-soup")
 
-RERANKER_MODEL: str = os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
+RERANKER_MODEL: str = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
 RERANKER_DEVICE: str = os.getenv("RERANKER_DEVICE", "cpu")
 EMBED_DEVICE: str = os.getenv("EMBED_DEVICE", "cpu")
 
@@ -91,9 +91,9 @@ VLM_PROVIDER: str = os.getenv("VLM_PROVIDER", "groq")
 VLM_MODEL: str = os.getenv("VLM_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
 
 # ---------------------------------------------------------------------------
-# Excel direct-query tool (temporary, pre-Postgres path)
+# Excel → DuckDB structured query store
 # ---------------------------------------------------------------------------
-EXCEL_CACHE_DIR: str = os.getenv("EXCEL_CACHE_DIR", ".excel_cache")
+DUCKDB_PATH: str = os.getenv("DUCKDB_PATH", ".duckdb/excel_store.duckdb")
 # Comma-separated list of Excel file paths to load at agent startup
 EXCEL_FILES: list[str] = [
     p.strip() for p in os.getenv("EXCEL_FILES", "").split(",") if p.strip()

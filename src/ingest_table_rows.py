@@ -461,9 +461,9 @@ def _build_file_document_summary(
     """
     if not sheet_summaries:
         return
-    combined = f"## Document Summary\n\nFile: {file_name}\n\n" + "\n\n".join(sheet_summaries)
     parts = file_name.split("_")
     doc_id = f"{parts[0]}_{parts[1]}" if len(parts) >= 2 else parts[0]
+    combined = f"## Document Summary\n\nDocument ID: {doc_id}\nFile: {file_name}\n\n" + "\n\n".join(sheet_summaries)
     vec = _embed(combined)
     point_id = _point_id(file_name, "__summary__", "document_summary")
     point = {
@@ -498,11 +498,13 @@ def ingest_table_rows(
     collection: str = "documents_chunks",
     batch_size: int = 50,
     verbose: bool = True,
+    index_content_chunks: bool = True,
 ) -> Path:
-    """Ingest all sheets from an Excel/CSV file as row-text chunks into Qdrant.
+    """Ingest all sheets from an Excel/CSV file into Qdrant.
 
-    Metadata (country, year, report name, etc.) is auto-extracted from the
-    pre-header title rows in each sheet — no manual input needed.
+    When index_content_chunks=True (default), upserts sheet_table and sheet_row chunks
+    in addition to the document_summary. Set to False when using DuckDB for structured
+    queries — only the document_summary is needed for semantic discovery.
 
     Also saves all chunks to data/output/chunks/<stem>_table_chunks.json.
     Returns the path to that file.
@@ -574,16 +576,7 @@ def ingest_table_rows(
         for w in coarse_windows:
             row_windows.extend(_split_window(w))
 
-        try:
-            from src.sparse_embedder import get_sparse_embedder
-            sparse_embedder = get_sparse_embedder()
-        except Exception as e:
-            print(f"  [WARNING] Sparse embedder failed to load: {e}. Storing dense vectors only.")
-            sparse_embedder = None
-
-        _ensure_collection_done = False
-        points: list[dict[str, Any]] = []
-        # Save full sheet as markdown before chunking
+        # Save full sheet as markdown (always — useful for reference regardless of index mode)
         full_sheet_md = sheet_to_chunk(file_name, sheet_name, qualified_headers, data_rows, sheet_title, subheader_rows=subheader_rows)
         md_out_dir = REPO_ROOT / "data" / "output" / "table_markdowns"
         md_out_dir.mkdir(parents=True, exist_ok=True)
@@ -591,94 +584,107 @@ def ingest_table_rows(
         md_out_path = md_out_dir / f"{Path(file_path).stem}__{safe_sheet}.md"
         md_out_path.write_text(full_sheet_md, encoding="utf-8")
 
-        for part_idx, window in enumerate(row_windows):
-            chunk_text = sheet_to_chunk(file_name, sheet_name, qualified_headers, window, sheet_title, subheader_rows=subheader_rows)
-
-            all_chunks.append({
-                "content": chunk_text,
-                "metadata": {
-                    "source_file": file_name,
-                    "sheet_name": sheet_name,
-                    "sheet_title": sheet_title,
-                    "chunk_type": "sheet_table",
-                    "part": part_idx,
-                    "num_rows": len(window),
-                },
-            })
-
-            try:
-                vector_field = _build_vector_field(chunk_text, sparse_embedder)
-            except Exception as e:
-                print(f"  [WARNING] Sparse embedding failed for part {part_idx}: {e}. Using dense only.")
-                vector_field = _embed(chunk_text)
-            if not _ensure_collection_done:
-                vec_size = len(vector_field[""]) if isinstance(vector_field, dict) else len(vector_field)
-                _ensure_collection(collection, vec_size)
-                _ensure_collection_done = True
-            points.append(_build_table_point(
-                file_name=file_name,
-                sheet_name=sheet_name,
-                chunk_text=chunk_text,
-                chunk_type="sheet_table",
-                part_idx=part_idx,
-                num_rows=len(window),
-                vector_field=vector_field,
-            ))
-
-        # Collect all row texts then batch-embed in one shot
+        _ensure_collection_done = False
+        points: list[dict[str, Any]] = []
         row_chunk_count = 0
-        row_items: list[tuple[int, str]] = []
-        for row_idx, row in enumerate(data_rows):
-            if _should_skip_data_row(row):
-                continue
-            chunk_text = row_to_chunk(file_name, sheet_name, qualified_headers, row, sheet_title)
-            all_chunks.append({
-                "content": chunk_text,
-                "metadata": {
-                    "source_file": file_name,
-                    "sheet_name": sheet_name,
-                    "sheet_title": sheet_title,
-                    "chunk_type": "sheet_row",
-                    "part": row_idx,
-                    "num_rows": 1,
-                },
-            })
-            row_items.append((row_idx, chunk_text))
+        n_parts = 0
 
-        row_texts = [t for _, t in row_items]
-        row_vecs = _embed_batch(row_texts) if row_texts else []
+        if index_content_chunks:
+            try:
+                from src.sparse_embedder import get_sparse_embedder
+                sparse_embedder = get_sparse_embedder()
+            except Exception as e:
+                print(f"  [WARNING] Sparse embedder failed to load: {e}. Storing dense vectors only.")
+                sparse_embedder = None
 
-        for (row_idx, chunk_text), vec in zip(row_items, row_vecs):
-            if sparse_embedder is not None:
+            for part_idx, window in enumerate(row_windows):
+                chunk_text = sheet_to_chunk(file_name, sheet_name, qualified_headers, window, sheet_title, subheader_rows=subheader_rows)
+                all_chunks.append({
+                    "content": chunk_text,
+                    "metadata": {
+                        "source_file": file_name,
+                        "sheet_name": sheet_name,
+                        "sheet_title": sheet_title,
+                        "chunk_type": "sheet_table",
+                        "part": part_idx,
+                        "num_rows": len(window),
+                    },
+                })
                 try:
-                    indices, values = sparse_embedder.embed(chunk_text)
-                    vector_field: Any = {"": vec, "sparse": {"indices": indices, "values": values}}
+                    vector_field = _build_vector_field(chunk_text, sparse_embedder)
                 except Exception as e:
-                    print(f"  [WARNING] Sparse embedding failed for row {row_idx}: {e}. Using dense only.")
+                    print(f"  [WARNING] Sparse embedding failed for part {part_idx}: {e}. Using dense only.")
+                    vector_field = _embed(chunk_text)
+                if not _ensure_collection_done:
+                    vec_size = len(vector_field[""]) if isinstance(vector_field, dict) else len(vector_field)
+                    _ensure_collection(collection, vec_size)
+                    _ensure_collection_done = True
+                points.append(_build_table_point(
+                    file_name=file_name,
+                    sheet_name=sheet_name,
+                    chunk_text=chunk_text,
+                    chunk_type="sheet_table",
+                    part_idx=part_idx,
+                    num_rows=len(window),
+                    vector_field=vector_field,
+                ))
+            n_parts = len(row_windows)
+
+            # Collect all row texts then batch-embed in one shot
+            row_items: list[tuple[int, str]] = []
+            for row_idx, row in enumerate(data_rows):
+                if _should_skip_data_row(row):
+                    continue
+                chunk_text = row_to_chunk(file_name, sheet_name, qualified_headers, row, sheet_title)
+                all_chunks.append({
+                    "content": chunk_text,
+                    "metadata": {
+                        "source_file": file_name,
+                        "sheet_name": sheet_name,
+                        "sheet_title": sheet_title,
+                        "chunk_type": "sheet_row",
+                        "part": row_idx,
+                        "num_rows": 1,
+                    },
+                })
+                row_items.append((row_idx, chunk_text))
+
+            row_texts = [t for _, t in row_items]
+            row_vecs = _embed_batch(row_texts) if row_texts else []
+
+            for (row_idx, chunk_text), vec in zip(row_items, row_vecs):
+                if sparse_embedder is not None:
+                    try:
+                        indices, values = sparse_embedder.embed(chunk_text)
+                        vector_field: Any = {"": vec, "sparse": {"indices": indices, "values": values}}
+                    except Exception as e:
+                        print(f"  [WARNING] Sparse embedding failed for row {row_idx}: {e}. Using dense only.")
+                        vector_field = vec
+                else:
                     vector_field = vec
-            else:
-                vector_field = vec
-            if not _ensure_collection_done:
-                vec_size = len(vector_field[""]) if isinstance(vector_field, dict) else len(vector_field)
-                _ensure_collection(collection, vec_size)
-                _ensure_collection_done = True
-            points.append(_build_table_point(
-                file_name=file_name,
-                sheet_name=sheet_name,
-                chunk_text=chunk_text,
-                chunk_type="sheet_row",
-                part_idx=row_idx,
-                num_rows=1,
-                vector_field=vector_field,
-            ))
-            row_chunk_count += 1
+                if not _ensure_collection_done:
+                    vec_size = len(vector_field[""]) if isinstance(vector_field, dict) else len(vector_field)
+                    _ensure_collection(collection, vec_size)
+                    _ensure_collection_done = True
+                points.append(_build_table_point(
+                    file_name=file_name,
+                    sheet_name=sheet_name,
+                    chunk_text=chunk_text,
+                    chunk_type="sheet_row",
+                    part_idx=row_idx,
+                    num_rows=1,
+                    vector_field=vector_field,
+                ))
+                row_chunk_count += 1
 
         if points:
             _upsert(collection, points)
 
-        n_parts = len(row_windows)
         if verbose:
-            print(f"    → {n_parts} table chunk(s) + {row_chunk_count} row chunk(s) upserted ({len(data_rows)} rows)")
+            if index_content_chunks:
+                print(f"    → {n_parts} table chunk(s) + {row_chunk_count} row chunk(s) upserted ({len(data_rows)} rows)")
+            else:
+                print("    → skipped sheet_table/sheet_row (DuckDB mode). Markdown saved.")
 
     _build_file_document_summary(file_name, sheet_summary_texts, collection)
     if verbose:
@@ -698,8 +704,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Ingest table rows as text chunks into Qdrant.")
     parser.add_argument("file_path", help="Path to .xlsx or .csv file")
     parser.add_argument("--collection", default="documents_chunks")
+    parser.add_argument(
+        "--only-summary",
+        action="store_true",
+        help="Only upsert the document_summary point (use when DuckDB handles structured queries).",
+    )
     args = parser.parse_args()
-    ingest_table_rows(args.file_path, collection=args.collection)
+    ingest_table_rows(
+        args.file_path,
+        collection=args.collection,
+        index_content_chunks=not args.only_summary,
+    )
 
 
 if __name__ == "__main__":
