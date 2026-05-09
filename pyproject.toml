@@ -29,6 +29,7 @@ dependencies = [
   "accelerate>=0.30.0",
   # Observability
   "langfuse>=2.0.0,<3.0.0",
+  "langsmith>=0.1.0",
   # UI
   "streamlit>=1.35.0",
   # Env
@@ -44,6 +45,9 @@ dependencies = [
   "datasets>=4.8.4",
   "deepeval>=3.9.7",
   "duckdb>=1.5.2",
+  "fastapi>=0.136.1",
+  "uvicorn>=0.46.0",
+  "python-multipart>=0.0.27",
 ]
 
 [dependency-groups]

@@ -3,7 +3,7 @@ include .env
 export
 endif
 
-.PHONY: up docker-up docker-up-gpu docker-down app slack docker-slack-build docker-slack-up litellm seed eval eval-cross test lint
+.PHONY: up docker-up docker-up-gpu docker-down app api slack docker-slack-build docker-slack-up litellm seed eval eval-cross test lint
 
 # Full stack in Docker (Qdrant + LiteLLM + Ollama + Streamlit app)
 docker-up:
@@ -22,6 +22,9 @@ up:
 
 app:
 	uv run streamlit run app.py
+
+api:
+	uv run uvicorn api:app --host 0.0.0.0 --port 8001 --reload
 
 slack:
 	uv run python slack_app.py
