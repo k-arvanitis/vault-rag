@@ -9,9 +9,9 @@
 
 Production-minded document intelligence for heterogeneous business document collections. Vault RAG handles the hard case most portfolio demos avoid: mixed formats (PDFs, scanned pages, spreadsheets, figures), mixed quality, and mixed retrieval needs — all queried through one retrieval stack via an operator console and a Slack delivery surface.
 
-**Latest benchmark:** 82 questions over 14 real mixed-format public documents — **84.6% agent correctness**, **86.7% faithfulness** (answers grounded in retrieved text), **90.5% structured (DuckDB) accuracy**, **87.5% unanswerable refusal rate**.
+**Latest benchmark:** 82 questions over 14 real mixed-format public documents — **76.8% agent correctness**, **75.7% faithfulness** (answers grounded in retrieved text), **71.4% structured (DuckDB) accuracy**, **75% unanswerable refusal rate**, **100% evidence hit@10**. No eval-set-specific shortcuts — every answer comes from the model and tool outputs.
 
-Key engineering bets: per-page PDF routing (born-digital → pymupdf4llm, scanned → LightOn OCR), contextual retrieval (one-sentence summaries prepended before embedding), hybrid dense+sparse search with RRF fusion, cross-encoder reranking, and a LangGraph ReAct agent that can issue multiple searches before answering.
+Key engineering bets: per-page PDF routing (born-digital → pymupdf4llm, scanned → LightOn OCR), contextual retrieval (one-sentence summaries prepended before embedding), hybrid dense+sparse search with RRF fusion, cross-encoder reranking, and a multi-graph LangGraph agentic pipeline — a plan-first decomposition graph for multi-hop questions, a reflection graph for automatic retry on failure, and a dedicated Excel sub-graph that decomposes cross-document spreadsheet questions, fans out per source via the `Send` API, and runs a SQL ReAct loop per part with retries on column errors and empty results.
 
 ---
 
@@ -69,7 +69,7 @@ Starts four services: Qdrant, LiteLLM proxy (Groq primary → OpenRouter fallbac
 make docker-up-gpu   # adds LightOn OCR vLLM container — requires CUDA 12+ and NVIDIA runtime
 ```
 
-> **Image size:** the `app` image is ~5 GB due to PyTorch CUDA libraries. Normal for ML workloads — the reranker runs on CPU regardless.
+> **Image size:** the `app` image is ~5 GB due to PyTorch CUDA libraries. Normal for ML workloads. Set `RERANKER_DEVICE=cuda` in `.env` to run the cross-encoder on GPU (requires NVIDIA runtime) — significantly reduces per-query latency.
 
 ---
 
@@ -190,86 +190,78 @@ What is the salary of the CEO of Doncaster School Solutions?
 
 
  ╔══════════════════════════════════════════════════════════════════════════════╗
- ║  QUERY PIPELINE                                                              ║
+ ║  QUERY PIPELINE — multi-graph LangGraph agentic architecture                 ║
  ╚══════════════════════════════════════════════════════════════════════════════╝
 
   User question
        │
        ▼
-  ┌────────────────────────────────────────────────────────────────────────────┐
-  │  src/rag_agent.py — build_rag_agent() + ask_agent() / stream_agent()       │
-  │  LangGraph ReAct loop (create_react_agent)                                 │
-  │  LLM: GENERATION_MODEL via GENERATION_API_BASE (LiteLLM proxy → Groq)     │
-  │  _build_doc_registry(): scrolls Qdrant document_summary chunks →           │
-  │    builds {filename_stem: doc_id} map for fuzzy title → doc_id resolution  │
-  └────────────────────────────────────────────────────────────────────────────┘
-       │                                │
-       │ doc NOT in DuckDB table list   │ doc IS in DuckDB table list
-       │ (PDFs, Qdrant-only docs)       │ (EXCEL_FILES: doc_006,007,014)
-       ▼                                ▼
-  ┌──────────────────────┐    ┌─────────────────────────────┐
-  │  search_knowledge_   │    │  query_excel tool           │
-  │  base tool           │    │  src/excel_tool.py          │
-  │  src/rag_agent.py    │    │  Agent writes SQL SELECT    │
-  │  _make_unified_tool()│    │  DuckDB executes against    │
-  └──────────┬───────────┘    │  cleaned sheet tables       │
-             │                └─────────────────────────────┘
-             ▼
-  ┌──────────────────────────────────────────────────────────┐
-  │  HyDE  (src/rag_agent.py  _hyde())                       │
-  │  LLM generates 2-3 sentence hypothetical answer          │
-  │  → embed hypothetical instead of raw query               │
-  │  Both raw + HyDE hit sets are merged (dedup by chunk key)│
-  └──────────────────────┬───────────────────────────────────┘
-                         │
-                         ▼
-  ┌──────────────────────────────────────────────────────────┐
-  │  src/retriever.py — retrieve()                           │
-  │                                                          │
-  │  1. infer_query_chunk_types() — keyword routing:         │
-  │     "row/sheet/xlsx/table/amount/supplier…" terms        │
-  │     → include pdf_table_rows + sheet_row chunks          │
-  │     everything else → page_content + pdf_table_rows      │
-  │                                                          │
-  │  2. Qdrant hybrid search:                                │
-  │     dense vector (nomic-embed) + sparse (BM25)           │
-  │     fused with RRF (Reciprocal Rank Fusion)              │
-  │     top_k = RETRIEVAL_TOP_K = 100 candidates             │
-  │     optional: scope_doc_id filter, filter_token match    │
-  └──────────────────────┬───────────────────────────────────┘
-                         │ 100 candidates
-                         ▼
-  ┌──────────────────────────────────────────────────────────┐
-  │  src/reranker.py — BGEReranker.rerank()                  │
-  │  Model: RERANKER_MODEL = BAAI/bge-reranker-v2-m3         │
-  │  Architecture: AutoModelForSequenceClassification        │
-  │  (cross-encoder — query+chunk scored together)           │
-  │  Input: pairs of [query, chunk_text]                     │
-  │  Output: logit scores → sorted top RERANK_TOP_N = 10     │
-  └──────────────────────┬───────────────────────────────────┘
-                         │ top-10 reranked chunks
-                         ▼
-  ┌──────────────────────────────────────────────────────────┐
-  │  Context formatting  (src/rag_agent.py _best_snippet())  │
-  │  Chunks truncated to MAX_CHUNK_CHARS=1500                │
-  │  Tables truncated to MAX_TABLE_CHARS=3000                │
-  │  Table rows reformatted as "Field: Value" key-value      │
-  │  Each chunk prefixed: [N] file=<name> chunk=<idx>        │
-  └──────────────────────┬───────────────────────────────────┘
-                         │
-                         ▼
-  ┌──────────────────────────────────────────────────────────┐
-  │  Generation LLM  (GENERATION_API_BASE → LiteLLM → Groq)  │
-  │  Model: GENERATION_MODEL (default: qwen3-32b)            │
-  │  Synthesises cited answer from retrieved chunks          │
-  │  Post-processing:                                        │
-  │  → _normalize_unsupported(): hedging → "Unsupported"     │
-  │  → _repair_deterministic_numeric_answer(): regex fixes   │
-  │  → _repair_incomplete_answer(): coverage check + retry   │
-  └──────────────────────────────────────────────────────────┘
-                         │
-                         ▼
-                   Cited answer
+  ┌─────────────────────────────────────────────────────────────────────────────┐
+  │  GRAPH 1 — Decomposition  src/pipeline.py — build_decomposition_pipeline()  │
+  │                                                                             │
+  │  decompose node: LLM analyses question complexity                           │
+  │    single-hop  → passes question through unchanged                          │
+  │    multi-hop   → splits into 2–4 focused sub-questions, formats             │
+  │                  as numbered plan ("work through each in order")            │
+  │                                                                             │
+  │  run node: sends (possibly plan-formatted) question to Graph 2              │
+  └──────────────────────────┬──────────────────────────────────────────────────┘
+                             │ plain or plan-formatted question
+                             ▼
+  ┌─────────────────────────────────────────────────────────────────────────────┐
+  │  GRAPH 2 — ReAct Agent  src/rag_agent.py — build_rag_agent()                │
+  │  LLM: GENERATION_MODEL via GENERATION_API_BASE (default: Groq qwen3-32b)    │
+  │                                                                             │
+  │  Startup: doc registry built from Qdrant document_summary chunks →          │
+  │    {filename_stem: doc_id} for fuzzy title → doc_id resolution              │
+  │                                                                             │
+  │  ReAct loop — tool calls per sub-question or step:                          │
+  │    search_knowledge_base → PDF / Qdrant retrieval tool                      │
+  │    query_excel           → Excel / DuckDB SQL sub-graph (Graph 4)           │
+  └──────────────────────┬──────────────────────────────────────────────────────┘
+                         │ routed by question type
+          ┌──────────────┴──────────────────────────┐
+          │ PDF / Qdrant docs                       │ Excel / CSV (DuckDB)
+          ▼                                         ▼
+  ┌───────────────────────────────┐   ┌────────────────────────────────────────┐
+  │  search_knowledge_base tool   │   │  GRAPH 4 — Excel agent                 │
+  │                               │   │  src/excel_agent.py                    │
+  │  Step 1 — doc discovery:      │   │                                        │
+  │  embed query → search only    │   │  outer: decompose → Send fan-out →     │
+  │  document_summary chunks →    │   │           inner_sql ×N → synthesize    │
+  │  resolve title → doc_id       │   │                                        │
+  │                               │   │  decompose: split cross-doc questions  │
+  │  Step 2 — chunk retrieval:    │   │    into one subquestion per source     │
+  │  Parallel via LangGraph Send  │   │  Send: parallel inner_sql per part     │
+  │  scope filter = OR across     │   │  synthesize: combine per-part answers  │
+  │    doc_id / source_file /     │   │                                        │
+  │    file_name fields           │   │  inner_sql (per subquestion):          │
+  │  → hybrid Qdrant search       │   │    select_table → inspect → write_sql  │
+  │    (dense + sparse → RRF)     │   │    → run_sql → evaluate                │
+  │  + HyDE query expansion       │   │      ↑              │                  │
+  │  → BGE cross-encoder rerank   │   │      └─ retry on column-error          │
+  │    top-100 → top-10           │   │      → next-table on empty/NaN         │
+  └──────────────┬────────────────┘   │                                        │
+                 │ cited answer       │  Tables ranked by column-name overlap  │
+                 ▼                    │  with the question, plus DuckDB-side   │
+                                      │  ILIKE truncation retry for fuzzy      │
+  ┌─────────────────────────────────┐ │  supplier/beneficiary names.           │
+  │  GRAPH 3 — Reflection           │ └────────────────────────────────────────┘
+  │  src/pipeline.py                │
+  │                                 │
+  │  reflect node: answer == "Unsupported"?                                    │
+  │    no  → END, return answer                                                │
+  │    yes → retry hint appended → re-invoke Graph 2 (max 1 retry)             │
+  └─────────────────────────────────────────────────────────────────────────────┘
+                             │
+                             ▼
+                       Cited answer
+
+  SUPERVISOR (optional)  src/pipeline.py — build_supervisor_pipeline()
+  Classifies question as pdf / excel / mixed, then:
+    pdf   → single Graph 2 call
+    excel → single Graph 2 call (Excel tools only)
+    mixed → parallel Send fan-out: one PDF branch + one Excel branch → synthesise
 ```
 
 ---
@@ -315,6 +307,25 @@ Every Qdrant point is assigned a SHA-1 hash of `(file_name, chunk_index)` rather
 
 The agent first generates a *hypothetical answer* using a fast LLM call and embeds that instead of the raw question. The embedded hypothetical is semantically much closer to real document text, improving recall for vague queries like "what were the sales figures" where the question shares few tokens with the answer.
 
+### Sheet-summary chunks with ingest-time sample values
+
+Finding the right spreadsheet sheet is a two-step problem. Step one is *discovery*: which of the 100+ indexed sheets actually contains the data the user is asking about? Step two is *retrieval*: run a SQL query against that specific DuckDB table.
+
+Discovery fails when the query contains entity names — supplier names, beneficiary names, project codes — that do not appear in the sheet's column headers. A user asks *"what did WATES PROPERTY SERVICES LTD receive in April?"* but the doc_007 sheet_summary only contains column names like `Beneficiary, Total, Transaction Number`. The embedding of the query is semantically close to any spend-report-shaped sheet, not specifically to the one that contains WATES rows.
+
+The fix mirrors the logic behind HyDE, but applied at ingest time instead of query time: each `sheet_summary` chunk is enriched with up to 5 real sample values per column, drawn directly from the data:
+
+```
+[File: doc_007_published_spend_report_april_25.csv | Sheet: ...]
+Sheet summary: 240 rows.
+Columns: Date, Transaction Number, Directorate, Local Authority Dept, Merchant Category, Beneficiary, Total
+Sample values — Directorate: PLACE, CHILDREN YOUNG PEOPLE & FAMILIES | Local Authority Dept: STRATEGIC HOUSING, LEGAL SERVICES | Beneficiary: WATES PROPERTY SERVICES LTD, THORNE MOORENDS TOWN COUNCIL, DONCASTER SCHOOL SOLUTIONS LIMITED | Merchant Category: COUNCIL DWELLINGS, STRATEGIC HOUSING
+```
+
+The vector for this chunk now encodes both the *structure* (column names) and the *content* (actual entities). A query for "WATES PROPERTY SERVICES" lands near the doc_007 chunk because WATES is literally in the embedding, not because the model inferred that "beneficiary" and "property services company" might be related.
+
+This is domain-agnostic: the same code works for spend reports, HR datasets, scientific measurements, or inventory tables — whichever columns contain non-numeric text values, their samples are included. No configuration or domain-specific tuning required.
+
 ### Dual-modality retrieval: vector search + DuckDB SQL
 
 Vector search works well for prose, policies, and narrative reports — the kind of content where semantic similarity reliably surfaces the right passage. It breaks down for spreadsheet data.
@@ -349,7 +360,11 @@ When the LLM returns a `400 Bad Request` due to token overflow, the agent retrie
 | Vector database | Qdrant | Dense + sparse retrieval in one system with simple local Docker deployment |
 | Reranker | BAAI/bge-reranker-v2-m3 | Cross-encoder: scores query and chunk *together* in one forward pass, so it models their interaction directly. A bi-encoder scores them independently then compares embeddings — sharply less accurate when the relevance signal lives in the relationship between question and passage, not either alone. bge-reranker-v2-m3 is multilingual and trained on diverse document types vs the English-only MS MARCO corpus of smaller alternatives |
 | Generation | qwen3-32b (Groq) | Strong answer synthesis and multi-step reasoning without a local high-end GPU |
-| Agent | LangGraph (ReAct) | Iterative retrieval and query reformulation when a single retrieve-then-generate pass is insufficient |
+| Decomposition graph | LangGraph StateGraph | Plan-first node splits multi-hop questions into sub-questions before retrieval; single-hop questions bypass it with zero overhead |
+| Reflection graph | LangGraph StateGraph | Wraps the ReAct agent; if it returns "Unsupported", retries once with relaxed filters — recovers from over-scoped retrieval without blind retry |
+| Supervisor graph | LangGraph StateGraph | Classifies question as pdf / excel / mixed, routes to specialised agent branches, fans out in parallel via Send API for cross-modality questions |
+| ReAct agent | LangGraph ReAct (create_react_agent) | Outer agent: tool-calling loop over search_knowledge_base and query_excel, with HyDE expansion and parallel cross-doc retrieval via Send API |
+| Excel sub-graph | LangGraph StateGraph + nested ReAct | Decomposes cross-document spreadsheet questions per source via the Send API, runs an inner SQL ReAct loop per part (select_table → inspect → write_sql → run_sql → evaluate) with retries on column errors and next-table fallback on empty results; outer agent never needs table names |
 | UI | Streamlit | Python-native — faster to build and inspect than a custom frontend for an operator-heavy workflow |
 | Observability | Langfuse | End-to-end traces make it possible to inspect prompts, tool calls, retrieved chunks, and token usage |
 
@@ -397,41 +412,42 @@ All 14 documents are publicly available. `make seed` automatically downloads and
 
 | Metric | Score | Notes |
 |---|---:|---|
-| Correctness | **84.6%** | LLM judge + exact-match short-circuit |
-| Faithfulness | **86.7%** | Answer claims grounded in retrieved text |
-| Answer relevancy | **87.8%** | Answer directly addresses the question |
+| Correctness | **76.8%** | LLM judge + exact-match short-circuit |
+| Faithfulness | **75.7%** | Answer claims grounded in retrieved text |
+| Answer relevancy | **86.5%** | Answer directly addresses the question |
 
 **Vector retrieval metrics** (53 PDF/OCR questions, Qdrant)
 
 | Metric | Score |
 |---|---:|
-| Hit@5 | **84.9%** |
-| Hit@10 | **92.5%** |
-| MRR | **62.3%** |
-| Evidence recall@10 | **87.1%** |
+| Hit@5 | **100%** |
+| Hit@10 | **100%** |
+| MRR | **89.0%** |
+| Evidence recall@10 | **96.5%** |
 
-Hit@10 at 92.5% means the correct evidence chunk lands in the top 10 candidates for nearly every answerable PDF question — with no domain-specific fine-tuning, purely from hybrid dense+sparse retrieval and contextual chunk summaries. The gap between MRR (62.3%) and Hit@10 (92.5%) reflects cross-document and multi-hop questions where relevant evidence is split across chunks; the cross-encoder reranker recovers most of it by position 10.
+Hit@5 and Hit@10 both at 100% — the correct evidence chunk lands in the top 5 (and 10) candidates for every answerable PDF question, with no domain-specific fine-tuning. The OR-scoped doc_id filter (matching `metadata.doc_id`, `metadata.source_file`, and `metadata.file_name`) ensures scoped searches return full document coverage even for older ingestions that only set `source_file`.
 
 **Structured retrieval** (21 Excel/CSV questions, DuckDB)
 
 | Metric | Score |
 |---|---:|
-| Answer accuracy | **90.5%** |
+| Answer accuracy | **71.4%** |
 
-Excel and CSV questions bypass Qdrant entirely. The agent detects that the target document is loaded in DuckDB and writes a SQL SELECT; the result is returned directly. Measuring these against vector hit rate would be a category error — a structured lookup that returns the exact row has 100% retrieval success by definition.
+Excel and CSV questions bypass Qdrant entirely. The Excel sub-graph decomposes cross-document questions per source, fans out one inner SQL ReAct loop per part via the LangGraph `Send` API, and synthesises the per-part answers. Each inner loop ranks candidate tables by column-name overlap with the question, then writes / runs / evaluates SQL with retries on column errors and a next-table fallback on empty results.
 
 **Unanswerable questions** (8 questions)
 
 | Metric | Score |
 |---|---:|
-| Correct refusal rate | **87.5%** |
+| Correct refusal rate | **75%** |
 
-Questions that cannot be answered from the indexed corpus. The agent is instructed to return the single word `Unsupported` — no hedging, no hallucination. One question received a valid natural-language refusal instead of the bare token, which the exact-match evaluator scores as a miss; semantically the behaviour was correct.
+Questions that cannot be answered from the indexed corpus. The agent is instructed to return the single word `Unsupported` — no hedging, no hallucination. The two misses are over-eager answers grounded in retrieved text that *resembles* the question (e.g. a filename that mentions the requested entity), which the exact-match evaluator scores as wrong.
 
 ### Methodology notes
 
-- **Faithfulness exceeds correctness.** 86.7% faithfulness vs 84.6% correctness means that when the system gives a wrong answer, the mistake is almost always a retrieval miss (the right chunk was not found) rather than a hallucination over retrieved text. This is the failure mode you want in a production RAG system — missed recall is recoverable by improving retrieval; hallucination is not.
-- **Correctness ceiling.** The remaining ~15% failures split into three categories: (1) multi-hop cross-document questions where evidence is split across 100+ page documents and the reranker doesn't surface both chunks together; (2) questions that require arithmetic the agent is explicitly instructed to refuse (by design — a RAG system should not invent calculations); (3) LLM non-determinism on a small number of numeric lookups where the correct row is retrieved but the wrong value is extracted.
+- **No eval-set-specific shortcuts.** The pipeline contains zero hardcoded extractors, regex patches, or query rewrites tied to specific benchmark questions. An earlier iteration shipped ~290 lines of such code and scored ~3 points higher; the current numbers represent the genuine generalising behaviour of the agent and tools.
+- **Faithfulness ≈ correctness.** Once the eval-set extractors were removed, faithfulness and correctness converged: when the system answers, its answer is grounded in retrieved text; when retrieval misses, the agent abstains rather than hallucinating.
+- **Correctness ceiling.** The remaining ~23% failures split into: (1) cross-document spreadsheet questions where an entity name has special characters (`*`, `&`, ampersand-collapsed text) that defeat ILIKE matching; (2) LLM column-disambiguation errors (e.g. answering from "Directorate" when the gold value is in "Department"); (3) a small number of OCR variances on scanned PDFs.
 - **Retrieval metrics are split by modality.** PDF questions are measured by Qdrant vector hit rate. Excel/CSV questions are measured by DuckDB answer accuracy. Mixing them would penalise the SQL path for never appearing in Qdrant results.
 - **Unanswerable questions are excluded from retrieval and faithfulness metrics.** A correct refusal makes no factual claim and retrieves no context — scoring faithfulness against empty evidence would be meaningless.
 
@@ -473,7 +489,7 @@ Create a Slack app with Socket Mode, add the `app_mention` and `message.im` even
 
 ## Tests
 
-126 tests, all mocked — no live services required to run CI.
+147 tests, all mocked — no live services required to run CI.
 
 | File | Tests | What's covered |
 |---|---|---|
@@ -482,6 +498,7 @@ Create a Slack app with Socket Mode, add the `app_mention` and `message.im` even
 | `test_retriever.py` | 17 | Cosine similarity, text filter, dense and hybrid Qdrant paths |
 | `test_reranker.py` | 10 | BGEReranker and QwenReranker: output format, sort order, score ranges |
 | `test_rag_agent.py` | 52 | History injection, token streaming, `<think>` suppression, cross-document repair |
+| `test_pipeline.py` | 21 | Reflection retry logic, decomposition plan formatting, supervisor routing, LLM failure fallbacks |
 | `test_table_repair.py` | 13 | Two-row HTML headers, LaTeX column derivation, missing-column recovery |
 | `test_pdf_parser.py` | 6 | Per-page routing, VLM enable/disable, exception handling |
 | `test_excel_cleaner.py` | 4 | Sheet filtering, row-value skipping, no-data token handling |
@@ -510,9 +527,11 @@ vault-rag/
 │   ├── retriever.py           # Hybrid search, HyDE, RRF fusion
 │   ├── reranker.py            # Cross-encoder reranker
 │   ├── table_processor.py     # Three-pass deterministic table repair
-│   ├── rag_agent.py           # LangGraph ReAct agent + streaming
+│   ├── rag_agent.py           # LangGraph ReAct agent — core retrieval + tool wiring
+│   ├── pipeline.py            # Three LangGraph StateGraphs: decomposition, reflection, supervisor
+│   ├── excel_agent.py         # LangGraph Excel sub-graph (decompose → fan-out → inner SQL ReAct → synthesize)
 │   ├── vector_store.py        # Qdrant upsert / scroll helpers
-│   ├── excel_tool.py          # Agent tool for structured Excel queries
+│   ├── excel_tool.py          # DuckDBStore + tool wiring for structured Excel queries
 │   ├── parser/
 │   │   ├── pdf_parser.py      # Per-page router (born-digital vs scanned)
 │   │   └── lightonocr_parser.py
@@ -538,7 +557,7 @@ vault-rag/
 
 ## Known limitations
 
-- **Multi-hop cross-document recall** — questions that require evidence from two large documents (100+ pages each) sometimes fail because the cross-encoder reranker doesn't surface both chunks together in the top 10. Hit@10 is 92.5% for single-document questions; it drops for queries that need two separate passages from different files.
+- **Multi-hop cross-document recall** — complex questions are decomposed into sub-questions before retrieval. However, if the relevant chunk for a sub-question is simply not indexed (e.g. a section that fell below the minimum chunk size during ingestion), decomposition cannot recover it — the content gap must be fixed at ingest time.
 - **No arithmetic** — the agent is explicitly instructed to refuse calculations. Numeric answers must be present verbatim in a chunk; the system will not sum or derive values. This is by design to avoid hallucinated arithmetic.
 - **Scanned PDFs require GPU** — LightOn OCR runs on a local vLLM server with CUDA. Born-digital PDFs, Excel, and CSV ingest on CPU only.
 - **Contextual summaries send chunk text to Groq** — at ingest time, each chunk is sent to `CHUNK_LLM_API_BASE` (OpenRouter by default) to generate a one-sentence context note. Air-gapped ingest requires pointing this at a local vLLM endpoint.
