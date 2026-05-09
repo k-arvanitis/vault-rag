@@ -94,7 +94,10 @@ VLM_MODEL: str = os.getenv("VLM_MODEL", "meta-llama/llama-4-scout-17b-16e-instru
 # Excel → DuckDB structured query store
 # ---------------------------------------------------------------------------
 DUCKDB_PATH: str = os.getenv("DUCKDB_PATH", ".duckdb/excel_store.duckdb")
-# Comma-separated list of Excel file paths to load at agent startup
-EXCEL_FILES: list[str] = [
-    p.strip() for p in os.getenv("EXCEL_FILES", "").split(",") if p.strip()
-]
+
+# ---------------------------------------------------------------------------
+# Excel ReAct sub-agent (text-to-SQL with self-correction)
+# ---------------------------------------------------------------------------
+EXCEL_AGENT_MODEL: str = os.getenv("EXCEL_AGENT_MODEL", "gpt-4o-mini")
+EXCEL_AGENT_API_BASE: str = os.getenv("EXCEL_AGENT_API_BASE", "https://api.openai.com/v1")
+EXCEL_AGENT_API_KEY: str = os.getenv("EXCEL_AGENT_API_KEY", os.getenv("OPENAI_API_KEY", ""))

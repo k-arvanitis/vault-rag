@@ -1,8 +1,12 @@
-"""Table row → text chunk ingestion. No LLM, no SQL, no schema extraction.
+"""Table ingestion — DuckDB for data, Qdrant for metadata.
 
-Each row becomes a text sentence and is embedded + stored in the same
-documents_chunks Qdrant collection as PDFs, so the existing retriever
-finds table data automatically.
+Pipeline per file:
+  1. LLM-assisted cleaning (excel_cleaner) → cleaned DataFrames
+  2. Load cleaned DataFrames into DuckDB (persistent, cached)
+  3. Upsert document_summary + per-sheet sheet_summary to Qdrant (discovery only)
+
+The agent finds which sheet is relevant via Qdrant, then queries DuckDB directly.
+No sheet_table or sheet_row chunks are stored in Qdrant.
 
 Usage:
     python -m src.ingest_table_rows data/myfile.xlsx
@@ -27,8 +31,8 @@ from src.config import (
     OLLAMA_API_BASE as _DEFAULT_OLLAMA_BASE,
     OLLAMA_EMBED_MODEL as _DEFAULT_EMBED_MODEL,
     QDRANT_URL as _DEFAULT_QDRANT_URL,
-    MAX_ROWS_PER_CHUNK,
-    MAX_CHARS_PER_TABLE_CHUNK,
+    DUCKDB_PATH,
+    GROQ_API_KEY,
     SKIP_SHEET_KEYWORDS,
     SKIP_ROW_VALUES,
     NO_DATA_TOKENS,
@@ -158,32 +162,57 @@ def sheet_summary_text(
     data_rows: list[list[Any]],
     sheet_title: str = "",
 ) -> str:
-    """Build one summary chunk per sheet from headers + first-column category values.
+    """Build one summary chunk per sheet from headers + per-column sample values.
 
-    No LLM — pure string concatenation. Catches queries like
-    'what sheets have CO2 data?' or 'which table covers energy industries?'
+    No LLM — pure string concatenation. For each named column, collects up to
+    _SAMPLES_PER_COL unique non-numeric text values sampled evenly across the
+    entire file (not just the first rows) so that entity names deep in large
+    sheets are still discoverable via vector or keyword search.
     """
+    _SAMPLES_PER_COL = 20
+
     prefix_parts = [f"File: {file_name}", f"Sheet: {sheet_name}"]
     if sheet_title:
         prefix_parts.append(sheet_title)
 
-    # Unique non-numeric values from first column = category index of the table
-    seen: set[str] = set()
-    categories: list[str] = []
-    for row in data_rows:
-        v = row[0] if row else None
-        s = str(v).strip() if v is not None else ""
-        if s and not _is_numeric(s) and s.lower() not in SKIP_ROW_VALUES and s not in seen:
-            seen.add(s)
-            categories.append(s)
+    sample_parts: list[str] = []
+    for col_idx, header in enumerate(headers):
+        h = str(header).strip() if header is not None else ""
+        if not h or h.lower().startswith("unnamed"):
+            continue
+        # Collect ALL unique text values for the column first,
+        # then pick a distributed sample so rare values deep in the file
+        # are still represented (e.g. an entity that appears once at row 2121).
+        unique_vals: list[str] = []
+        seen_col: set[str] = set()
+        for row in data_rows:
+            val = row[col_idx] if col_idx < len(row) else None
+            if val is None:
+                continue
+            s = str(val).strip()
+            if not s or _is_numeric(s) or s.lower() in SKIP_ROW_VALUES:
+                continue
+            if s not in seen_col:
+                seen_col.add(s)
+                unique_vals.append(s)
+        if not unique_vals:
+            continue
+        # Pick _SAMPLES_PER_COL evenly distributed values from the unique list.
+        n_u = len(unique_vals)
+        if n_u <= _SAMPLES_PER_COL:
+            samples = unique_vals
+        else:
+            step = n_u / _SAMPLES_PER_COL
+            samples = [unique_vals[int(i * step)] for i in range(_SAMPLES_PER_COL)]
+        sample_parts.append(f"{h}: {', '.join(samples)}")
 
     lines = [
         f"[{' | '.join(prefix_parts)}]",
         f"Sheet summary: {len(data_rows)} rows.",
         f"Columns: {', '.join(headers)}",
     ]
-    if categories:
-        lines.append(f"Categories: {', '.join(categories[:20])}")
+    if sample_parts:
+        lines.append(f"Sample values — {' | '.join(sample_parts[:8])}")
     return "\n".join(lines)
 
 
@@ -493,206 +522,192 @@ def _save_chunks_json(file_path: str, all_chunks: list[dict]) -> Path:
     return out_path
 
 
+def _load_into_duckdb(file_path: str, file_name: str, verbose: bool) -> dict[str, list[str]]:
+    """Clean file with LLM and load all sheets into DuckDB. Returns {sheet_name: [columns]}."""
+    import duckdb
+    from src.preprocessing.excel_cleaner import process_file
+    from src.excel_tool import _table_name, _normalize_dates, _make_groq_llm_fn
+
+    db_path = os.getenv("DUCKDB_PATH", DUCKDB_PATH)
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    con = duckdb.connect(db_path)
+    llm_fn = _make_groq_llm_fn()
+
+    try:
+        sheet_results = process_file(file_path, llm_fn)
+    except Exception as e:
+        print(f"  [WARNING] excel_cleaner failed for '{file_name}': {e}. Skipping DuckDB load.")
+        con.close()
+        return {}
+
+    sheet_columns: dict[str, list[str]] = {}
+    for sheet_name, sr in sheet_results.items():
+        tname = _table_name(file_name, sheet_name)
+        existing = con.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?", [tname]
+        ).fetchone()[0]
+        if existing:
+            if verbose:
+                print(f"  DuckDB cache hit: {tname}")
+        else:
+            if verbose:
+                print(f"  DuckDB loading: {tname} ({len(sr.df)} rows)")
+            normalized = _normalize_dates(sr.df)
+            con.register("_tmp_df", normalized)
+            con.execute(f'CREATE TABLE "{tname}" AS SELECT * FROM _tmp_df')
+            con.unregister("_tmp_df")
+        cols = [row[0] for row in con.execute(f'DESCRIBE "{tname}"').fetchall()]
+        sheet_columns[sheet_name] = cols
+    con.close()
+    return sheet_columns
+
+
+def _build_sheet_summary_point(
+    file_name: str,
+    sheet_name: str,
+    columns: list[str],
+    description: str,
+    collection: str,
+) -> None:
+    """Upsert one sheet_summary point to Qdrant for discovery.
+
+    Includes the DuckDB table name so the agent can map directly to the right table.
+    """
+    from src.excel_tool import _table_name
+    tname = _table_name(file_name, sheet_name)
+    parts = file_name.split("_")
+    doc_id = f"{parts[0]}_{parts[1]}" if len(parts) >= 2 else parts[0]
+
+    content = (
+        f"[File: {file_name} | Sheet: {sheet_name}]\n"
+        f"DuckDB table: {tname}\n"
+        f"Document ID: {doc_id}\n"
+        f"Columns: {', '.join(columns)}\n"
+    )
+    if description:
+        content += f"Description: {description}\n"
+
+    vec = _embed(content)
+    point_id = _point_id(file_name, sheet_name, "sheet_summary")
+    _ensure_collection(collection, len(vec))
+    _upsert(collection, [{
+        "id": point_id,
+        "vector": vec,
+        "payload": {
+            "content": content,
+            "source_type": "table",
+            "metadata": {
+                "source_file": file_name,
+                "doc_id": doc_id,
+                "sheet_name": sheet_name,
+                "duckdb_table": tname,
+                "chunk_type": "sheet_summary",
+                "chunk_index": -1,
+            },
+        },
+    }])
+
+
 def ingest_table_rows(
     file_path: str,
     collection: str = "documents_chunks",
-    batch_size: int = 50,
     verbose: bool = True,
-    index_content_chunks: bool = True,
 ) -> Path:
-    """Ingest all sheets from an Excel/CSV file into Qdrant.
+    """Ingest a table file: clean with LLM → DuckDB, metadata → Qdrant.
 
-    When index_content_chunks=True (default), upserts sheet_table and sheet_row chunks
-    in addition to the document_summary. Set to False when using DuckDB for structured
-    queries — only the document_summary is needed for semantic discovery.
-
-    Also saves all chunks to data/output/chunks/<stem>_table_chunks.json.
-    Returns the path to that file.
+    DuckDB receives the LLM-cleaned DataFrames for all sheets.
+    Qdrant receives one document_summary + one sheet_summary per sheet (no row chunks).
+    Returns the path to the saved chunks JSON (summaries only).
     """
     file_name = Path(file_path).name
-    sheets = load_sheets(file_path)
-    all_chunks: list[dict] = []  # accumulate across all sheets for JSON output
-    sheet_summary_texts: list[str] = []  # per-sheet summary strings for document_summary point
+    all_chunks: list[dict] = []
 
-    # Delete any existing points for this file before re-ingesting (deduplication)
+    # Delete any existing Qdrant points for this file
     base = _qdrant_url().rstrip("/")
     try:
         _qdrant_request("POST", f"{base}/collections/{collection}/points/delete?wait=true", {
             "filter": {"must": [{"key": "metadata.source_file", "match": {"value": file_name}}]}
         })
         if verbose:
-            print(f"  Deleted existing points for '{file_name}'")
+            print(f"  Deleted existing Qdrant points for '{file_name}'")
     except Exception:
-        pass  # collection may not exist yet — that's fine
+        pass
 
-    for sheet_name, rows in sheets.items():
+    # Step 1: LLM cleaning + DuckDB load
+    if verbose:
+        print(f"  Cleaning and loading into DuckDB...")
+    sheet_columns = _load_into_duckdb(file_path, file_name, verbose)
+
+    # Step 2: generate sheet_summary points for Qdrant
+    # Fall back to heuristic headers if DuckDB load failed for a sheet
+    raw_sheets = load_sheets(file_path)
+    sheet_summary_texts: list[str] = []
+
+    for sheet_name, rows in raw_sheets.items():
         if any(kw in sheet_name.lower() for kw in SKIP_SHEET_KEYWORDS):
-            if verbose:
-                print(f"  Skipping '{sheet_name}'")
             continue
         if len(rows) < 2:
             continue
 
+        # Use cleaned column names from DuckDB if available, else heuristic
+        if sheet_name in sheet_columns:
+            columns = sheet_columns[sheet_name]
+            description = ""
+        else:
+            header_idx = _find_header_row(rows)
+            headers = [str(h).strip() if h is not None else f"col_{i}" for i, h in enumerate(rows[header_idx])]
+            units_idx = _detect_units_row(rows, header_idx)
+            if units_idx is not None:
+                headers = _merge_units_into_headers(headers, rows[units_idx])
+            subheader_rows, data_start = _collect_subheaders(rows, header_idx + 1)
+            columns = _qualify_headers(headers, subheader_rows)
+            description = ""
+
+        sheet_title = _extract_sheet_title(rows, _find_header_row(rows))
+        data_rows = rows[_find_header_row(rows) + 1:]
+
+        if verbose:
+            print(f"  {sheet_name}: {len(data_rows)} rows, {len(columns)} columns")
+
+        summary_text = sheet_summary_text(file_name, sheet_name, columns, data_rows, sheet_title)
+        sheet_summary_texts.append(summary_text)
+        all_chunks.append({
+            "content": summary_text,
+            "metadata": {
+                "source_file": file_name,
+                "sheet_name": sheet_name,
+                "sheet_title": sheet_title,
+                "chunk_type": "sheet_summary",
+            },
+        })
+
+        _build_sheet_summary_point(file_name, sheet_name, columns, description, collection)
+        if verbose:
+            print(f"    → sheet_summary upserted to Qdrant")
+
+        # Save markdown for inspector UI
         header_idx = _find_header_row(rows)
-        headers = [str(h).strip() if h is not None else f"col_{i}" for i, h in enumerate(rows[header_idx])]
-
-        # Extract descriptive title from skipped title rows (before the header)
-        sheet_title = _extract_sheet_title(rows, header_idx)
-
-        # Merge units row (e.g. "(kt)", "Gg") into header names if present
         units_idx = _detect_units_row(rows, header_idx)
+        raw_headers = [str(h).strip() if h is not None else f"col_{i}" for i, h in enumerate(rows[header_idx])]
         if units_idx is not None:
-            headers = _merge_units_into_headers(headers, rows[units_idx])
+            raw_headers = _merge_units_into_headers(raw_headers, rows[units_idx])
             subheader_rows, data_start = _collect_subheaders(rows, units_idx + 1)
         else:
             subheader_rows, data_start = _collect_subheaders(rows, header_idx + 1)
-        data_rows = rows[data_start:]
-
-        if verbose:
-            title_info = f" | title='{sheet_title[:40]}'" if sheet_title else ""
-            print(f"  {sheet_name}: {len(data_rows)} rows, headers={headers[:4]}...{title_info}")
-
-        # Qualify duplicate column names with subheader content for better embeddings
-        qualified_headers = _qualify_headers(headers, subheader_rows)
-        sheet_summary_texts.append(sheet_summary_text(file_name, sheet_name, qualified_headers, data_rows, sheet_title))
-
-        # Split into chunks of MAX_ROWS_PER_CHUNK rows; then further split any window
-        # whose rendered text exceeds MAX_CHARS_PER_TABLE_CHUNK (wide sheets have few rows
-        # but many columns, so row count alone doesn't bound chunk size).
-        def _split_window(rows: list) -> list[list]:
-            if not rows:
-                return [rows]
-            text = sheet_to_chunk(file_name, sheet_name, qualified_headers, rows, sheet_title, subheader_rows=subheader_rows)
-            if len(text) <= MAX_CHARS_PER_TABLE_CHUNK or len(rows) == 1:
-                return [rows]
-            mid = len(rows) // 2
-            return _split_window(rows[:mid]) + _split_window(rows[mid:])
-
-        coarse_windows = [
-            data_rows[i:i + MAX_ROWS_PER_CHUNK]
-            for i in range(0, max(1, len(data_rows)), MAX_ROWS_PER_CHUNK)
-        ]
-        row_windows = []
-        for w in coarse_windows:
-            row_windows.extend(_split_window(w))
-
-        # Save full sheet as markdown (always — useful for reference regardless of index mode)
-        full_sheet_md = sheet_to_chunk(file_name, sheet_name, qualified_headers, data_rows, sheet_title, subheader_rows=subheader_rows)
+        full_sheet_md = sheet_to_chunk(file_name, sheet_name, raw_headers, rows[data_start:], sheet_title, subheader_rows=subheader_rows)
         md_out_dir = REPO_ROOT / "data" / "output" / "table_markdowns"
         md_out_dir.mkdir(parents=True, exist_ok=True)
         safe_sheet = sheet_name.replace("/", "_").replace("\\", "_")
-        md_out_path = md_out_dir / f"{Path(file_path).stem}__{safe_sheet}.md"
-        md_out_path.write_text(full_sheet_md, encoding="utf-8")
+        (md_out_dir / f"{Path(file_path).stem}__{safe_sheet}.md").write_text(full_sheet_md, encoding="utf-8")
 
-        _ensure_collection_done = False
-        points: list[dict[str, Any]] = []
-        row_chunk_count = 0
-        n_parts = 0
-
-        if index_content_chunks:
-            try:
-                from src.sparse_embedder import get_sparse_embedder
-                sparse_embedder = get_sparse_embedder()
-            except Exception as e:
-                print(f"  [WARNING] Sparse embedder failed to load: {e}. Storing dense vectors only.")
-                sparse_embedder = None
-
-            for part_idx, window in enumerate(row_windows):
-                chunk_text = sheet_to_chunk(file_name, sheet_name, qualified_headers, window, sheet_title, subheader_rows=subheader_rows)
-                all_chunks.append({
-                    "content": chunk_text,
-                    "metadata": {
-                        "source_file": file_name,
-                        "sheet_name": sheet_name,
-                        "sheet_title": sheet_title,
-                        "chunk_type": "sheet_table",
-                        "part": part_idx,
-                        "num_rows": len(window),
-                    },
-                })
-                try:
-                    vector_field = _build_vector_field(chunk_text, sparse_embedder)
-                except Exception as e:
-                    print(f"  [WARNING] Sparse embedding failed for part {part_idx}: {e}. Using dense only.")
-                    vector_field = _embed(chunk_text)
-                if not _ensure_collection_done:
-                    vec_size = len(vector_field[""]) if isinstance(vector_field, dict) else len(vector_field)
-                    _ensure_collection(collection, vec_size)
-                    _ensure_collection_done = True
-                points.append(_build_table_point(
-                    file_name=file_name,
-                    sheet_name=sheet_name,
-                    chunk_text=chunk_text,
-                    chunk_type="sheet_table",
-                    part_idx=part_idx,
-                    num_rows=len(window),
-                    vector_field=vector_field,
-                ))
-            n_parts = len(row_windows)
-
-            # Collect all row texts then batch-embed in one shot
-            row_items: list[tuple[int, str]] = []
-            for row_idx, row in enumerate(data_rows):
-                if _should_skip_data_row(row):
-                    continue
-                chunk_text = row_to_chunk(file_name, sheet_name, qualified_headers, row, sheet_title)
-                all_chunks.append({
-                    "content": chunk_text,
-                    "metadata": {
-                        "source_file": file_name,
-                        "sheet_name": sheet_name,
-                        "sheet_title": sheet_title,
-                        "chunk_type": "sheet_row",
-                        "part": row_idx,
-                        "num_rows": 1,
-                    },
-                })
-                row_items.append((row_idx, chunk_text))
-
-            row_texts = [t for _, t in row_items]
-            row_vecs = _embed_batch(row_texts) if row_texts else []
-
-            for (row_idx, chunk_text), vec in zip(row_items, row_vecs):
-                if sparse_embedder is not None:
-                    try:
-                        indices, values = sparse_embedder.embed(chunk_text)
-                        vector_field: Any = {"": vec, "sparse": {"indices": indices, "values": values}}
-                    except Exception as e:
-                        print(f"  [WARNING] Sparse embedding failed for row {row_idx}: {e}. Using dense only.")
-                        vector_field = vec
-                else:
-                    vector_field = vec
-                if not _ensure_collection_done:
-                    vec_size = len(vector_field[""]) if isinstance(vector_field, dict) else len(vector_field)
-                    _ensure_collection(collection, vec_size)
-                    _ensure_collection_done = True
-                points.append(_build_table_point(
-                    file_name=file_name,
-                    sheet_name=sheet_name,
-                    chunk_text=chunk_text,
-                    chunk_type="sheet_row",
-                    part_idx=row_idx,
-                    num_rows=1,
-                    vector_field=vector_field,
-                ))
-                row_chunk_count += 1
-
-        if points:
-            _upsert(collection, points)
-
-        if verbose:
-            if index_content_chunks:
-                print(f"    → {n_parts} table chunk(s) + {row_chunk_count} row chunk(s) upserted ({len(data_rows)} rows)")
-            else:
-                print("    → skipped sheet_table/sheet_row (DuckDB mode). Markdown saved.")
-
+    # Step 3: document_summary
     _build_file_document_summary(file_name, sheet_summary_texts, collection)
     if verbose:
-        print(f"  Upserted document_summary for '{file_name}'")
+        print(f"  document_summary upserted to Qdrant")
 
     out_path = _save_chunks_json(file_path, all_chunks)
     if verbose:
-        print(f"\nSaved {len(all_chunks)} chunks → {out_path}")
+        print(f"\nSaved {len(all_chunks)} summary chunks → {out_path}")
     return out_path
 
 
@@ -701,20 +716,11 @@ def ingest_table_rows(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Ingest table rows as text chunks into Qdrant.")
+    parser = argparse.ArgumentParser(description="Ingest table file: LLM cleaning → DuckDB, metadata → Qdrant.")
     parser.add_argument("file_path", help="Path to .xlsx or .csv file")
     parser.add_argument("--collection", default="documents_chunks")
-    parser.add_argument(
-        "--only-summary",
-        action="store_true",
-        help="Only upsert the document_summary point (use when DuckDB handles structured queries).",
-    )
     args = parser.parse_args()
-    ingest_table_rows(
-        args.file_path,
-        collection=args.collection,
-        index_content_chunks=not args.only_summary,
-    )
+    ingest_table_rows(args.file_path, collection=args.collection)
 
 
 if __name__ == "__main__":

@@ -85,60 +85,59 @@ def _normalize_dates(df: "Any") -> "Any":
 
 _WRITE_PREFIXES = ("INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER", "TRUNCATE", "REPLACE")
 
+# DD/MM/YYYY or D/M/YYYY inside SQL string literals → YYYY-MM-DD
+_DATE_DMY = re.compile(r"'(\d{1,2})/(\d{1,2})/(\d{4})'")
+# ILIKE string values for truncation retry: captures the inner text of '%...%' patterns
+_ILIKE_VAL = re.compile(r"(ILIKE\s+'%)([^%']+)(%')", re.IGNORECASE)
+
+
+def _normalize_sql(sql: str) -> str:
+    """Rewrite SQL literals before DuckDB execution.
+
+    - DD/MM/YYYY → YYYY-MM-DD (dates stored as ISO strings in all ingested tables)
+    """
+    return _DATE_DMY.sub(lambda m: f"'{m.group(3)}-{m.group(2).zfill(2)}-{m.group(1).zfill(2)}'", sql)
+
+
+def _truncate_ilike(sql: str, chars: int = 1) -> str:
+    """Shorten each ILIKE '%...%' value by `chars` trailing characters.
+
+    Used as a fallback when a query returns no rows and the agent may have
+    auto-completed a truncated supplier/beneficiary name (e.g. "Yorkshir" → "Yorkshire").
+    Only shortens values that end with a letter (not space or digit).
+    """
+    def _shorten(m: re.Match) -> str:
+        prefix, text, suffix = m.group(1), m.group(2), m.group(3)
+        if len(text) > chars + 3 and text[-1].isalpha():
+            return f"{prefix}{text[:-chars]}{suffix}"
+        return m.group(0)
+    return _ILIKE_VAL.sub(_shorten, sql)
+
 
 class DuckDBStore:
-    """Load Excel files via excel_cleaner and persist cleaned DataFrames as DuckDB tables."""
+    """Connect to the persistent DuckDB populated by ingest_table_rows."""
 
-    def __init__(self, excel_files: list[str], db_path: str = DUCKDB_PATH) -> None:
-        """Process Excel files and register cleaned sheets as persistent DuckDB tables.
-
-        Uses the DuckDB file as a cache — tables already present are not reprocessed.
-
-        Args:
-            excel_files: Paths to .xlsx or .csv files.
-            db_path: Path to the persistent DuckDB database file.
-        """
+    def __init__(self, db_path: str = DUCKDB_PATH) -> None:
+        """Connect to the existing DuckDB file. Tables are loaded at ingest time."""
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._con = duckdb.connect(db_path)
         self._lock = threading.Lock()
+        # Discover all user tables currently in the DB
+        rows = self._con.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
+        ).fetchall()
         self._tables: dict[str, list[str]] = {}
-        self._file_sheet_map: dict[str, dict[str, str]] = {}
-
-        llm_fn = _make_groq_llm_fn()
-        for path in excel_files:
-            basename = os.path.basename(path)
-            try:
-                sheet_results = process_file(path, llm_fn)
-            except Exception as e:
-                print(f"[DuckDBStore] ERROR processing {basename}: {e}")
-                continue
-
-            file_map: dict[str, str] = {}
-            for sheet_name, sr in sheet_results.items():
-                tname = _table_name(basename, sheet_name)
-                existing = self._con.execute(
-                    "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?", [tname]
-                ).fetchone()[0]
-                if existing:
-                    print(f"[DuckDBStore] cache hit: {tname}")
-                else:
-                    print(f"[DuckDBStore] inserting: {tname}")
-                    normalized_df = _normalize_dates(sr.df)
-                    self._con.register("_tmp_df", normalized_df)
-                    self._con.execute(f'CREATE TABLE "{tname}" AS SELECT * FROM _tmp_df')
-                    self._con.unregister("_tmp_df")
-                cols = [row[0] for row in self._con.execute(f'DESCRIBE "{tname}"').fetchall()]
-                self._tables[tname] = cols
-                file_map[sheet_name] = tname
-            self._file_sheet_map[basename] = file_map
+        for (tname,) in rows:
+            cols = [r[0] for r in self._con.execute(f'DESCRIBE "{tname}"').fetchall()]
+            self._tables[tname] = cols
+        if self._tables:
+            print(f"[DuckDBStore] connected — {len(self._tables)} table(s) available.")
+        else:
+            print("[DuckDBStore] connected — no tables yet. Ingest table files first.")
 
     def tables(self) -> dict[str, list[str]]:
-        """Return {table_name: [column_names]} for all loaded sheets."""
+        """Return {table_name: [column_names]} for all tables in the DB."""
         return self._tables
-
-    def file_sheet_map(self) -> dict[str, dict[str, str]]:
-        """Return {file_basename: {sheet_name: table_name}}."""
-        return self._file_sheet_map
 
     def execute(self, sql: str) -> Any:
         """Execute a SQL query, fetch all results as a DataFrame (thread-safe)."""
@@ -149,6 +148,18 @@ class DuckDBStore:
         """Execute a SQL query and return the first row (thread-safe)."""
         with self._lock:
             return self._con.execute(sql).fetchone()
+
+    def describe(self, table_name: str) -> list[tuple[str, str]]:
+        """Return [(column_name, column_type), ...] for a table."""
+        with self._lock:
+            rows = self._con.execute(f'DESCRIBE "{table_name}"').fetchall()
+        return [(r[0], r[1]) for r in rows]
+
+    def sample(self, table_name: str, n: int = 3) -> list[dict]:
+        """Return up to n sample rows as a list of dicts."""
+        with self._lock:
+            df = self._con.execute(f'SELECT * FROM "{table_name}" LIMIT {n}').df()
+        return df.to_dict(orient="records")
 
 
 def build_excel_tools(store: DuckDBStore) -> list[StructuredTool]:
@@ -167,10 +178,24 @@ def build_excel_tools(store: DuckDBStore) -> list[StructuredTool]:
         for kw in _WRITE_PREFIXES:
             if normalized.startswith(kw):
                 return "Write operations are not allowed. Use SELECT queries only."
+        sql = _normalize_sql(sql)
         try:
             df = store.execute(sql)
         except Exception as e:
             return f"SQL error: {e}"
+        if df.empty and _ILIKE_VAL.search(sql):
+            # Supplier/beneficiary names may be truncated in the source data.
+            # Retry with progressively shorter ILIKE patterns (up to 3 chars removed).
+            for trim in (1, 2, 3):
+                relaxed = _truncate_ilike(sql, trim)
+                if relaxed == sql:
+                    break
+                try:
+                    df = store.execute(relaxed)
+                except Exception:
+                    break
+                if not df.empty:
+                    break
         if df.empty:
             return "Query returned no rows."
         _ROW_LIMIT = 100
@@ -186,9 +211,11 @@ def build_excel_tools(store: DuckDBStore) -> list[StructuredTool]:
             name="query_excel",
             description=(
                 "Execute a SQL SELECT query against cleaned Excel/CSV data stored in DuckDB. "
-                "Use for value lookups, filters, aggregations (SUM, COUNT, AVG, GROUP BY, ORDER BY), "
-                "and cross-column comparisons. Available tables and their columns are listed in the "
-                "system prompt. Always double-quote column names that contain spaces or special characters."
+                "Use after search_knowledge_base has returned a sheet_summary chunk that tells you "
+                "the DuckDB table name and column names. "
+                "Use for value lookups, filters, aggregations (SUM, COUNT, AVG, GROUP BY, ORDER BY). "
+                "Always double-quote column names. Use ILIKE for string filters. "
+                "Dates are stored as 'YYYY-MM-DD' strings."
             ),
             args_schema=_SQLInput,
         )

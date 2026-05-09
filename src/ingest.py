@@ -577,6 +577,7 @@ def _run_ingest_pdf(
     ollama_embed_model: str = OLLAMA_EMBED_MODEL,
     enrich_with_llm: bool = True,
     verbose: bool = True,
+    force_pipeline: str | None = None,
 ) -> dict[str, Path]:
     file_started_at = time.perf_counter()
     pdf_path = Path(pdf_path)
@@ -608,7 +609,7 @@ def _run_ingest_pdf(
 
     # 1) PDF -> markdown (two-path router: pymupdf4llm for text-layer, LightOn OCR for scanned)
     _log("Parse PDF -> markdown (two-path router)", step=1, enabled=verbose)
-    pages = parse_pdf(str(resolved_pdf_path))
+    pages = parse_pdf(str(resolved_pdf_path), force_pipeline=force_pipeline)
     markdown = "".join(
         f"\n\n<!-- PAGE {i + 1} | {label} -->\n\n{page_text}"
         for i, (page_text, label) in enumerate(pages)
@@ -738,6 +739,7 @@ def run_ingest(
     enrich_with_llm: bool = True,
     recursive: bool = False,
     verbose: bool = True,
+    force_pipeline: str | None = None,
 ) -> dict[str, Path] | list[dict[str, Path]]:
     if (pdf_path is None) == (folder_path is None):
         raise ValueError("Provide exactly one of `pdf_path` or `folder_path`.")
@@ -754,6 +756,7 @@ def run_ingest(
             ollama_embed_model=ollama_embed_model,
             enrich_with_llm=enrich_with_llm,
             verbose=verbose,
+            force_pipeline=force_pipeline,
         )
 
     target_dir = Path(folder_path)
@@ -851,6 +854,12 @@ def main() -> None:
         default=True,
         help="Enable/disable context generation during chunking",
     )
+    parser.add_argument(
+        "--force-pipeline",
+        choices=["ocr", "text"],
+        default=None,
+        help="Override per-page routing: 'ocr' forces LightOn OCR on all pages, 'text' forces pymupdf4llm",
+    )
     args = parser.parse_args()
 
     out = run_ingest(
@@ -865,6 +874,7 @@ def main() -> None:
         ollama_api_base=args.ollama_api_base,
         ollama_embed_model=args.ollama_embed_model,
         enrich_with_llm=args.enrich_with_llm,
+        force_pipeline=args.force_pipeline,
         recursive=args.recursive,
         verbose=True,
     )

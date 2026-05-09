@@ -249,28 +249,39 @@ def chunk_markdown(
             else:
                 chunks.extend(_split_protecting_figures(content, metadata))
 
+    def _has_section_header(content: str) -> bool:
+        """Return True if the chunk starts with a Markdown section header (## or deeper).
+
+        A named section is an intentional document boundary and must never be
+        dissolved into a neighbour regardless of its token count.
+        """
+        stripped = content.lstrip()
+        return stripped.startswith("##")
+
     compact_chunks: list[Chunk] = []
     for chunk in chunks:
         chunk_tokens = len(tokenizer.encode(chunk.content))
         if (
             compact_chunks
             and chunk_tokens < min_tokens
+            and not _has_section_header(chunk.content)
         ):
             compact_chunks[-1].content += "\n\n" + chunk.content
         else:
             compact_chunks.append(chunk)
 
     # Merge tiny chunks into previous or next chunk to reduce retrieval noise.
+    # Chunks that open with a Markdown section header are kept as-is — the
+    # document author drew an intentional boundary there.
     merged_chunks: list[Chunk] = []
     i = 0
     while i < len(compact_chunks):
         chunk = compact_chunks[i]
         chunk_chars = len(chunk.content)
         has_table = "[TABLE_START]" in chunk.content
-
         has_figure = "[FIGURE_START]" in chunk.content
 
-        if has_table or has_figure or chunk_chars >= min_chars:
+        if has_table or has_figure or chunk_chars >= min_chars or _has_section_header(chunk.content):
             merged_chunks.append(chunk)
             i += 1
             continue

@@ -52,8 +52,8 @@ def _text_filter(token: str) -> dict:
     return {"must": [{"key": "content", "match": {"text": token}}]}
 
 
-_TABLE_CHUNK_TYPES = ["sheet_row", "sheet_table"]
-_TABLE_SCHEMA_CHUNK_TYPES = ["document_summary", "sheet_table"]
+_TABLE_CHUNK_TYPES = ["sheet_summary"]
+_TABLE_SCHEMA_CHUNK_TYPES = ["document_summary", "sheet_summary"]
 
 
 def _metadata_filter(
@@ -66,9 +66,10 @@ def _metadata_filter(
 ) -> dict | None:
     """Build a Qdrant filter for chunk-type routing and optional text filtering.
 
-    scope_doc_id restricts results to a stable doc_id when present. Older PDF
-    ingestions may not have metadata.doc_id yet, so callers can retry with
-    scope_doc_key="metadata.source_file" as a compatibility fallback.
+    scope_doc_id restricts results to a single document via a should-OR across
+    metadata.doc_id, metadata.source_file, and metadata.file_name — covering
+    both old ingestions (source_file only) and new ones (doc_id set).
+    scope_doc_key is kept for backward compat but is no longer used.
     """
     must: list[dict] = []
     must_not: list[dict] = []
@@ -79,8 +80,15 @@ def _metadata_filter(
     if filter_token:
         must.append({"key": "content", "match": {"text": filter_token}})
     if scope_doc_id:
-        match = {"value": scope_doc_id} if scope_doc_key == "metadata.doc_id" else {"text": scope_doc_id}
-        must.append({"key": scope_doc_key, "match": match})
+        # OR across all three doc-id fields — older ingestions may only have
+        # source_file/file_name; newer ones set metadata.doc_id explicitly.
+        must.append({
+            "should": [
+                {"key": "metadata.doc_id", "match": {"value": scope_doc_id}},
+                {"key": "metadata.source_file", "match": {"text": scope_doc_id}},
+                {"key": "metadata.file_name", "match": {"text": scope_doc_id}},
+            ]
+        })
     if not must and not must_not:
         return None
     result: dict = {}
@@ -106,19 +114,6 @@ _TABLE_STOP_WORDS = frozenset({
     # Context words that appear in table-query phrasing but are not entity values
     "spreadsheet", "report", "spend", "published", "card",
 })
-
-_EXPLICIT_TABLE_TERMS = (
-    "row", "sheet", "csv", "xlsx", "spreadsheet", "column", "columns",
-)
-_TABLE_SIGNAL_TERMS = (
-    "transaction", "supplier", "beneficiary", "merchant", "category", "department",
-    "amount", "total", "net", "paid", "listed", "purchase", "expenditure", "table",
-)
-
-
-def _table_signal_count(query: str) -> int:
-    q = query.lower()
-    return sum(1 for term in _TABLE_SIGNAL_TERMS if term in q)
 
 
 def _extract_table_filter_token(query: str) -> str | None:
@@ -166,27 +161,11 @@ def _extract_table_filter_terms(query: str) -> list[str]:
 def infer_query_chunk_types(query: str) -> tuple[list[str] | None, list[str] | None]:
     """Infer chunk type routing for a query.
 
-    Returns (include_types, exclude_types) for Qdrant filtering.
-    - Table queries: include only sheet_row/sheet_table, no exclusions.
-    - Cross-doc queries: search everything (no include, no exclude).
-    - Factoid/figure queries: no include filter, but exclude table chunks so PDF
-      chunks aren't buried under thousands of sheet rows.
+    Always returns (None, None) — search all chunk types for every query.
+    sheet_summary chunks are small and few; column-overlap scoring in the
+    reranking step surfaces them only when a sheet's columns match the query.
     """
-    q = query.lower()
-    cross_doc_terms = ["which document", "both documents", "other document", "versus", "compare"]
-    if any(term in q for term in cross_doc_terms):
-        return None, None
-    if "column" in q or "columns" in q or "header" in q or "headers" in q:
-        return _TABLE_SCHEMA_CHUNK_TYPES, None
-    if any(term in q for term in _EXPLICIT_TABLE_TERMS):
-        return _TABLE_CHUNK_TYPES, None
-    # If a query has several transactional/table-like words but does not
-    # explicitly identify a spreadsheet/table/row/column, search all chunk
-    # types. PDF invoices and contracts often use the same vocabulary.
-    if _table_signal_count(query) >= 2:
-        return None, None
-    # Factoid / figure / numeric: exclude table chunks so PDF text isn't drowned out
-    return None, _TABLE_CHUNK_TYPES
+    return None, None
 
 
 def _qdrant_search(
@@ -373,12 +352,7 @@ def retrieve(
             exclude_chunk_types = force_exclude_chunk_types
         else:
             chunk_types, exclude_chunk_types = infer_query_chunk_types(query)
-        if filter_token is None and chunk_types == _TABLE_CHUNK_TYPES:
-            filter_token = _extract_table_filter_token(query)
-        soft_table_query = chunk_types == _TABLE_CHUNK_TYPES or _table_signal_count(query) >= 2
-        if filter_token is None and soft_table_query:
-            filter_token = _extract_table_filter_token(query)
-        filter_terms = _extract_table_filter_terms(query) if soft_table_query else []
+        filter_terms = _extract_table_filter_terms(query)
         qdrant_top_k = max(top_k, 100) if filter_terms else top_k
 
         def _search_with_scope(scope_doc_key: str) -> list[dict[str, Any]]:
@@ -480,9 +454,9 @@ def retrieve(
                 if not points:
                     points = _search_with_scope("metadata.file_name")
                 filter_token = original_filter_token
-        if filter_token and soft_table_query:
+        if filter_token:
             try:
-                scroll_chunk_types = chunk_types if chunk_types == _TABLE_CHUNK_TYPES else _TABLE_CHUNK_TYPES
+                scroll_chunk_types = chunk_types
                 exact_points = _qdrant_scroll_filter(
                     qdrant_url=qdrant_url,
                     collection=collection,

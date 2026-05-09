@@ -33,7 +33,7 @@ _LABEL_TEXT = "pymupdf4llm"
 _LABEL_OCR = "LightOn OCR"
 
 
-def parse_pdf(path: str) -> list[tuple[str, str]]:
+def parse_pdf(path: str, force_pipeline: str | None = None) -> list[tuple[str, str]]:
     """Parse a PDF and return one (markdown, pipeline_label) tuple per page.
 
     Each page is routed independently:
@@ -42,6 +42,8 @@ def parse_pdf(path: str) -> list[tuple[str, str]]:
 
     Args:
         path: Absolute or relative path to the PDF file.
+        force_pipeline: Override auto-routing. "ocr" forces every page through LightOn OCR;
+            "text" forces every page through pymupdf4llm. None uses auto-routing.
 
     Returns:
         List of (page_markdown, pipeline_label) tuples, one per page.
@@ -54,13 +56,18 @@ def parse_pdf(path: str) -> list[tuple[str, str]]:
         for page_number, page in enumerate(doc):
             text = page.get_text().strip()
 
-            if len(text) < 50:
-                print(f"[INGEST] Page {page_number + 1}/{n_pages} → {_LABEL_OCR} (scanned)")
+            use_ocr = (
+                force_pipeline == "ocr"
+                or (force_pipeline != "text" and len(text) < 50)
+            )
+
+            if use_ocr:
+                print(f"[INGEST] Page {page_number + 1}/{n_pages} → {_LABEL_OCR} ({'forced' if force_pipeline == 'ocr' else 'scanned'})")
                 pix = page.get_pixmap(dpi=300)
                 page_string = call_lighton_ocr(pix)
                 label = _LABEL_OCR
             else:
-                print(f"[INGEST] Page {page_number + 1}/{n_pages} → {_LABEL_TEXT} (text-layer)")
+                print(f"[INGEST] Page {page_number + 1}/{n_pages} → {_LABEL_TEXT} ({'forced' if force_pipeline == 'text' else 'text-layer'})")
                 page_string = _parse_text_layer_page(path, page_number, tmp_dir)
                 label = _LABEL_TEXT
 

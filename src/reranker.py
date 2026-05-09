@@ -1,4 +1,5 @@
 import torch
+from langsmith import traceable
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModelForSequenceClassification
 
 from src.config import RERANKER_MODEL
@@ -15,6 +16,7 @@ class BGEReranker:
             torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
         ).to(self.device).eval()
 
+    @traceable(name="bge-reranker", metadata={"model": RERANKER_MODEL})
     @torch.no_grad()
     def rerank(self, query: str, documents: list[str], top_n: int = 10, **_) -> list[dict]:
         pairs = [[query, doc] for doc in documents]
@@ -66,6 +68,7 @@ class QwenReranker:
             f"<Document>: {doc}{self.assistant_suffix}"
         )
 
+    @traceable(name="qwen-reranker")
     @torch.no_grad()
     def rerank(self, query: str, documents: list[str], top_n: int = 5, instruction: str = "Given a search query, retrieve relevant passages that answer the query.") -> list[dict]:
         """
