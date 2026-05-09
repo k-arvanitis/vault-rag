@@ -492,6 +492,7 @@ with tab_inspect:
                     chunks_sorted = sorted(chunks, key=lambda p: (p.get("metadata") or {}).get("part", 0))
                     st.subheader(f"Sheet: {sheet_name}")
                     st.caption(f"{len(chunks_sorted)} chunks")
+
                     for idx, payload in enumerate(chunks_sorted, start=1):
                         meta = payload.get("metadata") or {}
                         chunk_type = meta.get("chunk_type", "chunk")
