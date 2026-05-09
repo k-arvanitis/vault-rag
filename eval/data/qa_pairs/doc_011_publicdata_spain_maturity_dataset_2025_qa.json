@@ -1,7 +1,7 @@
 [
   {
     "qa_id": "qa_1",
-    "question": "In the spain open data maturity dataset (doc_011), what year does the dataset refer to?",
+    "question": "What year is the Spain open data maturity questionnaire titled for?",
     "gold_answer": "2025",
     "answer_type": "short_text",
     "question_type": "single_doc_factoid",

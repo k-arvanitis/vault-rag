@@ -1,8 +1,8 @@
 [
   {
     "qa_id": "qa_1",
-    "question": "For 2025-04-04 in CHIEF EXECUTIVE / HUMAN RESOURCES, which supplier is listed in doc_006 and which beneficiary is listed in doc_007?",
-    "gold_answer": "C2e922600775g Ukvi; RPS BUSINESS HEALTHCARE",
+    "question": "For Supplier Name 'C2e922600775g Ukvi' on 2025-04-04 in CHIEF EXECUTIVE / HUMAN RESOURCES in doc_006, what is the NET Amount? And for Transaction Number 6091587 in doc_007, what is the Beneficiary?",
+    "gold_answer": "doc_006 NET Amount: 5239.0; doc_007 Beneficiary: RPS BUSINESS HEALTHCARE",
     "answer_type": "short_text",
     "question_type": "cross_document_compare",
     "difficulty": "medium",
@@ -39,8 +39,8 @@
   },
   {
     "qa_id": "qa_2",
-    "question": "For 2025-04-03 in PLACE / STREET SCENE, what is the purchase purpose and NET amount in doc_006, and what are the purpose summary and Total in doc_007?",
-    "gold_answer": "MATERIALS, 39.54; PLAY EQUIPMENT TEAM / PLANNED GROUNDS MAINT, 317.50",
+    "question": "For Supplier Name 'Screwfix Direct' on 2025-04-03 in PLACE / STREET SCENE in doc_006, what is the Purchase of Expenditure and NET Amount? And for Transaction Number 6089041 in doc_007, what is the Summary of Purpose of Expenditure and Total?",
+    "gold_answer": "doc_006: Purchase of Expenditure=MATERIALS, NET Amount=39.54; doc_007: Summary of Purpose of Expenditure=PLAY EQUIPMENT TEAM / PLANNED GROUNDS MAINT, Total=317.50",
     "answer_type": "short_text",
     "question_type": "cross_document_compare",
     "difficulty": "medium",
@@ -77,8 +77,8 @@
   },
   {
     "qa_id": "qa_3",
-    "question": "On 2025-04-07 for CORPORATE RESOURCES / ELECTORAL SERVICES, which merchant category is recorded in each document and what amount is attached to each row?",
-    "gold_answer": "Retail, 209.32; GENERAL OFFICE EXPENSES, 289.46",
+    "question": "For Supplier Name 'Amazon* R63ax3ge4' on 2025-04-07 in CORPORATE RESOURCES / ELECTORAL SERVICES in doc_006, what is the Merchant Category and NET Amount? And for Transaction Number 6094111 in doc_007, what is the Merchant Category and Total?",
+    "gold_answer": "doc_006: Merchant Category=Retail, NET Amount=209.32; doc_007: Merchant Category=GENERAL OFFICE EXPENSES, Total=289.46",
     "answer_type": "short_text",
     "question_type": "cross_document_compare",
     "difficulty": "medium",
@@ -115,8 +115,8 @@
   },
   {
     "qa_id": "qa_4",
-    "question": "For the 2025-04-09 row in CHIEF EXECUTIVE / SUSTAINABILITY, which counterparty appears in each document and how do the amounts compare?",
-    "gold_answer": "B&m 557 - Friars Gate at 3.45; GLOBAL GARDEN ECOLOGICAL ADVISORY at 500.00",
+    "question": "For Supplier Name 'B&m 557 - Friars Gate' on 2025-04-09 in CHIEF EXECUTIVE / SUSTAINABILITY in doc_006, what is the NET Amount? And for Transaction Number 6098084 in doc_007, what is the Beneficiary and Total?",
+    "gold_answer": "doc_006: Supplier Name=B&m 557 - Friars Gate, NET Amount=3.45; doc_007: Beneficiary=GLOBAL GARDEN ECOLOGICAL ADVISORY, Total=500.00",
     "answer_type": "short_text",
     "question_type": "cross_document_compare",
     "difficulty": "medium",
@@ -153,8 +153,8 @@
   },
   {
     "qa_id": "qa_5",
-    "question": "On 2025-04-28 for CORPORATE RESOURCES / ICT & DIGITAL, what expenditure label appears in doc_006 and what purpose labels appear in doc_007?",
-    "gold_answer": "COMPUTING; COMPUTING EQUIPMENT / COMPUTER EQUIPMENT",
+    "question": "For Supplier Name 'Foreign Exchange Fee' on 2025-04-28 in CORPORATE RESOURCES / ICT & DIGITAL in doc_006, what is the Purchase of Expenditure? And for Transaction Number 6121568 in doc_007, what are the Summary of Purpose of Expenditure values?",
+    "gold_answer": "doc_006: Purchase of Expenditure=COMPUTING; doc_007: Summary of Purpose of Expenditure 1=COMPUTING EQUIPMENT, Summary of Purpose of Expenditure 2=COMPUTER EQUIPMENT",
     "answer_type": "short_text",
     "question_type": "cross_document_compare",
     "difficulty": "medium",

@@ -1,8 +1,8 @@
 [
   {
     "qa_id": "qa_1",
-    "question": "In the osse afe budget tracker (doc_013), what is being tracked across sheets?",
-    "gold_answer": "budget and finance",
+    "question": "What is the document title shown at the top of the OSSE AFE FY2026 grant budget and finance tracking workbook?",
+    "gold_answer": "Budget & Finance Tracker",
     "answer_type": "short_text",
     "question_type": "single_doc_factoid",
     "difficulty": "easy",

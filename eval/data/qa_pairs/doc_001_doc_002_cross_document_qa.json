@@ -69,8 +69,8 @@
   },
   {
     "qa_id": "qa_3",
-    "question": "Between the LACERA procurement policy (doc_001) and the Government Property Agency services contract terms (doc_002), which sets a shorter deadline tied to information requests, and what are the two deadlines?",
-    "gold_answer": "The services contract terms set the shorter deadline: transfer Requests for Information within 2 Working Days, while the procurement policy requires emergency purchase documentation within 7 calendar days.",
+    "question": "Comparing the LACERA procurement policy and the Government Property Agency services contract terms, which document specifies a deadline for transferring Requests for Information, and what is that deadline?",
+    "gold_answer": "The Government Property Agency services contract terms: within 2 Working Days of receipt.",
     "answer_type": "short_text",
     "question_type": "cross_document_compare",
     "difficulty": "hard",

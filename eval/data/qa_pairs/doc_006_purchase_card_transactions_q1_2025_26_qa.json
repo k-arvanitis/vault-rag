@@ -190,7 +190,7 @@
   },
   {
     "qa_id": "qa_8",
-    "question": "What is the NET Amount for the supplier Cash Converters Yorkshir?",
+    "question": "What is the NET Amount for the supplier Cash Converters Yorkshir on 2025-04-01 in ADULT SOCIAL CARE-CARE&SUPPORT?",
     "gold_answer": "99.99",
     "answer_type": "short_text",
     "question_type": "table_lookup",

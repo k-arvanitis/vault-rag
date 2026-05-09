@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import sys
+import time
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -26,16 +27,20 @@ load_dotenv(override=True)
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
 
 from src.config import (  # noqa: E402
-    DUCKDB_PATH,
-    EXCEL_FILES,
     GENERATION_API_BASE,
     GENERATION_MODEL,
     LITELLM_MASTER_KEY,
     QDRANT_COLLECTION,
     QDRANT_URL,
 )
-from src.excel_tool import DuckDBStore  # noqa: E402
-from src.rag_agent import ask_agent, build_rag_agent, stream_agent  # noqa: E402
+from src.pipeline import (  # noqa: E402
+    _looks_excel,
+    ask_with_decomposition,
+    ask_with_reflection,
+    build_decomposition_pipeline,
+    build_reflection_pipeline,
+)
+from src.rag_agent import build_rag_agent, stream_agent  # noqa: E402
 from src.retriever import retrieve  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -235,12 +240,26 @@ RETRIEVAL_RESULTS_PATH = RESULTS_DIR / "retrieval_results.jsonl"
 SUMMARY_PATH = RESULTS_DIR / "summary.json"
 
 
+def _strip_doc_ids(question: str) -> str:
+    """Remove inline doc_XXX references so the agent resolves documents by title."""
+    # "In doc_001, ..." → "..."
+    q = re.sub(r"\bIn doc_\d{3},\s*", "", question, flags=re.IGNORECASE)
+    # " (doc_001)" parentheticals
+    q = re.sub(r"\s*\(doc_\d{3}\)", "", q)
+    # ": doc_009 or doc_013" trailing qualifier after colon
+    q = re.sub(r":\s*doc_\d{3}(?:\s+or\s+doc_\d{3})?", "", q)
+    # any remaining bare doc_XXX
+    q = re.sub(r"\bdoc_\d{3}\b", "", q)
+    return re.sub(r"\s{2,}", " ", q).strip()
+
+
 def _normalise_question(item: dict[str, Any], file_stem: str, idx: int) -> dict[str, Any]:
     """Normalise a qa_pairs JSON item to the format expected by the eval runner.
 
     Handles:
     - qa_id: prefix with file_stem to avoid collisions across files
     - evidence: renamed from gold_evidence, keeping only doc_id and quote
+    - question: doc_XXX inline references stripped so the agent resolves by title
     """
     qa_id = f"{file_stem}__{item.get('qa_id') or f'q{idx}'}"
     raw_evidence = item.get("gold_evidence") or item.get("evidence") or []
@@ -252,7 +271,8 @@ def _normalise_question(item: dict[str, Any], file_stem: str, idx: int) -> dict[
         }
         for ev in raw_evidence
     ]
-    return {**item, "qa_id": qa_id, "evidence": evidence}
+    question = _strip_doc_ids(item.get("question", ""))
+    return {**item, "qa_id": qa_id, "evidence": evidence, "question": question}
 
 
 def load_questions(qa_dir: Path) -> list[dict[str, Any]]:
@@ -646,8 +666,9 @@ def run(
         encoding="utf-8",
     )
 
-    excel_store = DuckDBStore(EXCEL_FILES, db_path=DUCKDB_PATH) if EXCEL_FILES else None
-    agent = build_rag_agent(excel_store=excel_store)
+    agent = build_rag_agent()
+    reflection_pipeline = build_reflection_pipeline(agent)
+    decomposition_pipeline = build_decomposition_pipeline(agent)
 
     answer_rows: list[dict[str, Any]] = []
 
@@ -655,21 +676,50 @@ def run(
         query = question["question"]
         print(f"[{idx}/{len(questions)}] {question['qa_id']} — {query[:80]}")
 
-        # stream_agent collects tool-call chunks into retrieved_contexts for FaithfulnessMetric.
-        # Falls back to ask_agent on APIError (Groq occasionally fails to emit valid tool-call JSON).
+        # Multi-hop PDF/cross-doc questions go through decomposition so the agent gets
+        # an explicit sub-question plan. Excel cross-doc questions are excluded — the
+        # SQL sub-agent handles multiple tables natively in one call, and decomposition
+        # would just add an extra gpt-4o-mini call that competes with the eval judge TPM.
+        evidence_doc_ids = {ev.get("doc_id", "") for ev in question.get("evidence", []) if ev.get("doc_id")}
+        is_multihop = (
+            not _looks_excel(query)
+            and (
+                len(evidence_doc_ids) > 1
+                or question.get("question_type", "").startswith("cross")
+            )
+        )
+
         retrieved_contexts: list[str] = []
-        try:
-            answer_tokens: list[str] = []
-            for token in stream_agent(agent, query, collected_chunks=retrieved_contexts):
-                answer_tokens.append(token)
-            answer = "".join(answer_tokens)
-        except Exception as exc:
-            print(f"  [WARN] stream_agent failed ({type(exc).__name__}): {exc}. Retrying with ask_agent.")
+        if is_multihop:
             try:
-                answer = ask_agent(agent, query, retrieved_contexts=retrieved_contexts)
-            except Exception as exc2:
-                print(f"  [ERROR] ask_agent also failed: {exc2}")
+                answer = ask_with_decomposition(decomposition_pipeline, query)
+            except Exception as exc:
+                print(f"  [WARN] decomposition pipeline failed: {exc}")
                 answer = "Unsupported"
+        else:
+            # stream_agent collects tool-call chunks for FaithfulnessMetric.
+            # Falls back to reflection on failure.
+            try:
+                answer_tokens: list[str] = []
+                for token in stream_agent(agent, query, collected_chunks=retrieved_contexts):
+                    answer_tokens.append(token)
+                answer = "".join(answer_tokens)
+            except Exception as exc:
+                print(f"  [WARN] stream_agent failed ({type(exc).__name__}): {exc}. Retrying with reflection pipeline.")
+                try:
+                    answer = ask_with_reflection(reflection_pipeline, query)
+                except Exception as exc2:
+                    print(f"  [ERROR] reflection pipeline also failed: {exc2}")
+                    answer = "Unsupported"
+
+        # If answer is still Unsupported, give reflection a chance regardless of question type.
+        if answer.strip().lower() == "unsupported":
+            try:
+                reflected = ask_with_reflection(reflection_pipeline, query)
+                if reflected.strip().lower() != "unsupported":
+                    answer = reflected
+            except Exception as exc:
+                print(f"  [WARN] reflection retry failed: {exc}")
 
         answer_eval = evaluate_answer(question, answer, retrieved_contexts)
         answer_rows.append({
@@ -679,6 +729,9 @@ def run(
             "predicted_answer": answer_eval.pop("clean_answer", answer),
             **answer_eval,
         })
+
+        # Pace requests to stay under the eval judge TPM limit (200k/min on gpt-4o-mini).
+        time.sleep(6)
 
     ANSWER_RESULTS_PATH.write_text(
         "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in answer_rows),

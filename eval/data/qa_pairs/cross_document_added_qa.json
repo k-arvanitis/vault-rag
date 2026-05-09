@@ -1,8 +1,8 @@
 [
   {
     "qa_id": "qa_1",
-    "question": "Which document defines employment rules and which tracks financial data: doc_009 or doc_013?",
-    "gold_answer": "doc_009: employment rules; doc_013: budget tracking",
+    "question": "Between the Rosemont HR policy manual and the OSSE AFE budget tracker, which defines employment rules and which tracks financial data?",
+    "gold_answer": "Rosemont HR policy manual: employment rules; OSSE AFE budget tracker: financial data",
     "answer_type": "short_text",
     "question_type": "cross_document_compare",
     "difficulty": "easy",

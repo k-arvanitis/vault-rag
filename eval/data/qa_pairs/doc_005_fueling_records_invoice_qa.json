@@ -28,7 +28,7 @@
   {
     "qa_id": "qa_2",
     "question": "In the NTSB fueling records invoice (doc_005), what airport name is shown on the invoice?",
-    "gold_answer": "LLano Airport",
+    "gold_answer": "Llano Airport",
     "answer_type": "short_text",
     "question_type": "ocr_extraction",
     "difficulty": "easy",
@@ -42,7 +42,7 @@
         "doc_id": "doc_005_fueling_records_invoice",
         "evidence_type": "ocr_page",
         "page": 1,
-        "quote": "Transactions for SITE ID: 0001 LLano Airport"
+        "quote": "Transactions for SITE ID: 0001 Llano Airport"
       }
     ],
     "metadata": {
