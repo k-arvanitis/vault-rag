@@ -12,27 +12,26 @@ import argparse
 import json
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Generator
 
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from langchain_core.tools import StructuredTool
 from langchain_openai import ChatOpenAI
+from langsmith import traceable
 from langgraph.prebuilt import create_react_agent
 from pydantic import BaseModel
 
-from src.excel_tool import DuckDBStore, build_excel_tools
+from src.excel_agent import build_excel_agent_tools
+from src.excel_tool import DuckDBStore
 from src.reranker import BGEReranker, QwenReranker
 from src.retriever import (
-    _TABLE_CHUNK_TYPES,
     _extract_table_filter_token,
-    _table_signal_count,
     infer_query_chunk_types,
     retrieve,
 )
 from src.config import (
-    DUCKDB_PATH,
-    EXCEL_FILES,
     GENERATION_API_BASE,
     GENERATION_MODEL,
     LITELLM_MASTER_KEY,
@@ -51,102 +50,78 @@ from src.config import (
 # System prompt
 # ---------------------------------------------------------------------------
 
-_SYSTEM_PROMPT_SEARCH_ONLY = """You are an intelligent RAG assistant.
+_TOOLS_BLOCK_WITH_EXCEL = """You have two tools:
 
-You have one tool:
-
-1. **search_knowledge_base** — searches all knowledge sources: unstructured documents (PDFs, reports) and structured table rows (CSV/Excel) ingested into the vector store.
-
-Rules:
-- You MUST call search_knowledge_base before answering every question, no exceptions. Never answer from your own knowledge without searching first.
-- Use a focused, specific sub-question as the search query. Include key entity names (supplier names, transaction IDs, beneficiary names, dates) verbatim in your search query so they match the indexed content.
-- MULTI-PART QUESTIONS: When a question asks about two or more distinct pieces of information (comparing two policies, two documents, two entities), decompose it into separate sub-questions and issue one search_knowledge_base call per sub-question. Do not try to answer multiple distinct questions from a single search call.
-- Make each sub-question self-contained and specific: include all distinguishing terms (entity names, document type, policy name, dates, transaction IDs) so the search lands on the right content.
-- **DOC_ID IS MANDATORY**: whenever the question names or implies a specific document (by title, publisher, or alias), first call search_knowledge_base with the document name as the query to retrieve its document_summary chunk — that chunk contains the Document ID (e.g. "doc_001"). Then use that doc_id in your follow-up search_knowledge_base call to scope retrieval to that document. For two-part questions naming two different documents, resolve each doc_id separately.
-- **EXACT QUALIFIER IN QUERY**: when the question includes an exact qualifier — a date ("since June 2024"), a count category ("new topic areas", "closed-implemented"), or a precise descriptor — copy that exact phrase verbatim into your search query. This is critical for retrieving the passage that matches the qualifier, not a nearby passage with a different value.
-- For table row lookups: include ALL distinguishing attributes from the question (supplier name, date, transaction ID, department) in your search query to land on the exact row.
-- After you receive relevant tool results, answer from those results. Do not repeat the same search query or same document search.
-
-When answering:
-- Lead with the direct answer value — a name, number, date, or phrase — before adding any context. Do not open with "According to..." or "The X is..."; just state the value.
-- Only state values that appear in the retrieved text. Do not interpolate, infer, or calculate anything not explicitly present.
-- Each retrieved passage is prefixed with [N] file=<filename>. For multi-document questions, use the file= label to match each answer value to its correct source — do not mix values from different files.
-- If retrieved table rows are shown as "Relevant table rows", use the field labels to select the requested cell value exactly.
-- For multi-part questions, answer each part on its own line with a brief source label (e.g. "Federal Reserve: 4¼ to 4½ percent. GAO: $71.3 billion."). Only mark a part Unsupported if that part's value is absent.
-- **TIME-SCOPED NUMBERS**: when the question specifies an exact date or time qualifier (e.g., "since June 2024", "as of March 2024"), you MUST report the number explicitly paired with that exact date in the retrieved text. Do NOT report numbers paired with a different date, even if both appear in the same passage. The date qualifier in the question is the key — match it precisely.
-- **MULTI-NUMBER DISAMBIGUATION**: when a passage contains multiple numbers with different descriptors (e.g., "112 new matters and recommendations in 42 new topic areas"), read the question carefully to identify which descriptor it asks about, then report only the number paired with that descriptor. Never report the first number you see; identify the right one by matching the descriptor in the question.
-- Markdown headings (lines starting with #) in the retrieved text are document titles — quote them exactly when asked for a title.
-- Never perform arithmetic. If a sum or average is not pre-computed in the source, list the raw values and note the calculation is unavailable.
-- **VERBATIM VALUES**: when stating a specific number, rate, date, or named quantity, copy it exactly as it appears in the source. Do not reformat (e.g. do not convert "4¼ percent" to "4.25%", or "June 2024" to "Q2 2024"). Do not add explanation or context beyond what is explicitly stated in the retrieved text.
-
-ABSTENTION RULE (CRITICAL — follow exactly):
-- If the retrieved text does not contain the requested answer, you MUST output only the single word: Unsupported
-- Do not output Unsupported when the retrieved text contains the requested value under a matching field label or in a matching sentence.
-- No explanation. No hedging. No "I cannot find...". Just the single word: Unsupported
-- This applies unconditionally to: personal phone numbers, home addresses, passwords, login credentials, government ID numbers (SSN, passport), GPS coordinates, salaries or pay of named individuals, and any other detail not present verbatim in the retrieved text.
-- Do not use your general knowledge to fill gaps — if it is not in the retrieved text, output: Unsupported
-- **FILENAMES AND INTERNAL PATHS are not answers**: if the retrieved text only contains a filename (e.g. doc_001_procurement_policy.pdf) or a file path, do not return that as the answer value — output: Unsupported
-- **DOCUMENT IDENTITY CHECK**: when the question asks about a specific document by title or alias (e.g. "the services contract terms", "the procurement policy"), verify the retrieved text's file= label matches that specific document. If the retrieved content is from a different document (wrong publisher, wrong title), do not use it — search again with the correct doc_id.
-
-Always cite your sources:
-- Document chunks: [1], [2], etc.
-- Table results: mention the sheet/file name from the tool output.
-"""
-
-_SYSTEM_PROMPT_WITH_EXCEL = """You are an intelligent RAG assistant.
-
-You have two tools:
-
-1. **search_knowledge_base** — semantic search over all ingested documents: PDFs, reports, and table summaries.
-2. **query_excel** — execute a SQL SELECT query against cleaned Excel/CSV data in DuckDB. Use for lookups, filters, aggregations (SUM, COUNT, AVG, GROUP BY), and statistics.
+1. **search_knowledge_base** — semantic search over all ingested documents: PDFs, reports, and table sheet summaries.
+2. **query_excel** — answers any question about structured data (Excel/CSV) stored in DuckDB. Pass the full question as 'question'. The agent inside discovers the right table(s), generates SQL, and retries automatically.
 
 Tool routing:
-- **query_excel** — ONLY for documents that appear in the "Available DuckDB tables" list below. Never call query_excel for PDFs — even if they contain tables or numeric data; PDF tables must be retrieved via search_knowledge_base.
-- **search_knowledge_base** — for all PDF documents, policies, reports, findings, definitions, and any document NOT listed in the DuckDB schema below.
+- For structured data questions (Excel, CSV, spend reports, transactions): call **query_excel** directly with the complete question — include every filter detail (dates, amounts, supplier names, transaction numbers, departments) verbatim. Do NOT call search_knowledge_base first for Excel questions.
+- For PDFs, policies, reports, findings: use **search_knowledge_base** only — never query_excel.
+- If a question mixes PDF and Excel sources, use both tools.
+"""
 
-Rules:
+_TOOLS_BLOCK_SEARCH_ONLY = """You have one tool:
+
+1. **search_knowledge_base** — searches all knowledge sources: unstructured documents (PDFs, reports) and structured table rows (CSV/Excel) ingested into the vector store.
+"""
+
+_RULES_BLOCK = """Rules:
 - You MUST call a tool before answering every question, no exceptions. Never answer from your own knowledge without searching first.
-- MULTI-PART QUESTIONS: decompose into one tool call per sub-question. Make each sub-question self-contained with all distinguishing terms (entity names, document type, department, dates).
-- **CROSS-DOCUMENT QUESTIONS** (question mentions two distinct documents, policies, or data sources): you MUST make one separate tool call per document before synthesizing. Never answer a cross-document question from a single tool call.
-- **DOC_ID IS MANDATORY for search_knowledge_base**: whenever the question names or implies a specific document, first call search_knowledge_base with the document name as the query to retrieve its document_summary chunk — that chunk contains the Document ID (e.g. "doc_006"). Then use that doc_id in your follow-up call. For two-part questions naming two documents, resolve each doc_id separately.
-- **EXACT QUALIFIER IN QUERY**: copy exact date ranges, count categories, or descriptors verbatim into your search query.
-- **query_excel SQL rules**:
-  - **Always double-quote every column name**, even single-word ones: `"Department"`, `"Supplier Name"`, `"NET Amount"`, `"Transaction Date"`. Unquoted names with spaces will cause a SQL parse error.
-  - **ALWAYS use ILIKE for string column filters, never `=`**. String columns often have trailing whitespace that breaks exact equality. Example: `WHERE "Department" ILIKE '%BUSINESS DONCASTER%'` not `= 'BUSINESS DONCASTER'`.
-  - **Supplier/beneficiary names in questions may be truncated**. Copy the name from the question CHARACTER FOR CHARACTER into the ILIKE pattern — do NOT expand, complete, or spell out truncated words. Example: question says "Cash Converters Yorkshir" → use `ILIKE '%Cash Converters Yorkshir%'`, never `'%Cash Converters Yorkshire%'`.
-  - **"Directorate / Department" notation** (e.g. "CHIEF EXECUTIVE / HUMAN RESOURCES") means two separate columns. Split on "/" and filter each column independently: `WHERE "Directorate" ILIKE '%CHIEF EXECUTIVE%' AND "Department" ILIKE '%HUMAN RESOURCES%'`.
-  - **doc_006 column semantics**: `"Department"` holds department/team names (e.g. "LEGAL SERVICES", "BUSINESS DONCASTER"); `"Merchant Category"` holds spending categories (e.g. "Government", "Supermarkets"). `"Supplier Name"` is the entity/vendor name in doc_006; `"Beneficiary"` serves the same role in doc_007. Do not confuse department names with merchant categories.
-  - For numeric filters: if the column type is a number type (BIGINT, DOUBLE, INTEGER, FLOAT), use `=` directly: `WHERE "NET Amount" = 206`. If the column type is VARCHAR (amounts stored with commas like '440,850.00'), use ILIKE: `WHERE "Total" ILIKE '%440,850%'`.
-  - For date filters: all date columns are stored as 'YYYY-MM-DD' strings. Always rewrite the date from the question into YYYY-MM-DD before querying. Example: question says "04/04/2025" → use `WHERE "Date" = '2025-04-04'`.
-  - Use LIMIT when you need only one specific row.
-- **CROSS-DOCUMENT questions**: make one `query_excel` call per table. Synthesize the results in your final answer.
-- After you receive relevant tool results, answer from those results. Do not repeat the same tool call with identical arguments.
+- Use a focused, specific sub-question as the search query. Include key entity names (supplier names, transaction IDs, beneficiary names, dates) verbatim so they match the indexed content.
+- MULTI-PART QUESTIONS: when a question asks about two or more distinct pieces of information, decompose it into separate sub-questions and issue one tool call per sub-question. If all parts are from the same Excel dataset, pass the full multi-part question to query_excel in one call.
+- **CROSS-DOCUMENT QUESTIONS**: for PDF/text docs — two separate search_knowledge_base calls, each scoped to one doc_id. For Excel/CSV cross-document questions — one query_excel call with the full question.
+- **DOC_ID IS MANDATORY**: whenever the question names or implies a specific document (by title, publisher, or alias), first call search_knowledge_base with the document name as the query to retrieve its document_summary chunk — that chunk contains the Document ID (e.g. "doc_001"). Then use that doc_id in your follow-up call to scope retrieval. For two-part questions naming two different documents, resolve each doc_id separately.
+- **EXACT QUALIFIER IN QUERY**: when the question includes an exact qualifier — a date, a count category, a status label, or a precise descriptor — copy that exact phrase verbatim into your search query. This is critical for retrieving the passage that matches the qualifier, not a nearby passage with a different value.
+- For table row lookups: include ALL distinguishing attributes from the question (supplier name, date, transaction ID, department) in your search query to land on the exact row.
+- After you receive tool results, answer from those results. Do not repeat identical tool calls.
+"""
 
-When answering:
+_ANSWERING_BLOCK = """When answering:
 - Lead with the direct answer value — a name, number, date, or phrase — before adding any context. Do not open with "According to..." or "The X is..."; just state the value.
 - Only state values that appear in the retrieved text. Do not interpolate, infer, or calculate anything not explicitly present.
 - Each retrieved passage is prefixed with [N] file=<filename>. For multi-document questions, use the file= label to match each answer value to its correct source — do not mix values from different files.
 - If retrieved table rows are shown as "Relevant table rows", use the field labels to select the requested cell value exactly.
-- For multi-part questions, answer each part on its own line with a brief source label (e.g. "Federal Reserve: 4¼ to 4½ percent. GAO: $71.3 billion."). Only mark a part Unsupported if that part's value is absent.
-- **TIME-SCOPED NUMBERS**: when the question specifies an exact date or time qualifier (e.g., "since June 2024", "as of March 2024"), you MUST report the number explicitly paired with that exact date in the retrieved text. Do NOT report numbers paired with a different date, even if both appear in the same passage. The date qualifier in the question is the key — match it precisely.
-- **MULTI-NUMBER DISAMBIGUATION**: when a passage contains multiple numbers with different descriptors (e.g., "112 new matters and recommendations in 42 new topic areas"), read the question carefully to identify which descriptor it asks about, then report only the number paired with that descriptor. Never report the first number you see; identify the right one by matching the descriptor in the question.
+- For multi-part questions, answer each part on its own line with a brief source label (e.g. "Source A: <value>. Source B: <value>."). Only mark a part Unsupported if that part's value is absent.
+- **TIME-SCOPED NUMBERS**: when the question specifies an exact date or time qualifier, report only the number explicitly paired with that exact date in the retrieved text. Do NOT report numbers paired with a different date, even if both appear in the same passage.
+- **MULTI-NUMBER DISAMBIGUATION**: when a passage contains multiple numbers with different descriptors, read the question to identify which descriptor it asks about, then report only the number paired with that descriptor. Never report the first number you see.
 - Markdown headings (lines starting with #) in the retrieved text are document titles — quote them exactly when asked for a title.
 - Never perform arithmetic. If a sum or average is not pre-computed in the source, list the raw values and note the calculation is unavailable.
-- **VERBATIM VALUES**: when stating a specific number, rate, date, or named quantity, copy it exactly as it appears in the source. Do not reformat (e.g. do not convert "4¼ percent" to "4.25%", or "June 2024" to "Q2 2024"). Do not add explanation or context beyond what is explicitly stated in the retrieved text.
+- **VERBATIM VALUES**: when stating a specific number, rate, date, or named quantity, copy it exactly as it appears in the source. Preserve original formatting — do not normalize fractions, units, or date formats.
+- **SHEET COUNT QUESTIONS**: when asked whether a document contains one sheet or multiple sheets, count the number of distinct sheet_summary chunks returned for that document. If more than one, answer "No" (it has multiple sheets).
+"""
 
-ABSTENTION RULE (CRITICAL — follow exactly):
+_ABSTENTION_BLOCK = """ABSTENTION RULE (CRITICAL — follow exactly):
 - If the retrieved text does not contain the requested answer, you MUST output only the single word: Unsupported
 - Do not output Unsupported when the retrieved text contains the requested value under a matching field label or in a matching sentence.
 - No explanation. No hedging. No "I cannot find...". Just the single word: Unsupported
 - This applies unconditionally to: personal phone numbers, home addresses, passwords, login credentials, government ID numbers (SSN, passport), GPS coordinates, salaries or pay of named individuals, and any other detail not present verbatim in the retrieved text.
-- Do not use your general knowledge to fill gaps — if it is not in the retrieved text, output: Unsupported
-- **FILENAMES AND INTERNAL PATHS are not answers**: if the retrieved text only contains a filename (e.g. doc_001_procurement_policy.pdf) or a file path, do not return that as the answer value — output: Unsupported
-- **DOCUMENT IDENTITY CHECK**: when the question asks about a specific document by title or alias (e.g. "the services contract terms", "the procurement policy"), verify the retrieved text's file= label matches that specific document. If the retrieved content is from a different document (wrong publisher, wrong title), do not use it — search again with the correct doc_id.
+- Do not use your general knowledge to fill gaps — if it is not in the retrieved text, output: Unsupported. Only answers explicitly stated in the retrieved passages are valid.
+- **FILENAMES AND INTERNAL PATHS are not answers**: if the retrieved text only contains a filename or a file path, do not return that as the answer value — output: Unsupported
+- **DOCUMENT IDENTITY CHECK**: when the question asks about a specific document by title or alias, verify the retrieved text's file= label matches that specific document. If the retrieved content is from a different document, do not use it — search again with the correct doc_id.
+"""
 
-Always cite your sources:
+_CITATION_BLOCK = """Always cite your sources:
 - Document chunks: [1], [2], etc.
 - Table results: mention the sheet/file name from the tool output.
 """
+
+
+def _compose_system_prompt(*, with_excel: bool) -> str:
+    """Compose the agent system prompt from shared blocks plus the right tools header."""
+    tools = _TOOLS_BLOCK_WITH_EXCEL if with_excel else _TOOLS_BLOCK_SEARCH_ONLY
+    return (
+        "You are an intelligent RAG assistant.\n\n"
+        f"{tools}\n"
+        f"{_RULES_BLOCK}\n"
+        f"{_ANSWERING_BLOCK}\n"
+        f"{_ABSTENTION_BLOCK}\n"
+        f"{_CITATION_BLOCK}"
+    )
+
+
+_SYSTEM_PROMPT_SEARCH_ONLY = _compose_system_prompt(with_excel=False)
+_SYSTEM_PROMPT_WITH_EXCEL = _compose_system_prompt(with_excel=True)
 
 
 def _is_thinking_model(model_name: str) -> bool:
@@ -155,11 +130,10 @@ def _is_thinking_model(model_name: str) -> bool:
     return any(k in name for k in ("qwen", "qwq", "deepseek-r", "r1"))
 
 
-def _build_system_prompt(model_name: str, has_excel_tools: bool = False) -> str:
-    """Build system prompt; include Excel tool instructions only when those tools are registered."""
+def _build_system_prompt(model_name: str) -> str:
+    """Build system prompt. query_excel is always registered so the Excel variant is always used."""
     prefix = "/no_think " if _is_thinking_model(model_name) else ""
-    body = _SYSTEM_PROMPT_WITH_EXCEL if has_excel_tools else _SYSTEM_PROMPT_SEARCH_ONLY
-    return prefix + body
+    return prefix + _SYSTEM_PROMPT_WITH_EXCEL
 
 
 # Keep a module-level default for callers that don't pass a model name
@@ -198,6 +172,7 @@ def _llm_call(prompt: str, api_base: str, model_name: str, api_key: str = "", ma
     return re.sub(r"(?s)<think>.*?</think>", "", raw).strip()
 
 
+@traceable(name="hyde-expansion")
 def _hyde(query: str, api_base: str, model_name: str) -> str:
     """Generate a hypothetical answer to embed instead of the raw query (HyDE)."""
     no_think = "/no_think " if _is_thinking_model(model_name) else ""
@@ -864,331 +839,12 @@ def _merge_hits(primary: list[dict[str, Any]], secondary: list[dict[str, Any]]) 
 
 
 def _enrich_search_query(query: str) -> str:
-    """Append high-value lexical anchors that vague subqueries often drop."""
-    q = query.lower()
-    additions: list[str] = []
-    if "new topic areas" in q and not re.search(r"\bmatters?\b|\brecommendations?\b", q):
-        additions.append("identified matters recommendations")
-    if "closed" in q and "implemented" in q and ("total" in q or "march 2024" in q):
-        additions.append("Status Closed implemented Number of matters Number of recommendations Total 1341")
-    if "open" in q and "not addressed" in q and ("matters" in q or "recommendations" in q):
-        additions.append("Open not addressed 64 matters 346 recommendations 410 total Table 3")
-    if "payment" in q and ("timeline" in q or "deadline" in q or "invoice" in q):
-        additions.append("valid invoice 30 days undisputed purchase order delivery documents before payment")
-    if "securities holdings" in q and "since june 2024" in q and "reduced" not in q:
-        additions.append("reduced securities holdings by since June 2024")
-    if "target range" in q and ("rate cuts" in q or "lowered" in q):
-        additions.append("September November December meetings bringing it to the current range")
-    if "extension" in q and ("renewal" in q or "period" in q) and "contract term" not in q:
-        additions.append("contract term maximum optional extension up to years months")
-    if "federal buying power" in q or ("buying power" in q and "federal" in q):
-        additions.append("48.8 billion fiscal years 2017 2021 cost savings Table 4")
-    if "harassment" in q and ("investigation" in q or "days" in q or "maximum" in q or "time" in q):
-        additions.append("30 days harassment investigation complete maximum")
-    if "law" in q and "govern" in q and ("agreement" in q or "contract" in q):
-        additions.append("English law governed contract agreement")
-    if "approved" in q and "doc_001" in q and "original" not in q and "issue" not in q:
-        additions.append("Approved September 4 2024 board approval date")
-    if "figure 3" in q and "additional financial benefits" in q:
-        additions.append("71.3 billion additional financial benefits 2024 annual report Figure 3")
-    if "27.1 billion" in q or ("27.1" in q and "fiscal year 2023" in q):
-        additions.append("COVID-19 Funding Spending 27.1 billion fiscal year 2023 Table 4")
-    if "public-safety broadband" in q or "public safety broadband" in q:
-        additions.append("15 billion 15 years Public-Safety Broadband Network Table 6")
-    if "defense" in q and "largest" in q and "financial benefits" in q:
-        additions.append("Defense 197 billion largest mission financial benefits Figure 4")
-    if "open" in q and "duplication" in q and "department of defense" in q:
-        additions.append("Department of Defense 99 open duplication cost savings Figure 5")
-    if not additions:
-        return query
-    return f"{query} {' '.join(additions)}"
+    """Pass-through hook for query enrichment.
 
-
-def _numeric_tokens(text: str) -> list[str]:
-    return re.findall(r"\b\d[\d,]*\b", text)
-
-
-def _extract_new_topic_areas_value(query: str, contexts: list[str]) -> str | None:
-    """Return the requested 'new topic areas' count when it appears in context."""
-    if "new topic areas" not in query.lower():
-        return None
-    packed = "\n".join(contexts)
-    patterns = [
-        r"\b(\d[\d,]*)\s+new\s+topic\s+areas\b",
-        r"\bacross\s+(\d[\d,]*)\s+new\s+topic\s+areas\b",
-        r"\bidentif(?:y|ies|ied)\s+(\d[\d,]*)\s+new\s+topic\s+areas\b",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, packed, flags=re.IGNORECASE)
-        if match:
-            return match.group(1)
-    return None
-
-
-def _extract_closed_implemented_total(query: str, contexts: list[str]) -> tuple[str, list[str]] | None:
-    """Return (total, row_numbers) for GAO-style Closed-implemented table rows."""
-    q = query.lower()
-    if not ("closed" in q and "implemented" in q and "total" in q and "recommendations" in q):
-        return None
-
-    for ctx in contexts:
-        normalized = re.sub(r"[\u2010-\u2015]", "-", ctx)
-        for line in normalized.splitlines():
-            if "closed" not in line.lower() or "implemented" not in line.lower():
-                continue
-            numbers = _numeric_tokens(line)
-            if len(numbers) >= 3:
-                return numbers[-1], numbers
-
-        narrative = re.search(
-            r"fully\s+(?:addressed|implemented)\s+(\d[\d,]*)|closed\s*-\s*implemented[^.\n]{0,120}?(\d[\d,]*)\s*$",
-            normalized,
-            flags=re.IGNORECASE,
-        )
-        if narrative:
-            value = next((g for g in narrative.groups() if g), None)
-            if value:
-                return value, [value]
-    return None
-
-
-def _extract_securities_reduction_value(query: str, contexts: list[str]) -> str | None:
-    q = query.lower()
-    if not ("securities holdings" in q and "since june 2024" in q):
-        return None
-    packed = "\n".join(contexts)
-    match = re.search(
-        r"reduced\s+its\s+securities\s+holdings\s+by\s+(\$?\d[\d,.]*\s*(?:billion|trillion)?)\s+since\s+June\s+2024",
-        packed,
-        flags=re.IGNORECASE,
-    )
-    if match:
-        return match.group(1)
-    return None
-
-
-def _extract_post_cut_target_range(query: str, contexts: list[str]) -> str | None:
-    q = query.lower()
-    if not ("target range" in q and ("rate cuts" in q or "lowered" in q or "three 2024" in q)):
-        return None
-    packed = "\n".join(contexts)
-    patterns = [
-        r"bringing\s+it\s+to\s+the\s+current\s+range\s+of\s+([0-9¼½¾]+\s+to\s+[0-9¼½¾]+\s+percent)",
-        r"current\s+range\s+of\s+([0-9¼½¾]+\s+to\s+[0-9¼½¾]+\s+percent)",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, packed, flags=re.IGNORECASE)
-        if match:
-            return match.group(1)
-    return None
-
-
-def _extract_invoice_validation_statement(query: str, contexts: list[str]) -> str | None:
-    q = query.lower()
-    if not ("invoice" in q and ("other" in q or "procurement" in q)):
-        return None
-    packed = "\n".join(contexts)
-    match = re.search(
-        r"All\s+Invoices\s+must\s+be\s+validated\s+against\s+the\s+original\s+PO\s+and\s+delivery\s+documents\s+before\s+payment\s+is\s+made",
-        packed,
-        flags=re.IGNORECASE,
-    )
-    if match:
-        return "the procurement policy requires invoices to be validated against the original PO and delivery documents before payment is made"
-    return None
-
-
-def _extract_open_not_addressed_matters(query: str, contexts: list[str]) -> str | None:
-    """Return number of matters open—not addressed from GAO Table 3."""
-    q = query.lower()
-    if not ("open" in q and "not addressed" in q and "matters" in q):
-        return None
-    packed = "\n".join(contexts)
-    # Table row pattern: "Open—Not Addressed  <matters>  <recommendations>  <total>"
-    match = re.search(
-        r"open[\s—–‐-]+not\s+addressed[^\d\n]{0,10}(\d[\d,]*)",
-        packed,
-        flags=re.IGNORECASE,
-    )
-    if match:
-        return match.group(1)
-    return None
-
-
-def _extract_federal_buying_power(query: str, contexts: list[str]) -> str | None:
-    """Return the Federal Buying Power financial benefit from Table 4 context."""
-    q = query.lower()
-    if not ("federal buying power" in q or ("buying power" in q and "federal" in q)):
-        return None
-    packed = "\n".join(contexts)
-    match = re.search(
-        r"(?:Federal\s+Buying\s+Power[^.]{0,200}?)"
-        r"(\$\d[\d,.]*\s*billion[^.]{0,80}?(?:fiscal\s+years?\s+\d{4}[^.]{0,40}?\d{4})?)",
-        packed,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-    if match:
-        return match.group(1).strip()
-    match = re.search(
-        r"\$48\.8\s*billion[^.]{0,120}",
-        packed,
-        flags=re.IGNORECASE,
-    )
-    if match:
-        return match.group(0).strip()
-    return None
-
-
-def _extract_broadband_financial_benefit(query: str, contexts: list[str]) -> str | None:
-    """Return the potential financial benefit for Public-Safety Broadband Network from Table 6."""
-    q = query.lower()
-    if not ("broadband" in q and ("financial benefit" in q or "potential" in q)):
-        return None
-    packed = "\n".join(contexts)
-    match = re.search(
-        r"(?:Broadband[^.]{0,100}?)Potential\s+Financial\s+Benefit[:\s]+(\$[\d.]+\s*billion[^.]{0,50}?years)",
-        packed,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-    if match:
-        return match.group(1).strip()
-    match = re.search(r"\$15\s*billion\s+over\s+15\s+years", packed, flags=re.IGNORECASE)
-    if match:
-        return match.group(0).strip()
-    return None
-
-
-def _extract_harassment_investigation_deadline(query: str, contexts: list[str]) -> str | None:
-    """Return the maximum days allowed for a harassment investigation."""
-    q = query.lower()
-    if not (("harassment" in q or "investigation" in q) and ("days" in q or "time" in q or "maximum" in q)):
-        return None
-    packed = "\n".join(contexts)
-    match = re.search(
-        r"(\d+)\s*(?:calendar\s*)?days?[^.]{0,60}(?:harassment|investigation|complete|conclude|finish)",
-        packed,
-        flags=re.IGNORECASE,
-    )
-    if match:
-        return f"{match.group(1)} days"
-    match = re.search(
-        r"(?:harassment|investigation)[^.]{0,80}?(\d+)\s*(?:calendar\s*)?days?",
-        packed,
-        flags=re.IGNORECASE,
-    )
-    if match:
-        return f"{match.group(1)} days"
-    return None
-
-
-def _repair_deterministic_numeric_answer(query: str, answer: str, contexts: list[str]) -> str:
-    """Correct common RAG synthesis slips when context contains an explicit count/table value.
-
-    Also handles the case where the agent abstained (Unsupported) but the value is extractable
-    via deterministic pattern matching.
+    Kept as a single seam so future query-rewrite logic (e.g. learned expansion)
+    can be wired in without touching call sites.
     """
-    if not contexts:
-        return answer
-
-    repaired = answer
-    is_unsupported = repaired.strip().lower() == "unsupported"
-
-    topic_count = _extract_new_topic_areas_value(query, contexts)
-    if topic_count:
-        if is_unsupported:
-            repaired = topic_count
-            is_unsupported = False
-        elif topic_count not in repaired:
-            if re.search(r"\b\d[\d,]*\s+new\s+topic\s+areas\b", repaired, flags=re.IGNORECASE):
-                repaired = re.sub(
-                    r"\b\d[\d,]*(?=\s+new\s+topic\s+areas\b)",
-                    topic_count,
-                    repaired,
-                    count=1,
-                    flags=re.IGNORECASE,
-                )
-            elif "new topic areas" in repaired.lower():
-                repaired = re.sub(
-                    r"new\s+topic\s+areas",
-                    f"{topic_count} new topic areas",
-                    repaired,
-                    count=1,
-                    flags=re.IGNORECASE,
-                )
-
-    closed_total = _extract_closed_implemented_total(query, contexts)
-    if closed_total:
-        total, row_numbers = closed_total
-        if is_unsupported:
-            repaired = total
-            is_unsupported = False
-        elif total not in repaired:
-            wrong = next((n for n in row_numbers if n != total and n in repaired), None)
-            repaired = repaired.replace(wrong, total, 1) if wrong else total
-
-    open_not_addressed = _extract_open_not_addressed_matters(query, contexts)
-    if open_not_addressed:
-        if is_unsupported:
-            repaired = open_not_addressed
-            is_unsupported = False
-        elif open_not_addressed not in repaired:
-            repaired = re.sub(r"\b76\b|\b\d[\d,]*\b", open_not_addressed, repaired, count=1)
-
-    federal_buying_power = _extract_federal_buying_power(query, contexts)
-    if federal_buying_power:
-        if is_unsupported:
-            repaired = federal_buying_power
-            is_unsupported = False
-        elif federal_buying_power not in repaired:
-            repaired = f"{repaired} ({federal_buying_power})"
-
-    harassment_deadline = _extract_harassment_investigation_deadline(query, contexts)
-    if harassment_deadline:
-        if is_unsupported:
-            repaired = harassment_deadline
-            is_unsupported = False
-
-    securities_reduction = _extract_securities_reduction_value(query, contexts)
-    if securities_reduction and securities_reduction not in repaired:
-        if is_unsupported:
-            repaired = securities_reduction
-            is_unsupported = False
-        else:
-            repaired = re.sub(
-                r"\$\d[\d,.]*\s*(?:billion|trillion)",
-                securities_reduction,
-                repaired,
-                count=1,
-                flags=re.IGNORECASE,
-            )
-
-    post_cut_range = _extract_post_cut_target_range(query, contexts)
-    if post_cut_range and post_cut_range not in repaired:
-        if is_unsupported:
-            repaired = post_cut_range
-            is_unsupported = False
-        else:
-            repaired = re.sub(
-                r"\b[0-9¼½¾]+\s+to\s+[0-9¼½¾]+\s+percent\b",
-                post_cut_range,
-                repaired,
-                count=1,
-                flags=re.IGNORECASE,
-            )
-
-    invoice_validation = _extract_invoice_validation_statement(query, contexts)
-    if invoice_validation and "validated against the original PO" not in repaired:
-        if not is_unsupported:
-            separator = " " if repaired.endswith(".") else ". "
-            repaired = f"{repaired}{separator}{invoice_validation}."
-
-    broadband_benefit = _extract_broadband_financial_benefit(query, contexts)
-    if broadband_benefit:
-        if is_unsupported or broadband_benefit not in repaired:
-            repaired = broadband_benefit
-            is_unsupported = False
-
-    return repaired
+    return query
 
 
 
@@ -1321,6 +977,7 @@ def _make_unified_tool(
         "rerank_top_n": min(rerank_top_n, MAX_TOOL_RESULTS),
     }
 
+    @traceable(name="fetch-docs", metadata={"top_k": retrieval_top_k, "rerank_top_n": rerank_top_n})
     def _fetch_docs(query: str, doc_id: str = "") -> str | None:
         max_table_chars = _limits["max_table_chars"]
         max_chunk_chars = _limits["max_chunk_chars"]
@@ -1346,47 +1003,109 @@ def _make_unified_tool(
 
         # doc_XXX identifiers in the query → use as scope filter (metadata), not content filter.
         # Real content IDs (invoice/transaction numbers) → use as filter_token (content text match).
-        inferred_doc_id = _DOC_ID_RE.search(search_query)
-        effective_scope = valid_doc_scope or (inferred_doc_id.group(0).lower() if inferred_doc_id else None)
+        inferred_doc_ids = [m.lower() for m in _DOC_ID_RE.findall(search_query)]
+        if valid_doc_scope:
+            effective_scope = valid_doc_scope
+        elif len(inferred_doc_ids) == 1:
+            effective_scope = inferred_doc_ids[0]
+        else:
+            effective_scope = None  # cross-doc or no scope — parallel retrieval handles this below
+        # Whether to run parallel scoped retrieval instead of a single unscoped search.
+        # Activates when exactly two distinct doc_ids appear in the query and no explicit
+        # scope was passed from outside — equivalent to LangGraph Send fan-out per doc.
+        _parallel_doc_ids: list[str] = inferred_doc_ids if len(inferred_doc_ids) == 2 and not valid_doc_scope else []
+        # Explicitly mentioned doc_ids get maximum stage1 boost regardless of embedding rank.
+        explicitly_mentioned_doc_ids: set[str] = set(inferred_doc_ids)
 
         non_doc_ids = [m for m in _ID_RE.findall(search_query) if not _DOC_ID_RE.match(m)]
         filter_token: str | None = non_doc_ids[0] if non_doc_ids else None
-        if filter_token is None and (chunk_types == _TABLE_CHUNK_TYPES or _table_signal_count(search_query) >= 2):
+        # _ID_RE requires a letter+digit mix, so pure-digit codes (invoice numbers, IDs)
+        # are missed. Extract them explicitly when the query mentions "invoice" or "transaction".
+        if filter_token is None:
+            _pure_digit_id = re.search(r'\b(\d{5,})\b', search_query)
+            if _pure_digit_id and any(w in search_query.lower() for w in ("invoice", "transaction", "record")):
+                filter_token = _pure_digit_id.group(1)
+        if filter_token is None:
             filter_token = _extract_table_filter_token(search_query)
-        if filter_token is None and "new topic areas" in search_query.lower():
-            filter_token = "new topic areas"
-        if filter_token is None and "closed" in search_query.lower() and "implemented" in search_query.lower():
-            filter_token = "implemented"
-        if filter_token is None and "open" in search_query.lower() and "not addressed" in search_query.lower() and "matters" in search_query.lower():
-            filter_token = "addressed"
-        if filter_token is None and "securities holdings" in search_query.lower() and "since june 2024" in search_query.lower():
-            filter_token = "since June 2024"
-        # These override any previously inferred token to pinpoint the specific chunk
-        if "federal buying power" in search_query.lower():
-            filter_token = "48.8"
-        elif "27.1" in search_query and "fiscal year 2023" in search_query.lower():
-            filter_token = "27.1"
-        elif "public-safety broadband" in search_query.lower():
-            filter_token = "broadband"
-        elif "figure 3" in search_query.lower() and "additional financial benefits" in search_query.lower():
-            filter_token = "71.3"
 
         retrieval_query = _enrich_search_query(search_query)
 
-        # HyDE is useful for broad semantic questions but can drift on precise
-        # factoid/table lookups. Keep raw-query hits as the primary candidate set
-        # and use HyDE only to add extra candidates.
-        raw_hits = retrieve(
+        # Stage 1 (doc routing): search document_summaries (all doc types) to identify
+        # likely source documents. Results used to BOOST chunk ranking — not as exclusive
+        # scope, so wrong Stage 1 picks don't break retrieval for other question types.
+        stage1_doc_ids: set[str] = set()
+        if not effective_scope:
+            doc_summary_hits = retrieve(
+                query=retrieval_query,
+                top_k=5,
+                qdrant_url=qdrant_url,
+                collection=collection,
+                use_qdrant=True,
+                filter_token=None,
+                force_chunk_types=["document_summary"],
+                force_exclude_chunk_types=None,
+                scope_doc_id=None,
+            )
+            for ds_hit in doc_summary_hits:
+                ds_doc_id = (ds_hit.get("metadata") or {}).get("doc_id", "")
+                if _DOC_ID_RE.fullmatch(ds_doc_id):
+                    stage1_doc_ids.add(ds_doc_id)
+            # Explicitly mentioned doc_ids always get the boost regardless of Stage 1 rank.
+            stage1_doc_ids |= explicitly_mentioned_doc_ids
+
+        # Fix 1: for single-doc scoped queries the answer chunk may not rank in the global
+        # top-8 after reranking. Give the reranker a wider pool — context is bounded since
+        # chunks come from one document only. Cap at 12 to avoid flooding context with
+        # similar chunks from dense docs (OCR invoices, long reports) that confuse the LLM.
+        if effective_scope:
+            _rerank_top_n = max(_rerank_top_n, 12)
+
+        # sheet_summary chunks contain only column names — filter_token (a specific row
+        # value like a supplier name or transaction ID) would eliminate all of them.
+        # Fetch sheet_summaries separately with no filter_token, then merge with the
+        # main retrieval which applies filter_token to PDF/text chunks.
+        sheet_summary_hits = retrieve(
             query=retrieval_query,
-            top_k=retrieval_top_k,
+            top_k=300,
             qdrant_url=qdrant_url,
             collection=collection,
             use_qdrant=True,
-            filter_token=filter_token,
-            force_chunk_types=chunk_types,
-            force_exclude_chunk_types=exclude_chunk_types,
+            filter_token=None,
+            force_chunk_types=["sheet_summary"],
+            force_exclude_chunk_types=None,
             scope_doc_id=effective_scope,
         )
+
+        if _parallel_doc_ids:
+            # Parallel scoped retrieval: fan out to each doc simultaneously then merge.
+            # Equivalent to LangGraph Send fan-out but within a synchronous tool call.
+            def _retrieve_scoped(doc_id: str) -> list[dict[str, Any]]:
+                return retrieve(
+                    query=retrieval_query,
+                    top_k=retrieval_top_k,
+                    qdrant_url=qdrant_url,
+                    collection=collection,
+                    use_qdrant=True,
+                    filter_token=filter_token,
+                    force_chunk_types=chunk_types,
+                    force_exclude_chunk_types=["sheet_summary"],
+                    scope_doc_id=doc_id,
+                )
+            with ThreadPoolExecutor(max_workers=len(_parallel_doc_ids)) as pool:
+                futures = [pool.submit(_retrieve_scoped, d) for d in _parallel_doc_ids]
+                raw_hits = _merge_hits(futures[0].result(), futures[1].result())
+        else:
+            raw_hits = retrieve(
+                query=retrieval_query,
+                top_k=retrieval_top_k,
+                qdrant_url=qdrant_url,
+                collection=collection,
+                use_qdrant=True,
+                filter_token=filter_token,
+                force_chunk_types=chunk_types,
+                force_exclude_chunk_types=["sheet_summary"],
+                scope_doc_id=effective_scope,
+            )
 
         # Older PDF chunks have no metadata.doc_id — if the doc_id filter returned
         # nothing, retry with metadata.source_file text match (contains the doc_id
@@ -1400,7 +1119,7 @@ def _make_unified_tool(
                 use_qdrant=True,
                 filter_token=filter_token,
                 force_chunk_types=chunk_types,
-                force_exclude_chunk_types=exclude_chunk_types,
+                force_exclude_chunk_types=["sheet_summary"],
                 scope_doc_id=effective_scope,
             )
 
@@ -1417,18 +1136,20 @@ def _make_unified_tool(
                         use_qdrant=True,
                         filter_token=filter_token,
                         force_chunk_types=chunk_types,
-                        force_exclude_chunk_types=exclude_chunk_types,
+                        force_exclude_chunk_types=["sheet_summary"],
                         scope_doc_id=effective_scope,
                     )
             except Exception:
                 hyde_hits = []
 
         hits = _merge_hits(raw_hits, hyde_hits)[: max(retrieval_top_k, _rerank_top_n)]
+        # Prepend sheet_summary hits so the reranking split below always has them
+        hits = sheet_summary_hits + hits
 
-        # When scoped to a doc but got no hits (table chunk types incorrectly
-        # applied to PDF narrative queries like "Table 3 closed-implemented"), retry
-        # without chunk-type constraints so PDF page_content chunks are included.
-        # force_chunk_types=[] means "explicitly no filter" vs None="infer from query".
+        # When scoped to a doc but got no hits, retry without chunk-type constraints
+        # so PDF page_content chunks are included. force_chunk_types=[] means
+        # "explicitly no filter" vs None="infer from query".
+        # sheet_summaries are always fetched separately above; exclude here to avoid dups.
         if not hits and effective_scope and chunk_types:
             hits = retrieve(
                 query=retrieval_query,
@@ -1438,24 +1159,62 @@ def _make_unified_tool(
                 use_qdrant=True,
                 filter_token=filter_token,
                 force_chunk_types=[],
-                force_exclude_chunk_types=[],
+                force_exclude_chunk_types=["sheet_summary"],
                 scope_doc_id=effective_scope,
             )
+            hits = sheet_summary_hits + hits
 
         if not hits:
             return None
 
+        # Split hits by chunk type: sheet_summaries are ranked by column-name keyword
+        # overlap (cross-encoders are trained on passage-answer pairs, not metadata
+        # discovery chunks, so they return noise scores for sheet_summaries).
+        # All other chunks go through the normal BGE reranker path.
+        sheet_hits = [h for h in hits if (h.get("metadata") or {}).get("chunk_type") == "sheet_summary"]
+        other_hits = [h for h in hits if (h.get("metadata") or {}).get("chunk_type") != "sheet_summary"]
+
+        q_terms = set(re.sub(r"[^a-z0-9 ]", " ", retrieval_query.lower()).split())
+
+        def _col_overlap(hit: dict) -> int:
+            content = (hit.get("content") or "").lower()
+            col_line = next((ln for ln in content.splitlines() if ln.startswith("columns:")), "")
+            col_tokens = set(re.sub(r"[^a-z0-9 ]", " ", col_line).split())
+            return len(q_terms & col_tokens)
+
+        def _sheet_sort_key(hit: dict) -> tuple[int, int]:
+            overlap = _col_overlap(hit)
+            # Stage 1 boost: prefer sheets from Stage 1-identified docs as a tiebreaker.
+            stage1_bonus = 1 if (hit.get("metadata") or {}).get("doc_id", "") in stage1_doc_ids else 0
+            return (overlap, stage1_bonus)
+
+        ranked_sheet_hits = sorted(sheet_hits, key=_sheet_sort_key, reverse=True)
+
         reranked_used = False
-        if ranker is not None:
-            docs = [h.get("content", "") for h in hits]
+        if ranker is not None and other_hits:
+            docs = [h.get("content", "") for h in other_hits]
             reranked = ranker.rerank(retrieval_query, docs, top_n=_rerank_top_n)
-            reranked_hits = [{**hits[r["index"]], "rerank_score": r["score"]} for r in reranked]
-            # Keep a few raw dense hits visible. Cross-encoders can overfit broad terms
-            # like "Board" and demote the exact source chunk for simple factoid lookups.
-            top_hits = _merge_hits(raw_hits[: min(3, _rerank_top_n)], reranked_hits)[:_rerank_top_n]
+            reranked_hits = [{**other_hits[r["index"]], "rerank_score": r["score"]} for r in reranked]
+            top_other = _merge_hits(raw_hits[: min(3, _rerank_top_n)], reranked_hits)[:_rerank_top_n]
             reranked_used = True
         else:
-            top_hits = hits[:_rerank_top_n]
+            top_other = other_hits[:_rerank_top_n]
+
+        # Stage 1 boost for PDF/text chunks: within top_other, promote hits from
+        # Stage-1-identified or explicitly-mentioned docs as a stable tiebreaker.
+        # This surfaces cross-doc PDF chunks without overriding reranker relevance.
+        if stage1_doc_ids and not effective_scope:
+            top_other = sorted(
+                top_other,
+                key=lambda h: (
+                    -h.get("rerank_score", h.get("score", 0)),
+                    0 if (h.get("metadata") or {}).get("doc_id", "") in stage1_doc_ids else 1,
+                ),
+            )
+
+        # Sort sheet_summaries by column-name overlap with the query, cap at 8.
+        top_sheet = [h for h in ranked_sheet_hits if _col_overlap(h) > 0][:8]
+        top_hits = (top_sheet + top_other)[:max(_rerank_top_n, len(top_sheet) + 5)]
 
         parts: list[str] = []
         for i, h in enumerate(top_hits, start=1):
@@ -1536,7 +1295,6 @@ def build_rag_agent(
     model_name: str = GENERATION_MODEL,
     generation_api_base: str = GENERATION_API_BASE,
     use_hyde: bool = True,
-    excel_store: DuckDBStore | None = None,
 ) -> Any:
     ranker: BGEReranker | QwenReranker | None = None
     if reranker_model_name:
@@ -1585,17 +1343,11 @@ def build_rag_agent(
         doc_registry=doc_registry,
     )
 
-    tools = [tool]
-    if excel_store is not None:
-        tools.extend(build_excel_tools(excel_store))
+    excel_store = DuckDBStore()
+    tools = [tool] + build_excel_agent_tools(excel_store)
 
-    system_prompt = _build_system_prompt(model_name, has_excel_tools=excel_store is not None)
-    if excel_store is not None:
-        excel_sources_prompt = _format_excel_sources_for_prompt(excel_store)
-        if excel_sources_prompt:
-            system_prompt = system_prompt + excel_sources_prompt
-            print(f"[INFO] Excel sources injected into system prompt ({len(excel_store.tables())} tables).")
-    agent = create_react_agent(model=llm, tools=tools, prompt=system_prompt)
+    system_prompt = _build_system_prompt(model_name)
+    agent = create_react_agent(model=llm, tools=tools, prompt=system_prompt, name="vault-rag")
     agent._rag_limits = _rag_limits  # type: ignore[attr-defined]
     agent._system_prompt = system_prompt  # type: ignore[attr-defined]
     agent._generation_api_base = _to_openai_base(generation_api_base)  # type: ignore[attr-defined]
@@ -1766,9 +1518,6 @@ def ask_agent(
                     answer = "Unsupported"
         elif "search_knowledge_base" in answer:
             answer = "Unsupported"
-
-    if tool_contexts:
-        answer = _repair_deterministic_numeric_answer(query, answer, tool_contexts)
 
     answer = _normalize_unsupported(answer)
 
@@ -1982,9 +1731,6 @@ def stream_agent(
             except Exception as exc:
                 print(f"[WARN] Direct context answer fallback failed ({type(exc).__name__}): {exc}")
 
-    if _tool_contexts:
-        answer = _repair_deterministic_numeric_answer(query, answer, _tool_contexts)
-
     if answer:
         yield _normalize_unsupported(answer)
 
@@ -2011,16 +1757,7 @@ def main() -> None:
     parser.add_argument("--show-tool-uses", action="store_true")
     parser.add_argument("--stream", action="store_true", help="Stream the answer token-by-token.")
     parser.add_argument("--no-hyde", action="store_true", help="Disable HyDE query expansion.")
-    parser.add_argument(
-        "--excel-files",
-        nargs="*",
-        default=None,
-        help="Excel files to load for direct DataFrame queries. Defaults to EXCEL_FILES env var.",
-    )
     args = parser.parse_args()
-
-    excel_files = args.excel_files if args.excel_files is not None else EXCEL_FILES
-    excel_store = DuckDBStore(excel_files, db_path=DUCKDB_PATH) if excel_files else None
 
     agent = build_rag_agent(
         qdrant_url=args.qdrant_url,
@@ -2031,7 +1768,6 @@ def main() -> None:
         model_name=args.model_name,
         generation_api_base=args.generation_api_base,
         use_hyde=not args.no_hyde,
-        excel_store=excel_store,
     )
 
     if args.stream:
@@ -2042,6 +1778,12 @@ def main() -> None:
     else:
         answer = ask_agent(agent, args.query, show_tool_uses=args.show_tool_uses)
         print(json.dumps({"query": args.query, "answer": answer}, ensure_ascii=False, indent=2))
+
+    try:
+        from langsmith import Client
+        Client().flush()
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":
