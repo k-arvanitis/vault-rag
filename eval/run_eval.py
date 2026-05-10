@@ -296,6 +296,16 @@ def strip_think_blocks(text: str) -> str:
     return cleaned.strip()
 
 
+_RETRY_INSTRUCTION = (
+    "\n\nIMPORTANT: This is a retry. The previous attempt returned Unsupported. "
+    "You MUST follow the doc-routing protocol strictly: "
+    "(1) call search_knowledge_base with the topic words alone to identify the relevant "
+    "document_summary chunk and read its Document ID (doc_XXX). "
+    "(2) call search_knowledge_base again with the original question, passing that doc_id "
+    "as the doc_id argument to scope the search to that specific document."
+)
+
+
 def normalize_unsupported(text: str) -> str:
     """Accept only the literal word 'Unsupported' (case-insensitive) as a valid refusal.
 
@@ -720,6 +730,23 @@ def run(
                     answer = reflected
             except Exception as exc:
                 print(f"  [WARN] reflection retry failed: {exc}")
+
+        # Final fallback: forced retry with explicit doc-routing instruction.
+        # Mirrors api.py — Groq nondeterminism at temp=0 occasionally causes the
+        # agent to skip stage-1 routing on first attempt. Only fires for non-multihop
+        # paths (decomposition has its own per-sub-question retry).
+        if not is_multihop and answer.strip().lower() == "unsupported":
+            try:
+                retry_chunks: list[str] = []
+                retry_tokens: list[str] = []
+                for token in stream_agent(agent, query + _RETRY_INSTRUCTION, collected_chunks=retry_chunks):
+                    retry_tokens.append(token)
+                retry_answer = "".join(retry_tokens).strip()
+                if retry_answer and retry_answer.lower() != "unsupported":
+                    answer = retry_answer
+                    retrieved_contexts = retry_chunks
+            except Exception as exc:
+                print(f"  [WARN] forced retry failed: {exc}")
 
         answer_eval = evaluate_answer(question, answer, retrieved_contexts)
         answer_rows.append({

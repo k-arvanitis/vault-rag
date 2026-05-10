@@ -430,7 +430,9 @@ class TestStreamAgent:
         agent.stream.return_value = _make_stream_chunks(["ok"], tool_content=tool_content)
         chunks: list[str] = []
         list(stream_agent(agent, "q", collected_chunks=chunks))
-        assert len(chunks) == 2
+        # Tool-call boundary marker + 2 content chunks.
+        assert chunks[0] == "---CALL_BOUNDARY---"
+        assert len([c for c in chunks if c != "---CALL_BOUNDARY---"]) == 2
 
     def test_history_included_in_messages(self):
         agent = MagicMock()

@@ -25,6 +25,7 @@ from pydantic import BaseModel
 
 from src.excel_agent import build_excel_agent_tools
 from src.excel_tool import DuckDBStore
+from src.file_resolver import resolve_original_name
 from src.reranker import BGEReranker, QwenReranker
 from src.retriever import (
     _extract_table_filter_token,
@@ -77,6 +78,13 @@ _RULES_BLOCK = """Rules:
 - After you receive tool results, answer from those results. Do not repeat identical tool calls.
 """
 
+_CLARIFICATION_BLOCK = """CLARIFICATION RULE (apply BEFORE answering or returning Unsupported):
+- If the question is too broad to answer with a specific value — e.g. "what about HR policies?", "tell me about finance", "anything on procurement?" — and no specific entity, date, or value is being asked for, do NOT list files and do NOT synthesize a generic summary.
+- Instead, output exactly: "Clarify: <one short question listing 2-4 specific topics derived from the retrieved chunks>". Example: "Clarify: which HR topic — leave policy, harassment, equity, or monitoring?"
+- Trigger this rule when the retrieved chunks span 3+ unrelated documents OR contain only document_summary chunks with no detail-level content matching the question.
+- Do not use this rule when the question names a specific value, entity, date, or document — answer those normally.
+"""
+
 _ANSWERING_BLOCK = """When answering:
 - Lead with the direct answer value — a name, number, date, or phrase — before adding any context. Do not open with "According to..." or "The X is..."; just state the value.
 - Only state values that appear in the retrieved text. Do not interpolate, infer, or calculate anything not explicitly present.
@@ -114,6 +122,7 @@ def _compose_system_prompt(*, with_excel: bool) -> str:
         "You are an intelligent RAG assistant.\n\n"
         f"{tools}\n"
         f"{_RULES_BLOCK}\n"
+        f"{_CLARIFICATION_BLOCK}\n"
         f"{_ANSWERING_BLOCK}\n"
         f"{_ABSTENTION_BLOCK}\n"
         f"{_CITATION_BLOCK}"
@@ -150,7 +159,7 @@ MAX_TABLE_CHARS = int(os.getenv("MAX_TABLE_CHARS", str(_CFG_MAX_TABLE_CHARS)))
 MAX_TOOL_RESULTS = int(os.getenv("MAX_TOOL_RESULTS", "8"))
 
 
-def _llm_call(prompt: str, api_base: str, model_name: str, api_key: str = "", max_tokens: int = 128, temperature: float = 0.5) -> str:
+def _llm_call(prompt: str, api_base: str, model_name: str, api_key: str = "", max_tokens: int = 128, temperature: float = 0.0) -> str:
     import openai
     # Resolve key: explicit arg → LiteLLM master key → Groq → OpenAI → dummy
     key = (
@@ -268,6 +277,91 @@ def _normalize_unsupported(answer: str) -> str:
     return answer
 
 
+_BARE_FILENAME_RE = re.compile(
+    r"\bdoc_\d+[_a-z0-9-]*\.(?:pdf|csv|xlsx|xls|md|json|txt|tsv)\b",
+    re.IGNORECASE,
+)
+
+_BARE_FN_STOP = frozenset({
+    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "am",
+    "in", "on", "of", "for", "to", "from", "with", "by", "at", "as", "into",
+    "that", "which", "this", "these", "those", "it", "its", "they", "them",
+    "what", "who", "whom", "where", "when", "how", "why", "whose",
+    "and", "or", "but", "not", "no", "nor", "so", "if", "then",
+    "provides", "provide", "providing", "provided", "provider",
+    "gives", "give", "given", "giving", "gave",
+    "shows", "show", "showing", "shown", "showed",
+    "contains", "contain", "containing", "contained",
+    "has", "have", "had", "having",
+    "states", "state", "stating", "stated",
+    "mentions", "mention", "mentioning", "mentioned",
+    "specifies", "specify", "specifying", "specified",
+    "outlines", "outline", "outlining", "outlined",
+    "details", "detail", "detailing", "detailed",
+    "lists", "list", "listing", "listed",
+    "refers", "refer", "referring", "referred", "reference", "references",
+    "document", "documents", "doc", "docs",
+    "file", "files", "filename",
+    "report", "reports", "policy", "policies",
+    "page", "section", "chapter", "row", "table",
+    "csv", "pdf", "xlsx", "xls", "md", "json", "txt",
+    "source", "sources", "based", "according", "answer", "answers",
+    "above", "below", "found", "find",
+})
+
+
+def _is_bare_filename_answer(query: str, answer: str) -> bool:
+    """Return True if the answer is dominated by a filename with no extracted value.
+
+    The agent occasionally responds to "which document gives X" / "what is X" by
+    naming a topically-related document filename without actually extracting any
+    value matching the question. That is a refusal failure dressed up as an
+    answer. This check fires when, after removing filenames, framing words and
+    question-echo, no substantive tokens or numeric values remain.
+
+    The guard is general: it does not key on doc IDs, question patterns, or
+    specific data types — only on whether the answer carries content beyond a
+    filename + restated question.
+    """
+    if not answer or not answer.strip():
+        return False
+    # Strip only markers that wrap content; preserve underscores inside identifiers.
+    cleaned = re.sub(r"[*`#]+", "", answer.strip())
+    cleaned = re.sub(r"\[\d+\]", "", cleaned)
+    filenames = _BARE_FILENAME_RE.findall(cleaned)
+    if not filenames:
+        return False
+    stripped = cleaned
+    for fn in filenames:
+        stripped = stripped.replace(fn, " ")
+    # Numbers that already appear in the query are echo, not extracted values.
+    query_nums = set(re.findall(r"\d[\d,.$%/-]*", query))
+    nums = [n for n in re.findall(r"\d[\d,.$%/-]*", stripped) if n not in query_nums]
+    if nums:
+        return False
+    query_terms = set(re.findall(r"\b[a-z][a-z]{2,}\b", query.lower()))
+    tokens = re.findall(r"\b[A-Za-z][A-Za-z'/-]{1,}\b", stripped.lower())
+    substantive = [t for t in tokens if t not in _BARE_FN_STOP and t not in query_terms]
+    return len(substantive) < 2
+
+
+def _has_empty_reference_placeholder(query: str) -> bool:
+    """Detect questions with missing reference placeholders (e.g. 'in and the cost shown in ?').
+
+    These questions are unanswerable by construction — a reference (doc id, table, sheet)
+    was meant to fill a slot but the slot is empty. Any non-Unsupported answer is a
+    fabrication.
+    """
+    q = re.sub(r"\s+", " ", query).strip().lower()
+    return bool(
+        re.search(r"\bin and\b", q)
+        or re.search(r"\bin\s+and\s+the\b", q)
+        or re.search(r"\bin\s+\?", q)
+        or re.search(r"\bshown in\s*\?", q)
+        or re.search(r"\bfrom\s+\?", q)
+    )
+
+
 def _is_multi_part_query(query: str) -> bool:
     q = query.lower()
     return (
@@ -282,6 +376,15 @@ def _is_multi_part_query(query: str) -> bool:
         or bool(re.search(r"\bthe two\b.{0,40}\bdocuments?\b", q))
         or bool(re.search(r"\band the\b.{3,50}\brow\b", q))
         or bool(re.search(r"\beach\s+(?:document|doc|file|allow|has|contain)\b", q))
+        or bool(re.search(r"\?\s+and\s+for\b", q))
+        or bool(re.search(r"\band\s+which\s+(?:to|document|doc|file|report)\b", q))
+        or bool(
+            re.search(
+                r"\b(which|what)\b[^?]{1,40}\b(document|policy|file|report|invoice|contract|dataset)\b[^?]{1,150}\bor\b",
+                q,
+            )
+        )
+        or bool(re.search(r"\bcomparing\b.{1,80}\band\b", q))
     )
 
 
@@ -576,6 +679,7 @@ def _direct_retrieval_answer(query: str, api_base: str, model_name: str) -> str:
         for hit in hits:
             meta = hit.get("metadata", {}) or {}
             file_name = meta.get("file_name") or meta.get("source_file", "unknown")
+            file_name = resolve_original_name(file_name)
             content = (hit.get("content") or "").strip()
             contexts.append(f"[{context_index}] subquery={subquery}\nfile={file_name}\n{content}")
             context_index += 1
@@ -738,6 +842,7 @@ def _repair_incomplete_answer(
         for hit in hits[:4]:
             meta = hit.get("metadata", {}) or {}
             file_name = meta.get("file_name") or meta.get("source_file", "unknown")
+            file_name = resolve_original_name(file_name)
             content = (hit.get("content") or "").strip()
             if content:
                 repaired_contexts.append(f"[{context_index}] repair_query={missing_query}\nfile={file_name}\n{content}")
@@ -754,6 +859,17 @@ def _repair_incomplete_answer(
 
     if _looks_like_bad_final_answer(repaired):
         return answer
+
+    # Source-diversity acceptance check.
+    # When the original answer was a grounded abstention (bare Unsupported), only
+    # accept the repair if it actually brought in chunks from a NEW source. Without
+    # this guard, repair retrieval that re-surfaces chunks from the same doc the
+    # agent already saw lets the synthesis step fabricate a "complete" multi-part
+    # answer — converting correct refusals into wrong answers.
+    if _looks_like_bad_final_answer(answer):
+        if _context_source_count(repaired_contexts) <= source_count:
+            return answer
+
     if source_count < 2 and _is_better_multi_answer(repaired, answer):
         return repaired
     if _unsupported_count(repaired) < _unsupported_count(answer):
@@ -836,6 +952,50 @@ def _merge_hits(primary: list[dict[str, Any]], secondary: list[dict[str, Any]]) 
         seen.add(key)
         merged.append(hit)
     return merged
+
+
+def _fetch_neighbor_chunks(
+    qdrant_url: str,
+    collection: str,
+    source_file: str,
+    indices: list[int],
+) -> dict[int, str]:
+    """Return {chunk_index: content} for the requested neighbor chunks of a single file.
+
+    Used to expand a retrieved chunk with surrounding context — addresses chunker
+    boundary misses where the answer ends up split across consecutive chunks
+    (e.g. section header in chunk N, table of values in chunk N+1).
+    """
+    if not indices or not source_file:
+        return {}
+    from urllib.request import Request, urlopen
+    base = qdrant_url.rstrip("/")
+    url = f"{base}/collections/{collection}/points/scroll"
+    body = json.dumps({
+        "limit": len(indices) + 2,
+        "with_payload": True,
+        "with_vector": False,
+        "filter": {
+            "must": [
+                {"key": "metadata.source_file", "match": {"value": source_file}},
+                {"key": "metadata.chunk_index", "match": {"any": indices}},
+            ]
+        },
+    }).encode("utf-8")
+    req = Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return {}
+    out: dict[int, str] = {}
+    for point in data.get("result", {}).get("points", []) or []:
+        payload = point.get("payload") or {}
+        meta = payload.get("metadata") or {}
+        idx = meta.get("chunk_index")
+        if isinstance(idx, int):
+            out[idx] = (payload.get("content") or "").strip()
+    return out
 
 
 def _enrich_search_query(query: str) -> str:
@@ -1034,6 +1194,7 @@ def _make_unified_tool(
         # likely source documents. Results used to BOOST chunk ranking — not as exclusive
         # scope, so wrong Stage 1 picks don't break retrieval for other question types.
         stage1_doc_ids: set[str] = set()
+        stem_match_doc_ids: set[str] = set()
         if not effective_scope:
             doc_summary_hits = retrieve(
                 query=retrieval_query,
@@ -1052,6 +1213,52 @@ def _make_unified_tool(
                     stage1_doc_ids.add(ds_doc_id)
             # Explicitly mentioned doc_ids always get the boost regardless of Stage 1 rank.
             stage1_doc_ids |= explicitly_mentioned_doc_ids
+
+            # Filename-token boost: when a doc's stem shares >=2 content tokens with the
+            # query, add it to stage1 even if dense search ranked it low. Catches cases
+            # like "procurement policy" → doc_001_procurement_policy.pdf where the title
+            # literally matches but generic policy phrasing dominates the embedding.
+            stem_match_scores: dict[str, int] = {}
+            if doc_registry:
+                _STEM_STOPWORDS = {
+                    "the", "and", "for", "with", "from",
+                }
+                q_tokens = {
+                    t for t in re.findall(r"[a-z]{3,}", search_query.lower())
+                    if t not in _STEM_STOPWORDS
+                }
+                seen_doc_ids: set[str] = set()
+                for stem, mapped_id in doc_registry.items():
+                    if mapped_id in seen_doc_ids or not _DOC_ID_RE.fullmatch(mapped_id):
+                        continue
+                    stem_tokens = {
+                        t for t in re.findall(r"[a-z]{3,}", stem)
+                        if t not in _STEM_STOPWORDS and not t.startswith("doc")
+                    }
+                    overlap = len(q_tokens & stem_tokens)
+                    stem_match_scores[mapped_id] = max(
+                        stem_match_scores.get(mapped_id, 0), overlap
+                    )
+                    if overlap >= 2:
+                        stage1_doc_ids.add(mapped_id)
+                        stem_match_doc_ids.add(mapped_id)
+                        seen_doc_ids.add(mapped_id)
+
+            # Auto-scope: when a single doc dominates filename-token overlap (>=3 tokens,
+            # gap of >=2 over the next-best doc), scope retrieval to that doc. Prevents
+            # topically-similar but query-unrelated docs from competing for slots and
+            # confusing the LLM. Stays inert for symmetric cross-doc queries (where two
+            # docs tie or are close).
+            if (
+                not effective_scope
+                and not _parallel_doc_ids
+                and stem_match_scores
+            ):
+                sorted_pairs = sorted(stem_match_scores.items(), key=lambda kv: kv[1], reverse=True)
+                top_id, top_score = sorted_pairs[0]
+                second_score = sorted_pairs[1][1] if len(sorted_pairs) > 1 else 0
+                if top_score >= 3 and (top_score - second_score) >= 2:
+                    effective_scope = top_id
 
         # Fix 1: for single-doc scoped queries the answer chunk may not rank in the global
         # top-8 after reranking. Give the reranker a wider pool — context is bounded since
@@ -1088,7 +1295,7 @@ def _make_unified_tool(
                     use_qdrant=True,
                     filter_token=filter_token,
                     force_chunk_types=chunk_types,
-                    force_exclude_chunk_types=["sheet_summary"],
+                    force_exclude_chunk_types=["sheet_summary", "document_summary"],
                     scope_doc_id=doc_id,
                 )
             with ThreadPoolExecutor(max_workers=len(_parallel_doc_ids)) as pool:
@@ -1103,7 +1310,7 @@ def _make_unified_tool(
                 use_qdrant=True,
                 filter_token=filter_token,
                 force_chunk_types=chunk_types,
-                force_exclude_chunk_types=["sheet_summary"],
+                force_exclude_chunk_types=["sheet_summary", "document_summary"],
                 scope_doc_id=effective_scope,
             )
 
@@ -1119,7 +1326,7 @@ def _make_unified_tool(
                 use_qdrant=True,
                 filter_token=filter_token,
                 force_chunk_types=chunk_types,
-                force_exclude_chunk_types=["sheet_summary"],
+                force_exclude_chunk_types=["sheet_summary", "document_summary"],
                 scope_doc_id=effective_scope,
             )
 
@@ -1136,13 +1343,48 @@ def _make_unified_tool(
                         use_qdrant=True,
                         filter_token=filter_token,
                         force_chunk_types=chunk_types,
-                        force_exclude_chunk_types=["sheet_summary"],
+                        force_exclude_chunk_types=["sheet_summary", "document_summary"],
                         scope_doc_id=effective_scope,
                     )
             except Exception:
                 hyde_hits = []
 
         hits = _merge_hits(raw_hits, hyde_hits)[: max(retrieval_top_k, _rerank_top_n)]
+
+        # Inject chunks from stage1-boosted docs that the dense+sparse search missed.
+        # The boost only reorders candidates — if doc_001's chunks aren't in the pool,
+        # there's nothing to reorder. Force-fetch a few chunks per missing boosted doc
+        # so the reranker gets to see them.
+        if stage1_doc_ids and not effective_scope:
+            # Older ingestions only set metadata.doc_id on document_summary chunks; PDF
+            # chunks may lack it. Detect doc presence via filename regex too.
+            def _hit_doc_id(hit: dict) -> str:
+                meta = hit.get("metadata") or {}
+                if meta.get("doc_id"):
+                    return meta["doc_id"]
+                src = (meta.get("source_file") or meta.get("file_name") or "").lower()
+                m = _DOC_ID_RE.search(src)
+                return m.group(0) if m else ""
+
+            present_doc_ids = {_hit_doc_id(h) for h in hits}
+            missing_doc_ids = [d for d in stage1_doc_ids if d and d not in present_doc_ids]
+            for missing_id in missing_doc_ids:
+                try:
+                    injected = retrieve(
+                        query=retrieval_query,
+                        top_k=5,
+                        qdrant_url=qdrant_url,
+                        collection=collection,
+                        use_qdrant=True,
+                        filter_token=None,
+                        force_chunk_types=chunk_types,
+                        force_exclude_chunk_types=["sheet_summary", "document_summary"],
+                        scope_doc_id=missing_id,
+                    )
+                    hits = _merge_hits(hits, injected)
+                except Exception:
+                    continue
+
         # Prepend sheet_summary hits so the reranking split below always has them
         hits = sheet_summary_hits + hits
 
@@ -1159,7 +1401,7 @@ def _make_unified_tool(
                 use_qdrant=True,
                 filter_token=filter_token,
                 force_chunk_types=[],
-                force_exclude_chunk_types=["sheet_summary"],
+                force_exclude_chunk_types=["sheet_summary", "document_summary"],
                 scope_doc_id=effective_scope,
             )
             hits = sheet_summary_hits + hits
@@ -1174,12 +1416,25 @@ def _make_unified_tool(
         sheet_hits = [h for h in hits if (h.get("metadata") or {}).get("chunk_type") == "sheet_summary"]
         other_hits = [h for h in hits if (h.get("metadata") or {}).get("chunk_type") != "sheet_summary"]
 
-        q_terms = set(re.sub(r"[^a-z0-9 ]", " ", retrieval_query.lower()).split())
+        _COL_STOPWORDS = {
+            "what", "which", "where", "when", "who", "how", "is", "are", "was", "were",
+            "the", "a", "an", "and", "or", "of", "for", "to", "in", "on", "at", "by",
+            "with", "from", "that", "this", "these", "those", "be", "do", "does", "did",
+            "have", "has", "had", "as", "it", "its", "into", "any", "all",
+            "summary", "data", "table", "sheet", "report", "row", "column", "value",
+        }
+        q_terms = {
+            t for t in re.sub(r"[^a-z0-9 ]", " ", retrieval_query.lower()).split()
+            if t not in _COL_STOPWORDS and len(t) >= 3
+        }
 
         def _col_overlap(hit: dict) -> int:
             content = (hit.get("content") or "").lower()
             col_line = next((ln for ln in content.splitlines() if ln.startswith("columns:")), "")
-            col_tokens = set(re.sub(r"[^a-z0-9 ]", " ", col_line).split())
+            col_tokens = {
+                t for t in re.sub(r"[^a-z0-9 ]", " ", col_line).split()
+                if t not in _COL_STOPWORDS and len(t) >= 3
+            }
             return len(q_terms & col_tokens)
 
         def _sheet_sort_key(hit: dict) -> tuple[int, int]:
@@ -1193,28 +1448,77 @@ def _make_unified_tool(
         reranked_used = False
         if ranker is not None and other_hits:
             docs = [h.get("content", "") for h in other_hits]
-            reranked = ranker.rerank(retrieval_query, docs, top_n=_rerank_top_n)
+            # Rerank ALL candidates so we can reserve slots for stage1 docs after the
+            # fact. With the previous top_n=_rerank_top_n cut, stage1 chunks the reranker
+            # ranked 11th+ were silently dropped before we could promote them.
+            reranked = ranker.rerank(retrieval_query, docs, top_n=len(docs))
             reranked_hits = [{**other_hits[r["index"]], "rerank_score": r["score"]} for r in reranked]
-            top_other = _merge_hits(raw_hits[: min(3, _rerank_top_n)], reranked_hits)[:_rerank_top_n]
             reranked_used = True
+
+            if stage1_doc_ids and not effective_scope:
+                # Stem-matched docs (filename literally matches query terms) are a
+                # strong signal — guarantee top-2 chunks each before filling rest
+                # with reranker order. Stops one popular stage1 doc (e.g. HR policy)
+                # from monopolizing reserved slots and squeezing out the actually-
+                # named doc (e.g. procurement_policy).
+                must_include = stem_match_doc_ids | explicitly_mentioned_doc_ids
+                guaranteed: list[dict[str, Any]] = []
+                guaranteed_keys: set[tuple[Any, ...]] = set()
+                for doc in must_include:
+                    doc_chunks = [h for h in reranked_hits if _hit_doc_id(h) == doc][:2]
+                    for h in doc_chunks:
+                        meta = h.get("metadata") or {}
+                        key = (meta.get("source_file"), meta.get("chunk_index"))
+                        if key not in guaranteed_keys:
+                            guaranteed.append(h)
+                            guaranteed_keys.add(key)
+                remaining_slots = max(_rerank_top_n - len(guaranteed), 0)
+                rest = [
+                    h for h in reranked_hits
+                    if ((h.get("metadata") or {}).get("source_file"),
+                        (h.get("metadata") or {}).get("chunk_index")) not in guaranteed_keys
+                ][:remaining_slots]
+                top_other = guaranteed + rest
+            else:
+                top_other = _merge_hits(raw_hits[: min(3, _rerank_top_n)], reranked_hits)[:_rerank_top_n]
         else:
             top_other = other_hits[:_rerank_top_n]
 
-        # Stage 1 boost for PDF/text chunks: within top_other, promote hits from
-        # Stage-1-identified or explicitly-mentioned docs as a stable tiebreaker.
-        # This surfaces cross-doc PDF chunks without overriding reranker relevance.
-        if stage1_doc_ids and not effective_scope:
-            top_other = sorted(
-                top_other,
-                key=lambda h: (
-                    -h.get("rerank_score", h.get("score", 0)),
-                    0 if (h.get("metadata") or {}).get("doc_id", "") in stage1_doc_ids else 1,
-                ),
-            )
+        # sheet_summary chunks signal "the relevant sheet has these columns" so the
+        # agent can route to the Excel tool — they are not answer-bearing content.
+        # Require >=2 token overlap (after stopword filter) to avoid generic matches
+        # like "and/the/of"; cap at 2 to avoid crowding PDF/text chunks.
+        top_sheet = [h for h in ranked_sheet_hits if _col_overlap(h) >= 2][:2]
+        top_hits = (top_sheet + top_other)[:_rerank_top_n]
 
-        # Sort sheet_summaries by column-name overlap with the query, cap at 8.
-        top_sheet = [h for h in ranked_sheet_hits if _col_overlap(h) > 0][:8]
-        top_hits = (top_sheet + top_other)[:max(_rerank_top_n, len(top_sheet) + 5)]
+        # Neighbor-chunk expansion: chunker boundaries can split related content
+        # (section header in chunk N, table values in N+1). For the top-5 PDF/text
+        # chunks, fetch chunk_index ± 1 from the same file and append. Generic fix
+        # for "right chunk, missing detail" misses across all docs.
+        _NEIGHBOR_EXCLUDE_TYPES = {"sheet_summary", "document_summary", "sheet_table", "sheet_row"}
+        neighbor_requests: dict[str, set[int]] = {}
+        for h in top_hits:
+            meta = h.get("metadata") or {}
+            if meta.get("chunk_type", "") in _NEIGHBOR_EXCLUDE_TYPES:
+                continue
+            src = meta.get("source_file")
+            idx = meta.get("chunk_index")
+            if not src or not isinstance(idx, int):
+                continue
+            wanted = neighbor_requests.setdefault(src, set())
+            if idx > 0:
+                wanted.add(idx - 1)
+            wanted.add(idx + 1)
+        neighbors_by_file: dict[str, dict[int, str]] = {}
+        for src, idxs in neighbor_requests.items():
+            existing = {
+                (h.get("metadata") or {}).get("chunk_index")
+                for h in top_hits
+                if (h.get("metadata") or {}).get("source_file") == src
+            }
+            needed = sorted(i for i in idxs if i not in existing)
+            if needed:
+                neighbors_by_file[src] = _fetch_neighbor_chunks(qdrant_url, collection, src, needed)
 
         parts: list[str] = []
         for i, h in enumerate(top_hits, start=1):
@@ -1225,6 +1529,7 @@ def _make_unified_tool(
             if not filter_token and not reranked_used and score < DOC_MIN_SCORE:
                 continue
             file_name = meta.get("file_name") or meta.get("source_file", "unknown")
+            file_name = resolve_original_name(file_name)
             chunk_type = meta.get("chunk_type", "")
             sheet_name = meta.get("sheet_name")
             location = f"sheet={sheet_name}" if sheet_name else f"chunk={meta.get('chunk_index', meta.get('part', '?'))}"
@@ -1251,6 +1556,28 @@ def _make_unified_tool(
                 table_context = _table_context_as_key_values(content, search_query)
                 if table_context:
                     content = f"{table_context}\n\nOriginal retrieved table text:\n{content}"
+
+            # Inject neighbor chunks (N-1, N+1) for PDF/text chunks in the top-5
+            src_path = meta.get("source_file")
+            chunk_idx = meta.get("chunk_index")
+            if (
+                src_path in neighbors_by_file
+                and isinstance(chunk_idx, int)
+                and chunk_type not in _NEIGHBOR_EXCLUDE_TYPES
+            ):
+                file_neighbors = neighbors_by_file[src_path]
+                prev_text = file_neighbors.get(chunk_idx - 1, "")
+                next_text = file_neighbors.get(chunk_idx + 1, "")
+                budget = max_chunk_chars
+                if prev_text:
+                    if len(prev_text) > budget:
+                        prev_text = "…" + prev_text[-budget:]
+                    content = f"[prev chunk]\n{prev_text}\n\n[this chunk]\n{content}"
+                if next_text:
+                    if len(next_text) > budget:
+                        next_text = next_text[:budget] + "…"
+                    content = f"{content}\n\n[next chunk]\n{next_text}"
+
             parts.append(f"[{i}] file={file_name} {location} score={score:.4f}\n{content}")
 
         if not parts:
@@ -1409,6 +1736,9 @@ def ask_agent(
     """
     from openai import BadRequestError
 
+    if _has_empty_reference_placeholder(query):
+        return "Unsupported"
+
     lf = _get_langfuse()
     trace = lf.trace(name="rag-agent", input=query) if lf else None
 
@@ -1465,7 +1795,10 @@ def ask_agent(
             tool_contexts.append(msg.content)
             if retrieved_contexts is not None:
                 parts = re.split(r"\n\n(?=\[\d+\])", msg.content.strip())
-                retrieved_contexts.extend([p.strip() for p in parts if p.strip()])
+                cleaned = [p.strip() for p in parts if p.strip()]
+                if cleaned:
+                    retrieved_contexts.append("---CALL_BOUNDARY---")
+                    retrieved_contexts.extend(cleaned)
 
     for msg in messages:
         if isinstance(msg, AIMessage) and msg.tool_calls:
@@ -1491,7 +1824,9 @@ def ask_agent(
 
     api_base = getattr(agent, "_generation_api_base", None)
     model_name = getattr(agent, "_generation_model", None)
-    if api_base and model_name and tool_contexts and not _looks_like_bad_final_answer(answer):
+    if api_base and model_name and tool_contexts and (
+        not _looks_like_bad_final_answer(answer) or _is_multi_part_query(query)
+    ):
         answer = _repair_incomplete_answer(query, answer, tool_contexts, api_base, model_name)
 
     if _looks_like_bad_final_answer(answer) and tool_contexts:
@@ -1520,6 +1855,8 @@ def ask_agent(
             answer = "Unsupported"
 
     answer = _normalize_unsupported(answer)
+    if _is_bare_filename_answer(query, answer):
+        answer = "Unsupported"
 
     if trace is not None:
         trace.update(output=answer)
@@ -1545,6 +1882,10 @@ def stream_agent(
         history: Prior conversation turns as [{"role": "user"/"assistant", "content": str}].
         collected_chunks: If provided, tool result chunks are appended to this list.
     """
+    if _has_empty_reference_placeholder(query):
+        yield "Unsupported"
+        return
+
     messages: list = []
     for turn in (history or []):
         if turn["role"] == "user":
@@ -1617,7 +1958,13 @@ def stream_agent(
                 _tool_contexts.append(chunk.content)
                 if collected_chunks is not None:
                     parts = re.split(r"\n\n(?=\[\d+\])", chunk.content.strip())
-                    collected_chunks.extend([p.strip() for p in parts if p.strip()])
+                    cleaned = [p.strip() for p in parts if p.strip()]
+                    if cleaned:
+                        # Mark tool-call boundaries so the API can group/prioritize
+                        # chunks per call (later/scoped calls usually contain the
+                        # answer-bearing chunks; earlier broad calls return noise).
+                        collected_chunks.append("---CALL_BOUNDARY---")
+                        collected_chunks.extend(cleaned)
                 if show_tool_uses:
                     print(f"\n[TOOL_RESULT] {chunk.name} ->\n{_extract_refs(chunk.content)}\n")
     except (BadRequestError, APIError) as exc:
@@ -1705,7 +2052,10 @@ def stream_agent(
             elif "search_knowledge_base" in answer:
                 answer = "Unsupported"
         if answer:
-            yield _normalize_unsupported(answer)
+            normalized = _normalize_unsupported(answer)
+            if _is_bare_filename_answer(query, normalized):
+                normalized = "Unsupported"
+            yield normalized
         return
 
     # Flush any remaining buffered text (e.g. trailing content after last </think>)
@@ -1715,7 +2065,9 @@ def stream_agent(
     answer = "".join(_final_buf).strip()
     api_base = getattr(agent, "_generation_api_base", None)
     model_name = getattr(agent, "_generation_model", None)
-    if api_base and model_name and _tool_contexts and not _looks_like_bad_final_answer(answer):
+    if api_base and model_name and _tool_contexts and (
+        not _looks_like_bad_final_answer(answer) or _is_multi_part_query(query)
+    ):
         answer = _repair_incomplete_answer(query, answer, _tool_contexts, api_base, model_name)
 
     if _looks_like_bad_final_answer(answer) and _tool_contexts:
@@ -1732,7 +2084,10 @@ def stream_agent(
                 print(f"[WARN] Direct context answer fallback failed ({type(exc).__name__}): {exc}")
 
     if answer:
-        yield _normalize_unsupported(answer)
+        normalized = _normalize_unsupported(answer)
+        if _is_bare_filename_answer(query, normalized):
+            normalized = "Unsupported"
+        yield normalized
 
 
 # ---------------------------------------------------------------------------
