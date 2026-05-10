@@ -20,6 +20,9 @@ A self-hosted RAG system for teams that need to query mixed-format business docu
 - Indexes prose in Qdrant (hybrid dense + sparse) and structured spreadsheet rows in DuckDB; the agent picks per query.
 - Cites every answer back to a chunk + page (PDF) or a sheet + SQL trace (Excel/CSV) — auditable, not a black box.
 - Runs a multi-graph LangGraph pipeline: question decomposition for multi-hop, reflection retry on failure, and parallel cross-document retrieval via the `Send` API.
+- Two-stage retrieval — stage 1 routes the query to the most relevant document(s) via `document_summary` chunks; stage 2 fetches answer-bearing content from those documents only. Stem-overlap on the filename rescues stage-1 misses when generic phrasing dominates the embedding.
+- Asks for clarification on broad queries instead of dumping a file list — when the question spans 3+ unrelated documents, the agent returns `Clarify: <2-4 specific options>` derived from what was actually retrieved.
+- Forced API-level retry on bare `Unsupported` responses — mitigates Groq inference nondeterminism by re-running the agent once with explicit doc-routing instructions if the first attempt skipped it.
 - Exposes the same backend through three surfaces — Streamlit operator console, Slack bot, and a FastAPI service for the Next.js frontend.
 
 ---
@@ -28,146 +31,99 @@ A self-hosted RAG system for teams that need to query mixed-format business docu
 
 ```
  ╔══════════════════════════════════════════════════════════════════════════════╗
- ║  INGESTION PIPELINE                                                          ║
+ ║  INGESTION                                                                   ║
  ╚══════════════════════════════════════════════════════════════════════════════╝
 
-  File (PDF / Excel / CSV)
+  File (PDF / Excel / CSV) ─→ src/ingest.py  (file-type router)
+       │
+       ├──── PDF ──────────────────────────┐    ├──── Excel / CSV ─────────────────────┐
+       ▼                                   │    ▼                                      │
+  parser/pdf_parser.py — PER-PAGE ROUTER   │  ingest_table_rows.py                     │
+  text layer ≥50 chars?                    │  • LLM extracts schema from raw rows:     │
+    YES → pymupdf4llm (CPU, no model)      │      column names, data start row,        │
+          + figures → Groq VLM             │      footnote row, 2-3 sentence summary   │
+            (raster .png + vector graphics │  • Rows → DuckDB (one table per sheet)    │
+             rendered to image, replaced   │      Why DuckDB: in-process, single file, │
+             with [FIGURE_START]…)         │      columnar — fast SUM/GROUP BY, no     │
+    NO  → LightOn OCR (local vLLM, GPU)    │      server. Agent writes SQL here later. │
+          whole page as image, no          │  • document_summary + sheet_summary →     │
+          per-figure VLM call              │    Qdrant for discovery (row data never   │
+                                           │    enters the vector store)               │
+       │ markdown per page                 │
+       ▼
+  src/chunker.py — 5 passes + 1 doc-level pass
+    1. page split   — keep <!-- PAGE N --> boundaries (citation accuracy)
+    2. section split — by # / ## / ### markdown headers
+    3. re-split     — chunks > 1024 tokens cut by recursive char splitter
+                      ([FIGURE_START]…[FIGURE_END] blocks kept atomic)
+    4. merge        — chunks < 256 tokens merged into a neighbour
+                      (## section headers never merged across)
+    5. contextual enrichment — per chunk, an LLM writes ONE sentence
+                      "what this is about" → prepended as CONTEXT before
+                      embedding. (Anthropic Contextual Retrieval pattern)
+    +. document_summary — ONE extra chunk per file with the doc_id and a
+                      3-5 sentence summary, so the agent can resolve
+                      "the supplier agreement" → doc_017 in retrieval.
        │
        ▼
-  ┌────────────────────┐
-  │  src/ingest.py     │  File-type router. Calls parse_pdf() for PDFs,
-  │  format detection  │  ingest_table_rows() for Excel/CSV.
-  └────────┬───────────┘
-           │
-     ┌─────┴──────────────────────────────────┐
-     │ PDF                                    │ Excel / CSV
-     ▼                                        ▼
-  ┌──────────────────────────────┐   ┌────────────────────────────────────┐
-  │  src/parser/pdf_parser.py    │   │  src/ingest_table_rows.py          │
-  │  Per-page router             │   │  openpyxl / pandas → rows          │
-  │                              │   │                                    │
-  │  page.get_text() < 50 chars? │   │  document_summary → Qdrant         │
-  │                              │   │    (enables doc discovery)         │
-  │  YES (scanned)  NO (digital) │   │  rows → DuckDB only                │
-  └────┬──────────────┬──────────┘   │    (agent writes SQL SELECT;       │
-       │              │              │     Qdrant never sees row data)     │
-       ▼              ▼              │                                    │
-  ┌─────────┐  ┌──────────────────┐  └────────────────────────────────────┘
-  │ LightOn │  │  pymupdf4llm     │
-  │ OCR     │  │  (CPU, no API)   │
-  │ vLLM    │  │                  │
-  │ GPU req │  │  Raster figures? │
-  │         │  │  → src/ingestion/│
-  │ OCR_    │  │    vlm.py        │
-  │ API_BASE│  │  → Groq VLM API  │
-  │ :8002   │  │  VLM_MODEL=      │
-  └────┬────┘  │  llama-4-scout   │
-       │       └────────┬─────────┘
-       │                │
-       └──────┬──────────┘
-              │ Markdown text (per page)
-              ▼
-  ┌───────────────────────────────────────────────────────┐
-  │  src/chunker.py  — 5-stage pipeline                   │
-  │  page split → section split → re-split → merge →      │
-  │  contextual enrichment, plus a document_summary pass  │
-  │  Full detail: docs/chunking.md                        │
-  └───────────────────┬───────────────────────────────────┘
-                      │ chunks (content + vector_text)
-                      ▼
-  ┌───────────────────────────────────────────────────────┐
-  │  src/embedder.py + src/sparse_embedder.py             │
-  │                                                       │
-  │  Dense:  Ollama /api/embed                            │
-  │          OLLAMA_EMBED_MODEL = nomic-embed-text        │
-  │          768-dim cosine vectors                       │
-  │                                                       │
-  │  Sparse: fastembed BM25 (BAAI/bge-m3)                 │
-  │          token frequency → sparse indices+values      │
-  └───────────────────┬───────────────────────────────────┘
-                      │ {dense_vector, sparse_vector, payload}
-                      ▼
-  ┌───────────────────────────────────────────────────────┐
-  │  Qdrant  (collection: documents_chunks)               │
-  │  Point ID = SHA-1(file_name + chunk_index)  ← idem-   │
-  │  potent: re-ingest overwrites, no duplicates          │
-  │  Payload: content, metadata.chunk_type, doc_id, etc.  │
-  └───────────────────────────────────────────────────────┘
+  embedder.py + sparse_embedder.py — every chunk gets BOTH vectors
+    Dense  (Ollama nomic-embed-text, 768d) — semantic similarity
+                                             "term" ≈ "duration", "period"
+    Sparse (fastembed, BM42 attentions)    — exact-token recall for IDs,
+                                             supplier names, transaction nums
+                                             that dense embeddings smear
+    fastembed = Qdrant's lightweight ONNX inference lib (CPU, no torch).
+       │
+       ▼
+  Qdrant — hybrid collection (dense + sparse vectors per point)
+    Point ID = SHA-1(file_name + chunk_index) → IDEMPOTENT:
+    re-ingesting the same file overwrites the points, never duplicates.
 
 
  ╔══════════════════════════════════════════════════════════════════════════════╗
- ║  QUERY PIPELINE — multi-graph LangGraph agentic architecture                 ║
+ ║  QUERY — multi-graph LangGraph                                               ║
  ╚══════════════════════════════════════════════════════════════════════════════╝
 
   User question
        │
        ▼
-  ┌─────────────────────────────────────────────────────────────────────────────┐
-  │  GRAPH 1 — Decomposition  src/pipeline.py — build_decomposition_pipeline()  │
-  │                                                                             │
-  │  decompose node: LLM analyses question complexity                           │
-  │    single-hop  → passes question through unchanged                          │
-  │    multi-hop   → splits into 2–4 focused sub-questions, formats             │
-  │                  as numbered plan ("work through each in order")            │
-  │                                                                             │
-  │  run node: sends (possibly plan-formatted) question to Graph 2              │
-  └──────────────────────────┬──────────────────────────────────────────────────┘
-                             │ plain or plan-formatted question
-                             ▼
-  ┌─────────────────────────────────────────────────────────────────────────────┐
-  │  GRAPH 2 — ReAct Agent  src/rag_agent.py — build_rag_agent()                │
-  │  LLM: GENERATION_MODEL via GENERATION_API_BASE (default: Groq qwen3-32b)    │
-  │                                                                             │
-  │  Startup: doc registry built from Qdrant document_summary chunks →          │
-  │    {filename_stem: doc_id} for fuzzy title → doc_id resolution              │
-  │                                                                             │
-  │  ReAct loop — tool calls per sub-question or step:                          │
-  │    search_knowledge_base → PDF / Qdrant retrieval tool                      │
-  │    query_excel           → Excel / DuckDB SQL sub-graph (Graph 4)           │
-  └──────────────────────┬──────────────────────────────────────────────────────┘
-                         │ routed by question type
-          ┌──────────────┴──────────────────────────┐
-          │ PDF / Qdrant docs                       │ Excel / CSV (DuckDB)
-          ▼                                         ▼
-  ┌───────────────────────────────┐   ┌────────────────────────────────────────┐
-  │  search_knowledge_base tool   │   │  GRAPH 4 — Excel agent                 │
-  │                               │   │  src/excel_agent.py                    │
-  │  Step 1 — doc discovery:      │   │                                        │
-  │  embed query → search only    │   │  outer: decompose → Send fan-out →     │
-  │  document_summary chunks →    │   │           inner_sql ×N → synthesize    │
-  │  resolve title → doc_id       │   │                                        │
-  │                               │   │  decompose: split cross-doc questions  │
-  │  Step 2 — chunk retrieval:    │   │    into one subquestion per source     │
-  │  Parallel via LangGraph Send  │   │  Send: parallel inner_sql per part     │
-  │  scope filter = OR across     │   │  synthesize: combine per-part answers  │
-  │    doc_id / source_file /     │   │                                        │
-  │    file_name fields           │   │  inner_sql (per subquestion):          │
-  │  → hybrid Qdrant search       │   │    select_table → inspect → write_sql  │
-  │    (dense + sparse → RRF)     │   │    → run_sql → evaluate                │
-  │  + HyDE query expansion       │   │      ↑              │                  │
-  │  → BGE cross-encoder rerank   │   │      └─ retry on column-error          │
-  │    top-100 → top-10           │   │      → next-table on empty/NaN         │
-  └──────────────┬────────────────┘   │                                        │
-                 │ cited answer       │  Tables ranked by column-name overlap  │
-                 ▼                    │  with the question, plus DuckDB-side   │
-                                      │  ILIKE truncation retry for fuzzy      │
-  ┌─────────────────────────────────┐ │  supplier/beneficiary names.           │
-  │  GRAPH 3 — Reflection           │ └────────────────────────────────────────┘
-  │  src/pipeline.py                │
-  │                                 │
-  │  reflect node: answer == "Unsupported"?                                    │
-  │    no  → END, return answer                                                │
-  │    yes → retry hint appended → re-invoke Graph 2 (max 1 retry)             │
-  └─────────────────────────────────────────────────────────────────────────────┘
-                             │
-                             ▼
-                       Cited answer
+  GRAPH 1 — Decomposition (src/pipeline.py)
+    LLM judges single-hop vs multi-hop.
+    multi-hop → split into 2-4 self-contained sub-questions, each
+                preserving entity names + dates so it can retrieve on
+                its own. Sub-questions run independently — no answer
+                is "injected" between them; they merge at synthesis.
+       │
+       ▼
+  GRAPH 2 — ReAct agent (src/rag_agent.py — create_react_agent)
+    One tool-calling loop, two tools:
 
-  SUPERVISOR (optional)  src/pipeline.py — build_supervisor_pipeline()
-  Classifies question as pdf / excel / mixed, then:
-    pdf   → single Graph 2 call
-    excel → single Graph 2 call (Excel tools only)
-    mixed → parallel Send fan-out: one PDF branch + one Excel branch → synthesise
+      search_knowledge_base  →  PDF / Qdrant retrieval
+        step 1 — query document_summary chunks → resolve doc_id
+        step 2 — scoped hybrid search (dense + sparse, RRF fused)
+                 + HyDE query expansion → BGE cross-encoder rerank top-10
+
+      query_excel            →  delegates to GRAPH 4 (Excel sub-graph)
+       │
+       ▼
+  GRAPH 4 — Excel sub-graph (src/excel_agent.py — real LangGraph StateGraphs)
+    Outer:  decompose → Send fan-out (parallel inner per sub-Q) → synthesize
+    Inner:  select_table → inspect schema → write_sql (LLM text-to-SQL)
+            → run_sql on DuckDB → evaluate
+              ├─ rows OK   → LLM extracts the answer value
+              ├─ SQL error → retry SAME table once with the error in prompt
+              └─ 0 rows    → move to NEXT candidate table
+    Tables ranked by question / column-name token overlap.
+    ILIKE auto-truncates trailing chars to recover truncated supplier names.
+       │
+       ▼
+  GRAPH 3 — Reflection (src/pipeline.py)
+    Bare "Unsupported"?      → re-invoke Graph 2 with retry hint (max 1)
+    Multi-part used <2 srcs? → LLM lists missing sub-queries → retrieve
+                                again → re-answer with combined context
+       │
+       ▼
+   Cited answer
 ```
 
 ---
@@ -175,6 +131,22 @@ A self-hosted RAG system for teams that need to query mixed-format business docu
 ## Key engineering decisions
 
 The bets that materially moved eval scores — per-page PDF routing, contextual retrieval, sheet-summary sample values, dual-modality DuckDB+Qdrant retrieval, deterministic Qdrant IDs, HyDE expansion, three-pass table repair, context-overflow retry — are written up in [docs/engineering.md](docs/engineering.md).
+
+### Retrieval-quality refinements
+
+A second wave of changes after manual UI testing surfaced specific failure modes — answers that were Unsupported despite the data being present, source cards that showed irrelevant chunks, and broad queries that dumped file lists instead of asking for clarification. All fixes are domain-agnostic; none target a specific question.
+
+- **Filename resolution at LLM layer** (`src/file_resolver.py`) — chunk headers shown to the LLM resolve parsed `.md` filenames back to original `.pdf`/`.xlsx` names so the model doesn't echo parsing artifacts in cited answers.
+- **Stage-2 excludes summary chunks** — `document_summary` and `sheet_summary` chunks are routing signals (used in stage 1) and never answer content; excluding them from stage 2 frees rerank slots for real text.
+- **Stem-overlap doc-routing boost + force-inject** — when a doc's filename stem shares ≥2 content tokens with the query (after stopword filter), the doc is added to stage-1 even if dense routing missed it; if its chunks aren't in the candidate pool, a scoped retrieve injects them. Catches `"procurement policy"` → `doc_001_procurement_policy.pdf` when generic phrasing dominates the embedding.
+- **Per-doc slot reservation in reranker output** — stem-matched and explicitly-mentioned doc_ids each get up to 2 guaranteed slots in the top-N; the rest fills from reranker order. Prevents one popular stage-1 doc from monopolizing the reserved slots and squeezing out the doc the user actually named.
+- **Neighbor-chunk expansion** — for each top hit, the previous and next chunks from the same file are appended via `[prev chunk]` / `[next chunk]` separators. Generic fix for chunker boundary misses (section header in chunk N, value table in N+1). Surfaced the vacation accrual schedule numbers that the bare retrieval split off.
+- **Tool-call boundary aware source display** — `_parse_sources` groups chunks per tool call and iterates in reverse, so when the agent does a 2-step search (find doc, then scoped query) the displayed sources reflect the later scoped call instead of the first broad call's noise.
+- **Prompt-driven clarification rule** — the system prompt now tells the agent to return `Clarify: <question with 2-4 specific options>` when the question is too broad (chunks span 3+ unrelated docs OR are summary-only). Avoids file-list dumps for vague queries like *"what about HR policies?"*.
+- **Deterministic by default** — HyDE temperature lowered from 0.5 to 0.0 so query expansion is reproducible.
+- **Forced retry on bare Unsupported** — Groq inference at temp=0 still has small nondeterminism that occasionally makes the agent skip the doc-routing step and return Unsupported despite the answer existing. The API layer detects bare-`Unsupported` responses and re-runs the agent once with an explicit instruction to follow the 2-step protocol (find doc_id, then scoped search). 5/5 reproducibility on the procurement test query after the retry.
+
+Full rationale and the trade-offs considered for each: [docs/engineering.md](docs/engineering.md#retrieval-quality-refinements).
 
 ---
 
@@ -473,6 +445,8 @@ vault-rag/
 - **Contextual summaries send chunk text to Groq** — at ingest time, each chunk is sent to `CHUNK_LLM_API_BASE` (OpenRouter by default) to generate a one-sentence context note. Air-gapped ingest requires pointing this at a local vLLM endpoint.
 - **Reranker cold-start** — the first query after a fresh container start takes ~30 s while the cross-encoder model weights download (~270 MB). The Dockerfile pre-downloads weights at build time; bare `uv run` does not.
 - **Single Qdrant collection** — all documents share one collection. There is no per-user or per-tenant isolation; this is a single-operator deployment model.
+- **Groq generation is not perfectly deterministic at temp=0** — speculative decoding and other engine-side optimizations introduce small variation that can flip the agent's tool-call decisions across identical queries. Mitigated by an API-level retry on bare `Unsupported` responses (see Retrieval-quality refinements). True determinism would require a self-hosted vLLM endpoint with a fixed seed.
+- **Display source cards capped at 8** — when the agent makes multiple tool calls, only chunks from the most recent call(s) are shown after de-duplication; chunks the LLM saw beyond the cap are not visible in the UI. The cap is intentional to keep the panel scannable; raise `sources[:N]` in `api.py` if you need more.
 
 ---
 
@@ -486,6 +460,8 @@ vault-rag/
 | Ollama | Model not pulled | Embedding step fails | `ollama pull nomic-embed-text` |
 | Groq API | Missing key | Generation returns 401 | Set `GROQ_API_KEY` in `.env` |
 | Reranker | First run | First query slow (~30s, downloads model weights) | Pre-download at startup (Dockerfile does this) |
+| Agent (Groq nondeterminism) | Skips doc-routing, returns bare `Unsupported` | Answer is just `Unsupported` despite the data being present | API auto-retries once with explicit doc-routing instructions; falls back to original abstention if the retry also fails |
+| Stage-1 doc routing | Dense embedding ranks the wrong doc first | Answer-bearing chunks never reach the reranker | Stem-overlap boost adds the doc to stage 1 if its filename shares ≥2 query tokens; force-inject pulls 5 chunks from any stage-1 doc not present in the candidate pool |
 
 ---
 
