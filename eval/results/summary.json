@@ -16,16 +16,16 @@
   },
   "unanswerable_metrics": {
     "question_count": 8,
-    "correct_refusal_rate": 0.75
+    "correct_refusal_rate": 1.0
   },
   "agent_answer_metrics": {
-    "correctness": 0.7682926829268293,
-    "faithfulness": 0.7573333333333333,
-    "answer_relevancy": 0.8646341463414635
+    "correctness": 0.8317073170731708,
+    "faithfulness": 0.7946666666666666,
+    "answer_relevancy": 0.9317073170731708
   },
   "judge_breakdown": {
-    "custom_llm_judge": 64,
-    "exact_match_shortcircuit": 18
+    "custom_llm_judge": 62,
+    "exact_match_shortcircuit": 20
   },
   "question_breakdown": {
     "cross_document_compare": 17,
