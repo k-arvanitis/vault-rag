@@ -44,6 +44,11 @@ CHUNK_LLM_API_KEY: str = os.getenv("CHUNK_LLM_API_KEY", os.getenv("OPENROUTER_AP
 OCR_API_BASE: str = os.getenv("OCR_API_BASE", "http://127.0.0.1:8002")
 OCR_MODEL: str = os.getenv("OCR_MODEL", "lightonocr-2-1b-ocr-soup")
 
+# Scanned-page parser selector. "auto" (default) routes scanned pages through
+# the LightOn OCR vLLM server (requires CUDA). "cpu" routes them through
+# unstructured + tesseract — slower (~10x) but no GPU required.
+PDF_PARSER: str = os.getenv("PDF_PARSER", "auto").lower()
+
 RERANKER_MODEL: str = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
 RERANKER_DEVICE: str = os.getenv("RERANKER_DEVICE", "cpu")
 EMBED_DEVICE: str = os.getenv("EMBED_DEVICE", "cpu")
@@ -101,3 +106,13 @@ DUCKDB_PATH: str = os.getenv("DUCKDB_PATH", ".duckdb/excel_store.duckdb")
 EXCEL_AGENT_MODEL: str = os.getenv("EXCEL_AGENT_MODEL", "gpt-4o-mini")
 EXCEL_AGENT_API_BASE: str = os.getenv("EXCEL_AGENT_API_BASE", "https://api.openai.com/v1")
 EXCEL_AGENT_API_KEY: str = os.getenv("EXCEL_AGENT_API_KEY", os.getenv("OPENAI_API_KEY", ""))
+
+# ---------------------------------------------------------------------------
+# FastAPI service
+# ---------------------------------------------------------------------------
+# Comma-separated list of allowed CORS origins; "*" disables the allow-list.
+# The Next.js dev server runs on :3000 by default.
+API_CORS_ORIGINS: str = os.getenv("API_CORS_ORIGINS", "http://localhost:3000")
+# If set, every mutating endpoint (/ingest, DELETE /collection) requires the
+# request header X-API-Key to match this value. Empty means no auth (dev only).
+API_KEY: str = os.getenv("API_KEY", "")

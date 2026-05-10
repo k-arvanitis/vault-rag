@@ -1,12 +1,14 @@
 """Vault RAG — FastAPI backend for the Next.js UI."""
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
+import logging
 import re
 import uuid
-import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -15,11 +17,14 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.responses import JSONResponse  # noqa: E402
+from pydantic import BaseModel  # noqa: E402
 
-from src.config import (
+from src.config import (  # noqa: E402
+    API_CORS_ORIGINS,
+    API_KEY,
     GENERATION_API_BASE,
     GENERATION_MODEL,
     QDRANT_COLLECTION,
@@ -28,7 +33,9 @@ from src.config import (
     RERANKER_MODEL,
     RETRIEVAL_TOP_K,
 )
-from src.vector_store import scroll_all_payloads, get_chunks_by_file, _request as _qdrant
+from src.vector_store import scroll_all_payloads, get_chunks_by_file, _request as _qdrant  # noqa: E402
+
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent
 INPUT_DIR = REPO_ROOT / "data" / "input"
@@ -41,11 +48,54 @@ MARKDOWN_DIRS = (
     REPO_ROOT / "data" / "output" / "translated",
 )
 
-app = FastAPI(title="Vault RAG API")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-
 _jobs: dict[str, dict[str, Any]] = {}
 _executor = ThreadPoolExecutor(max_workers=2)
+
+
+# ── lifespan: warm the agent on startup ────────────────────────────────────────
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Build the agent once at startup so the first /query doesn't pay the cold-start penalty."""
+    try:
+        _get_agent()
+        logger.info("Agent warmed; ready to serve")
+    except Exception:
+        logger.exception("Agent warmup failed; /query will retry per-request")
+    yield
+
+
+app = FastAPI(title="Vault RAG API", lifespan=lifespan)
+
+
+# ── CORS — explicit origin list (use API_CORS_ORIGINS=* only intentionally) ───
+
+_cors_origins = [o.strip() for o in API_CORS_ORIGINS.split(",") if o.strip()] or ["*"]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ── auth dep — required on mutating endpoints when API_KEY is set ─────────────
+
+async def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
+    """Raise 401 unless the X-API-Key header matches API_KEY (when configured)."""
+    if not API_KEY:
+        return
+    if x_api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key")
+
+
+# ── global exception handler — never leak stack traces ────────────────────────
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Log the exception and return a generic 500 instead of leaking str(exc)."""
+    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
 # ── agent singleton ────────────────────────────────────────────────────────────
@@ -220,14 +270,20 @@ def _split_markdown_pages(md_text: str) -> tuple[dict[int, str], dict[int, str]]
 
 # ── routes ─────────────────────────────────────────────────────────────────────
 
-@app.post("/ingest")
+@app.get("/health")
+async def health():
+    """Liveness probe — returns immediately, does not touch Qdrant or the agent."""
+    return {"status": "ok"}
+
+
+@app.post("/ingest", dependencies=[Depends(require_api_key)])
 async def ingest(file: UploadFile = File(...), pipeline: str = Form("auto")):
     dest = INPUT_DIR / file.filename
     dest.write_bytes(await file.read())
     job_id = str(uuid.uuid4())
     _jobs[job_id] = {"status": "pending", "stage": "parsing", "chunks_created": 0}
     force_pipeline = pipeline if pipeline in {"ocr", "text"} else None
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     loop.run_in_executor(_executor, _run_ingest_sync, job_id, dest, force_pipeline)
     return {"job_id": job_id, "status": "processing"}
 
@@ -269,7 +325,7 @@ async def query(req: QueryRequest):
     agent = _get_agent()
     collected: list[str] = []
     tokens: list[str] = []
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     def _run():
         for token in stream_agent(agent, req.question, collected_chunks=collected):
@@ -279,13 +335,10 @@ async def query(req: QueryRequest):
     return {"answer": "".join(tokens).strip(), "sources": _parse_sources(collected)}
 
 
-@app.delete("/collection")
+@app.delete("/collection", dependencies=[Depends(require_api_key)])
 async def clear_collection():
     base = QDRANT_URL.rstrip("/")
-    try:
-        _qdrant("DELETE", f"{base}/collections/{QDRANT_COLLECTION}")
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    _qdrant("DELETE", f"{base}/collections/{QDRANT_COLLECTION}")
     _get_agent.cache_clear()
     return {"status": "cleared"}
 

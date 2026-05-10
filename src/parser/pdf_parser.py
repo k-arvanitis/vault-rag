@@ -14,7 +14,7 @@ from pathlib import Path
 import fitz
 import pymupdf4llm
 
-from src.config import IMAGE_SIZE_LIMIT, VLM_ENABLED
+from src.config import IMAGE_SIZE_LIMIT, PDF_PARSER, VLM_ENABLED
 from src.ingestion.ocr import call_lighton_ocr
 from src.ingestion.vlm import call_vlm_description
 
@@ -31,6 +31,20 @@ _PICTURE_TEXT_RE = re.compile(
 
 _LABEL_TEXT = "pymupdf4llm"
 _LABEL_OCR = "LightOn OCR"
+_LABEL_OCR_CPU = "unstructured (CPU)"
+
+
+def _ocr_page(pix) -> tuple[str, str]:
+    """Run the configured OCR backend on a page pixmap.
+
+    Returns the OCR markdown plus a label identifying which backend was used.
+    Selection is controlled by PDF_PARSER: "cpu" uses the unstructured fallback,
+    anything else uses the LightOn OCR vLLM server.
+    """
+    if PDF_PARSER == "cpu":
+        from src.ingestion.unstructured_ocr import call_unstructured_ocr
+        return call_unstructured_ocr(pix), _LABEL_OCR_CPU
+    return call_lighton_ocr(pix), _LABEL_OCR
 
 
 def parse_pdf(path: str, force_pipeline: str | None = None) -> list[tuple[str, str]]:
@@ -62,10 +76,9 @@ def parse_pdf(path: str, force_pipeline: str | None = None) -> list[tuple[str, s
             )
 
             if use_ocr:
-                print(f"[INGEST] Page {page_number + 1}/{n_pages} → {_LABEL_OCR} ({'forced' if force_pipeline == 'ocr' else 'scanned'})")
                 pix = page.get_pixmap(dpi=300)
-                page_string = call_lighton_ocr(pix)
-                label = _LABEL_OCR
+                page_string, label = _ocr_page(pix)
+                print(f"[INGEST] Page {page_number + 1}/{n_pages} → {label} ({'forced' if force_pipeline == 'ocr' else 'scanned'})")
             else:
                 print(f"[INGEST] Page {page_number + 1}/{n_pages} → {_LABEL_TEXT} ({'forced' if force_pipeline == 'text' else 'text-layer'})")
                 page_string = _parse_text_layer_page(path, page_number, tmp_dir)
