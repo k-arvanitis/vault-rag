@@ -15,7 +15,6 @@ from src.rag_agent import (
     _context_source_count,
     _enrich_search_query,
     _extract_key_value_answer,
-    _repair_deterministic_numeric_answer,
     _repair_incomplete_answer,
     _extract_refs,
     _is_thinking_model,
@@ -184,21 +183,12 @@ class TestBestSnippet:
 
 
 class TestSearchQueryEnrichment:
-    def test_new_topic_area_query_keeps_count_anchors(self):
-        enriched = _enrich_search_query("new topic areas in the 2024 report")
-        assert "identified matters recommendations" in enriched
-
-    def test_closed_implemented_query_keeps_total_table_anchors(self):
-        enriched = _enrich_search_query(
-            "total matters and recommendations closed-implemented as of March 2024"
+    def test_pass_through_returns_query_unchanged(self):
+        # _enrich_search_query is intentionally a pass-through seam — query
+        # rewriting was removed to avoid eval-set-specific shortcuts.
+        assert _enrich_search_query("new topic areas in the 2024 report") == (
+            "new topic areas in the 2024 report"
         )
-        assert "Closed implemented" in enriched
-        assert "Total" in enriched
-
-    def test_payment_timeline_query_keeps_invoice_deadline_anchors(self):
-        enriched = _enrich_search_query("payment timelines")
-        assert "valid invoice" in enriched
-        assert "30 days" in enriched
 
 
 class TestExtractKeyValueAnswer:
@@ -208,64 +198,6 @@ class TestExtractKeyValueAnswer:
             ["## **Approval Level: Board of Retirement**"],
         )
         assert answer == "Board of Retirement"
-
-
-class TestDeterministicNumericRepair:
-    def test_repairs_new_topic_area_count(self):
-        answer = _repair_deterministic_numeric_answer(
-            "How many new topic areas were identified in the 2024 report?",
-            "The 2024 report identified 119 new topic areas.",
-            [
-                "[1] file=doc_008\n"
-                "GAO identified 112 new matters and recommendations in 42 new topic areas."
-            ],
-        )
-        assert answer == "The 2024 report identified 42 new topic areas."
-
-    def test_repairs_closed_implemented_total_column(self):
-        answer = _repair_deterministic_numeric_answer(
-            "How many total matters and recommendations were closed-implemented as of March 2024?",
-            "1,287 total matters and recommendations were closed-implemented as of March 2024.",
-            [
-                "[1] file=doc_008\n"
-                "|Closed – implemented|54|1,287|1,341|\n"
-            ],
-        )
-        assert answer.startswith("1,341 total matters and recommendations")
-
-    def test_repairs_time_scoped_securities_reduction(self):
-        answer = _repair_deterministic_numeric_answer(
-            "By how much had the Federal Reserve reduced its securities holdings since June 2024?",
-            "Federal Reserve: $1.7 trillion.",
-            [
-                "[1] file=doc_003\n"
-                "the Federal Reserve has reduced its securities holdings by $297 billion since June 2024"
-            ],
-        )
-        assert answer == "Federal Reserve: $297 billion."
-
-    def test_repairs_post_cut_target_range(self):
-        answer = _repair_deterministic_numeric_answer(
-            "What was the target range for the federal funds rate after the three 2024 rate cuts?",
-            "4½ to 4¾ percent.",
-            [
-                "[1] file=doc_003\n"
-                "the FOMC lowered the target range over its September, November, "
-                "and December meetings, bringing it to the current range of 4¼ to 4½ percent"
-            ],
-        )
-        assert answer == "4¼ to 4½ percent."
-
-    def test_completes_invoice_validation_side_of_payment_question(self):
-        answer = _repair_deterministic_numeric_answer(
-            "Which specifies a 30-day payment deadline, and what does the other say about invoices?",
-            "The services contract terms specify a 30-day payment deadline.",
-            [
-                "[1] file=doc_001\n"
-                "All Invoices must be validated against the original PO and delivery documents before payment is made."
-            ],
-        )
-        assert "validated against the original PO" in answer
 
 
 class TestIncompleteAnswerRepair:

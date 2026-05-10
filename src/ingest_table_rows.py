@@ -32,7 +32,6 @@ from src.config import (
     OLLAMA_EMBED_MODEL as _DEFAULT_EMBED_MODEL,
     QDRANT_URL as _DEFAULT_QDRANT_URL,
     DUCKDB_PATH,
-    GROQ_API_KEY,
     SKIP_SHEET_KEYWORDS,
     SKIP_ROW_VALUES,
     NO_DATA_TOKENS,
@@ -635,7 +634,7 @@ def ingest_table_rows(
 
     # Step 1: LLM cleaning + DuckDB load
     if verbose:
-        print(f"  Cleaning and loading into DuckDB...")
+        print("  Cleaning and loading into DuckDB...")
     sheet_columns = _load_into_duckdb(file_path, file_name, verbose)
 
     # Step 2: generate sheet_summary points for Qdrant
@@ -683,7 +682,7 @@ def ingest_table_rows(
 
         _build_sheet_summary_point(file_name, sheet_name, columns, description, collection)
         if verbose:
-            print(f"    → sheet_summary upserted to Qdrant")
+            print("    → sheet_summary upserted to Qdrant")
 
         # Save markdown for inspector UI
         header_idx = _find_header_row(rows)
@@ -703,7 +702,7 @@ def ingest_table_rows(
     # Step 3: document_summary
     _build_file_document_summary(file_name, sheet_summary_texts, collection)
     if verbose:
-        print(f"  document_summary upserted to Qdrant")
+        print("  document_summary upserted to Qdrant")
 
     out_path = _save_chunks_json(file_path, all_chunks)
     if verbose:

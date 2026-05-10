@@ -7,7 +7,6 @@ Agent queries via SQL through a single query_excel tool.
 
 from __future__ import annotations
 
-import os
 import re
 import threading
 from pathlib import Path
@@ -18,7 +17,6 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel
 
 from src.config import DUCKDB_PATH, GROQ_API_KEY
-from src.preprocessing.excel_cleaner import process_file
 
 
 def _make_groq_llm_fn() -> Callable[[str], str]:
