@@ -82,13 +82,13 @@ def _ingest_pdf(path: Path) -> None:
 
 
 def _ingest_table(path: Path) -> None:
-    """Ingest an Excel/CSV file: document_summary → Qdrant, rows → DuckDB via EXCEL_FILES.
+    """Ingest an Excel/CSV file: cleaned rows → DuckDB, metadata → Qdrant.
 
-    --only-summary skips sheet_row/sheet_table chunks in Qdrant; the agent
-    routes all structured queries for these documents to DuckDB instead.
+    Qdrant gets only a document_summary + per-sheet sheet_summary (for discovery);
+    structured queries for these documents are answered from DuckDB.
     """
     subprocess.run(
-        ["uv", "run", "python", "-m", "src.ingest_table_rows", str(path), "--only-summary"],
+        ["uv", "run", "python", "-m", "src.ingest_table_rows", str(path)],
         check=True,
     )
 
