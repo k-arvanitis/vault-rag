@@ -997,15 +997,6 @@ def _fetch_neighbor_chunks(
     return out
 
 
-def _enrich_search_query(query: str) -> str:
-    """Pass-through hook for query enrichment.
-
-    Kept as a single seam so future query-rewrite logic (e.g. learned expansion)
-    can be wired in without touching call sites.
-    """
-    return query
-
-
 def _build_doc_registry(qdrant_url: str, collection: str) -> dict[str, str]:
     """Return {lowercased_source_file_stem: doc_id} by scrolling a sample of Qdrant points.
 
@@ -1124,7 +1115,9 @@ def _make_unified_tool(
         if filter_token is None:
             filter_token = _extract_table_filter_token(search_query)
 
-        retrieval_query = _enrich_search_query(search_query)
+        # Routing/filter tokens are derived from search_query (the raw question + any
+        # doc_id); the same text is used as the retrieval/embedding query.
+        retrieval_query = search_query
 
         # Stage 1 (doc routing): search document_summaries (all doc types) to identify
         # likely source documents. Results used to BOOST chunk ranking — not as exclusive

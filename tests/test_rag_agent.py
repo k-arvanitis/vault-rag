@@ -13,7 +13,6 @@ from src.rag_agent import (
     SYSTEM_PROMPT,
     _best_snippet,
     _context_source_count,
-    _enrich_search_query,
     _extract_key_value_answer,
     _repair_incomplete_answer,
     _extract_refs,
@@ -180,15 +179,6 @@ class TestBestSnippet:
             max_chars=420,
         )
         assert "optional extension of up to two years" in snippet
-
-
-class TestSearchQueryEnrichment:
-    def test_pass_through_returns_query_unchanged(self):
-        # _enrich_search_query is intentionally a pass-through seam — query
-        # rewriting was removed to avoid eval-set-specific shortcuts.
-        assert _enrich_search_query("new topic areas in the 2024 report") == (
-            "new topic areas in the 2024 report"
-        )
 
 
 class TestExtractKeyValueAnswer:
