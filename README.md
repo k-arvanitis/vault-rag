@@ -9,7 +9,7 @@
 
 A self-hosted RAG system for teams that need to query mixed-format business document collections — PDFs (digital and scanned), Excel, CSV, and figures — through one chat interface, with cited answers and an operator console for inspecting every step. Built for teams that want to keep document bytes on-prem and avoid per-page SaaS fees.
 
-**Latest benchmark:** 82 questions over 14 real mixed-format public documents — **83.2% agent correctness**, **79.5% faithfulness** (answers grounded in retrieved text), **93.2% answer relevancy**, **71.4% structured (DuckDB) accuracy**, **100% unanswerable refusal rate**, **100% evidence hit@10**. No eval-set-specific shortcuts — every answer comes from the model and tool outputs.
+**Latest benchmark:** 82 questions over 14 real mixed-format public documents — **80.4% agent correctness**, **89.3% faithfulness** (answer claims grounded in / inferable from retrieved text, RAGAS-style), **91.5% answer relevancy**, **71.4% structured (DuckDB) accuracy**, **100% unanswerable refusal rate**, **100% evidence hit@10**. No eval-set-specific shortcuts — every answer comes from the model and tool outputs.
 
 ---
 
@@ -213,44 +213,44 @@ All 14 documents are publicly available. `make seed` automatically downloads and
 
 **Agent answer metrics** (all 82 questions)
 
-| Metric | Score | Notes |
+| Metric | Score | What it measures |
 |---|---:|---|
-| Correctness | **83.2%** | LLM judge + exact-match short-circuit |
-| Faithfulness | **79.5%** | Answer claims grounded in retrieved text |
-| Answer relevancy | **93.2%** | Answer directly addresses the question |
+| Correctness | **80.4%** | Whether the answer states the facts the question asks for, judged against the gold answer — paraphrases, formatting, currency symbols, and source labels are accepted; exact matches short-circuit the LLM judge |
+| Faithfulness | **89.3%** | Whether every claim in the answer is supported by — or inferable from — the retrieved context. Cross-document conclusions count as supported when their component facts are present in the chunks; contradictions, invented facts, and wrong-source mixing are penalised (RAGAS-style, claim-level). Excludes unanswerable questions |
+| Answer relevancy | **91.5%** | Whether the answer actually addresses the question asked — not off-topic, not padded with irrelevant context |
 
 **Vector retrieval metrics** (53 PDF/OCR questions, Qdrant)
 
-| Metric | Score |
-|---|---:|
-| Hit@5 | **100%** |
-| Hit@10 | **100%** |
-| MRR | **89.0%** |
-| Evidence recall@10 | **96.5%** |
+| Metric | Score | What it measures |
+|---|---:|---|
+| Hit@5 | **100%** | Fraction of questions where a gold evidence chunk appears in the top 5 retrieved |
+| Hit@10 | **100%** | …same, within the top 10 retrieved |
+| MRR | **89.0%** | Mean reciprocal rank of the first gold evidence chunk (1.0 = always ranked first) |
+| Evidence recall@10 | **96.5%** | Fraction of *all* annotated gold evidence chunks recovered within the top 10 |
 
 Hit@5 and Hit@10 both at 100% — the correct evidence chunk lands in the top 5 (and 10) candidates for every answerable PDF question, with no domain-specific fine-tuning. The OR-scoped doc_id filter (matching `metadata.doc_id`, `metadata.source_file`, and `metadata.file_name`) ensures scoped searches return full document coverage even for older ingestions that only set `source_file`.
 
 **Structured retrieval** (21 Excel/CSV questions, DuckDB)
 
-| Metric | Score |
-|---|---:|
-| Answer accuracy | **71.4%** |
+| Metric | Score | What it measures |
+|---|---:|---|
+| Answer accuracy | **71.4%** | Fraction of Excel/CSV questions where the text-to-SQL path over DuckDB returns the correct cell value |
 
 Excel and CSV questions bypass Qdrant entirely. The Excel sub-graph decomposes cross-document questions per source, fans out one inner SQL ReAct loop per part via the LangGraph `Send` API, and synthesises the per-part answers. Each inner loop ranks candidate tables by column-name overlap with the question, then writes / runs / evaluates SQL with retries on column errors and a next-table fallback on empty results.
 
 **Unanswerable questions** (8 questions)
 
-| Metric | Score |
-|---|---:|
-| Correct refusal rate | **100%** |
+| Metric | Score | What it measures |
+|---|---:|---|
+| Correct refusal rate | **100%** | Fraction of questions with no answer in the corpus where the agent correctly returns `Unsupported` instead of hallucinating |
 
 Questions that cannot be answered from the indexed corpus. The agent is instructed to return the single word `Unsupported` — no hedging, no hallucination. A runtime guard catches a specific failure mode the prompt alone could not: when the agent picks a topically-related document and returns essentially just its filename ("doc_007_published_spend_report.csv") without extracting any value matching the question's data type, the guard converts that to `Unsupported`. The check is content-based — strip filenames + question-echo + framing, and if no substantive token or new numeric value remains, the answer is treated as a refusal failure dressed up as an answer. General to any new document.
 
 ### Methodology notes
 
 - **No eval-set-specific shortcuts.** The pipeline contains zero hardcoded extractors, regex patches, or query rewrites tied to specific benchmark questions. An earlier iteration shipped ~290 lines of such code; removing it caused a ~12-point correctness regression, which the current general-fix wave (multi-part-pattern decomp, source-diversity acceptance check, bare-filename guard, auto-scope on filename-token dominance) recovered and exceeded. Numbers represent the genuine generalising behaviour of the agent and tools.
-- **Faithfulness tracks correctness.** Faithfulness (79.5%) sits ~4 points below correctness (83.2%) because cross-document synthesis answers necessarily add bridging language ("X focuses on …, while Y …") that is not verbatim in any single retrieved chunk. Pushing the gap closed would require either richer per-doc summaries at ingest time or a per-claim citation format — both architectural changes, not prompt tweaks.
-- **Correctness ceiling.** The remaining ~17% failures split into: (1) cross-document spreadsheet questions where an entity name has special characters (`*`, `&`, ampersand-collapsed text) that defeat ILIKE matching; (2) LLM column-disambiguation errors (e.g. answering from "Directorate" when the gold value is in "Department"); (3) wrong-cell-within-right-doc cases where the chunk contains multiple candidate values (e.g. an original approval date and a later amendment date) and the model picks the first match; (4) a small number of OCR variances on scanned PDFs.
+- **Faithfulness is judged at the claim level (RAGAS-style).** A claim counts as supported if it can be *inferred* from the retrieved context — not only if it appears verbatim. So a cross-document conclusion ("X allows a longer term than Y") is faithful when both X's and Y's terms are present in the retrieved chunks; only claims that contradict the context, introduce facts absent from it, or mix values across the wrong sources are penalised. An earlier holistic single-pass judge scored such derived conclusions near zero even when the underlying facts and the verdict were correct, depressing faithfulness ~10 points below its true value. The pipeline is unchanged — this is a measurement-accuracy fix aligning the judge with the RAGAS definition, not a model change. Unanswerable questions are still excluded (a refusal makes no claim and retrieves no context).
+- **Correctness ceiling.** The remaining ~20% failures split into: (1) cross-document spreadsheet questions where an entity name has special characters (`*`, `&`, ampersand-collapsed text) that defeat ILIKE matching; (2) LLM column-disambiguation errors (e.g. answering from "Directorate" when the gold value is in "Department"); (3) wrong-cell-within-right-doc cases where the chunk contains multiple candidate values (e.g. an original approval date and a later amendment date) and the model picks the first match; (4) a small number of OCR variances on scanned PDFs. Run-to-run variance from inference nondeterminism is ±2–3 points on correctness and answer relevancy.
 - **Retrieval metrics are split by modality.** PDF questions are measured by Qdrant vector hit rate. Excel/CSV questions are measured by DuckDB answer accuracy. Mixing them would penalise the SQL path for never appearing in Qdrant results.
 - **Unanswerable questions are excluded from retrieval and faithfulness metrics.** A correct refusal makes no factual claim and retrieves no context — scoring faithfulness against empty evidence would be meaningless.
 

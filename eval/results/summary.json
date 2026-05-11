@@ -19,13 +19,13 @@
     "correct_refusal_rate": 1.0
   },
   "agent_answer_metrics": {
-    "correctness": 0.8317073170731708,
-    "faithfulness": 0.7946666666666666,
-    "answer_relevancy": 0.9317073170731708
+    "correctness": 0.8036585365853659,
+    "faithfulness": 0.8933333333333333,
+    "answer_relevancy": 0.9146341463414634
   },
   "judge_breakdown": {
-    "custom_llm_judge": 62,
-    "exact_match_shortcircuit": 20
+    "custom_llm_judge": 61,
+    "exact_match_shortcircuit": 21
   },
   "question_breakdown": {
     "cross_document_compare": 17,
