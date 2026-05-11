@@ -22,23 +22,6 @@ from src.parser.input_utils import resolve_to_pdf  # noqa: E402
 from src.parser.pdf_parser import parse_pdf  # noqa: E402
 from src.vector_store import delete_by_file, ingest_embeddings  # noqa: E402
 
-def _image_analysis_endpoint() -> str:
-    """Build the full chat completions URL for image analysis.
-
-    Handles both Ollama-style bases (http://host:port) and OpenAI-compatible
-    bases that already include /v1 (e.g. https://api.groq.com/openai/v1).
-    """
-    base = os.getenv("IMAGE_ANALYSIS_API_BASE", os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11434")).rstrip("/")
-    if not base.endswith("/v1"):
-        base = f"{base}/v1"
-    return f"{base}/chat/completions"
-
-
-def _image_analysis_model() -> str:
-    """Return the vision model name used for figure/image analysis."""
-    return os.getenv("IMAGE_ANALYSIS_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
-
-
 # ---------------------------------------------------------------------------
 # HTML table multi-row header → flat markdown table
 # ---------------------------------------------------------------------------
