@@ -110,12 +110,6 @@ def _rank_tables(tables: dict[str, list[str]], question: str) -> list[str]:
     return sorted(tables.keys(), key=score)
 
 
-def _table_summary(tname: str, schema: list[tuple[str, str]]) -> str:
-    """One-line schema digest for the table listing."""
-    cols = ", ".join(f'"{c}" ({t})' for c, t in schema)
-    return f'"{tname}": {cols}'
-
-
 def _format_samples(samples: list[dict]) -> str:
     return "\n".join(json.dumps(row, ensure_ascii=False, default=str) for row in samples)
 

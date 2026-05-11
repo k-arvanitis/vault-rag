@@ -13,8 +13,6 @@ from pathlib import Path
 from typing import Any, Callable
 
 import duckdb
-from langchain_core.tools import StructuredTool
-from pydantic import BaseModel
 
 from src.config import DUCKDB_PATH, GROQ_API_KEY
 
@@ -80,8 +78,6 @@ def _normalize_dates(df: "Any") -> "Any":
             pass
     return df
 
-
-_WRITE_PREFIXES = ("INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER", "TRUNCATE", "REPLACE")
 
 # DD/MM/YYYY or D/M/YYYY inside SQL string literals → YYYY-MM-DD
 _DATE_DMY = re.compile(r"'(\d{1,2})/(\d{1,2})/(\d{4})'")
@@ -158,63 +154,3 @@ class DuckDBStore:
         with self._lock:
             df = self._con.execute(f'SELECT * FROM "{table_name}" LIMIT {n}').df()
         return df.to_dict(orient="records")
-
-
-def build_excel_tools(store: DuckDBStore) -> list[StructuredTool]:
-    """Return a single LangChain StructuredTool for SQL-based Excel queries.
-
-    Args:
-        store: Populated DuckDBStore instance.
-    """
-
-    class _SQLInput(BaseModel):
-        sql: str
-
-    def query_excel(sql: str) -> str:
-        """Execute a SQL SELECT query against the structured Excel/CSV tables in DuckDB."""
-        normalized = sql.strip().upper().lstrip("(")
-        for kw in _WRITE_PREFIXES:
-            if normalized.startswith(kw):
-                return "Write operations are not allowed. Use SELECT queries only."
-        sql = _normalize_sql(sql)
-        try:
-            df = store.execute(sql)
-        except Exception as e:
-            return f"SQL error: {e}"
-        if df.empty and _ILIKE_VAL.search(sql):
-            # Supplier/beneficiary names may be truncated in the source data.
-            # Retry with progressively shorter ILIKE patterns (up to 3 chars removed).
-            for trim in (1, 2, 3):
-                relaxed = _truncate_ilike(sql, trim)
-                if relaxed == sql:
-                    break
-                try:
-                    df = store.execute(relaxed)
-                except Exception:
-                    break
-                if not df.empty:
-                    break
-        if df.empty:
-            return "Query returned no rows."
-        _ROW_LIMIT = 100
-        truncated = len(df) > _ROW_LIMIT
-        out = df.head(_ROW_LIMIT).to_string(index=False, max_colwidth=80)
-        if truncated:
-            out += f"\n… (truncated at {_ROW_LIMIT} rows)"
-        return out
-
-    return [
-        StructuredTool.from_function(
-            func=query_excel,
-            name="query_excel",
-            description=(
-                "Execute a SQL SELECT query against cleaned Excel/CSV data stored in DuckDB. "
-                "Use after search_knowledge_base has returned a sheet_summary chunk that tells you "
-                "the DuckDB table name and column names. "
-                "Use for value lookups, filters, aggregations (SUM, COUNT, AVG, GROUP BY, ORDER BY). "
-                "Always double-quote column names. Use ILIKE for string filters. "
-                "Dates are stored as 'YYYY-MM-DD' strings."
-            ),
-            args_schema=_SQLInput,
-        )
-    ]

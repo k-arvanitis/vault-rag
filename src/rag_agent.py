@@ -13,7 +13,6 @@ import json
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 from typing import Any, Generator
 
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
@@ -1007,16 +1006,13 @@ def _enrich_search_query(query: str) -> str:
     return query
 
 
-
 def _build_doc_registry(qdrant_url: str, collection: str) -> dict[str, str]:
     """Return {lowercased_source_file_stem: doc_id} by scrolling a sample of Qdrant points.
 
     Used for fuzzy title matching when the LLM passes a document title instead of a doc_id.
     Returns empty dict on failure so the caller degrades gracefully.
     """
-    import json
     from urllib.request import Request, urlopen
-    from urllib.error import HTTPError, URLError
 
     base = qdrant_url.rstrip("/")
     url = f"{base}/collections/{collection}/points/scroll"
@@ -1030,7 +1026,7 @@ def _build_doc_registry(qdrant_url: str, collection: str) -> dict[str, str]:
     try:
         with urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode())
-    except (HTTPError, URLError, Exception):
+    except Exception:
         return {}
 
     registry: dict[str, str] = {}
@@ -1044,66 +1040,6 @@ def _build_doc_registry(qdrant_url: str, collection: str) -> dict[str, str]:
             # Also index the full filename for direct matches
             registry[source_file.lower()] = doc_id
     return registry
-
-
-def _load_manifest_registry(manifest_path: Path | None = None) -> dict[str, Any]:
-    """Load doc_id → label from document_manifest.json for query routing."""
-    path = manifest_path or (Path(__file__).parent.parent / "eval" / "document_manifest.json")
-    if not path.exists():
-        return {}
-    try:
-        with open(path) as f:
-            docs = json.load(f)
-        result: dict[str, Any] = {}
-        for d in docs:
-            if "doc_id" not in d or "title" not in d:
-                continue
-            title = d["title"]
-            publisher = d.get("publisher", "")
-            aliases = d.get("aliases", [])
-            alias_str = f" (also known as: {', '.join(aliases)})" if aliases else ""
-            label = f"{title}{alias_str} — {publisher}" if publisher else f"{title}{alias_str}"
-            result[d["doc_id"]] = {"label": label}
-        return result
-    except Exception:
-        return {}
-
-
-def _format_manifest_for_prompt(manifest_registry: dict[str, Any]) -> str:
-    """Format doc_id → title mapping so the agent can resolve document references in queries."""
-    if not manifest_registry:
-        return ""
-    lines = [
-        "\n\nSource document registry — when the question names a specific document, "
-        "find it here and use the doc_id in your search_knowledge_base call:"
-    ]
-    for doc_id in sorted(manifest_registry):
-        entry = manifest_registry[doc_id]
-        label = entry["label"] if isinstance(entry, dict) else str(entry)
-        lines.append(f"  {doc_id}: {label}")
-    return "\n".join(lines)
-
-
-def _format_excel_sources_for_prompt(excel_store: Any) -> str:
-    """List available DuckDB tables with column names and types."""
-    lines = [
-        "\n\nAvailable DuckDB tables for query_excel — use these exact table and column names:",
-        "  Note: all date columns are stored as 'YYYY-MM-DD' strings (e.g. '2025-04-04').",
-        "  Note: string columns may have trailing spaces and mixed case — always use ILIKE for case-insensitive text matching (e.g. col ILIKE '%VALUE%') and TRIM() where needed.",
-    ]
-    for file, sheet_map in excel_store.file_sheet_map().items():
-        for sheet, tname in sheet_map.items():
-            lines.append(f'  table="{tname}"  (source: file={file}, sheet={sheet})')
-            try:
-                desc = excel_store.execute(f'DESCRIBE "{tname}"')
-                col_info = [f'"{row["column_name"]}" ({row["column_type"]})' for _, row in desc.iterrows()]
-                lines.append(f"    columns: {col_info}")
-            except Exception:
-                cols = excel_store.tables().get(tname, [])
-                lines.append(f"    columns: {cols}")
-    if len(lines) == 2:
-        return ""
-    return "\n".join(lines)
 
 
 def _make_unified_tool(

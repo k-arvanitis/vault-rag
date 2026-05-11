@@ -325,35 +325,6 @@ def sheet_to_markdown(
     return "\n".join(lines)
 
 
-def row_to_chunk(
-    file_name: str,
-    sheet_name: str,
-    headers: list[str],
-    row: list[Any],
-    sheet_title: str = "",
-) -> str:
-    """Build a compact row-level chunk using the resolved table context."""
-    prefix_parts = [f"File: {file_name}", f"Sheet: {sheet_name}"]
-    if sheet_title:
-        prefix_parts.append(sheet_title)
-
-    row_label = _format_cell(row[0]) if row else ""
-    pairs = []
-    for idx, header in enumerate(headers):
-        if idx >= len(row):
-            continue
-        value = _format_cell(row[idx])
-        if not value:
-            continue
-        pairs.append(f"{header}: {value}")
-
-    lines = [f"[{' | '.join(prefix_parts)}]"]
-    if row_label:
-        lines.append(f"Row summary: {row_label}")
-    lines.append(" | ".join(pairs))
-    return "\n".join(lines)
-
-
 def sheet_to_chunk(
     file_name: str,
     sheet_name: str,
@@ -424,46 +395,6 @@ def _upsert(collection: str, points: list[dict], batch_size: int = 200) -> None:
     for i in range(0, len(points), batch_size):
         _qdrant_request("PUT", f"{base}/collections/{collection}/points?wait=true", {"points": points[i : i + batch_size]})
 
-
-def _build_vector_field(text: str, sparse_embedder: Any) -> Any:
-    """Build dense or dense+sparse vectors for one chunk of table text."""
-    vec = _embed(text)
-    if sparse_embedder is None:
-        return vec
-    indices, values = sparse_embedder.embed(text)
-    return {"": vec, "sparse": {"indices": indices, "values": values}}
-
-
-def _build_table_point(
-    file_name: str,
-    sheet_name: str,
-    chunk_text: str,
-    chunk_type: str,
-    part_idx: int,
-    num_rows: int,
-    vector_field: Any,
-) -> dict[str, Any]:
-    """Build one Qdrant point for a table-derived chunk."""
-    prefix = "sheet" if chunk_type == "sheet_table" else "row"
-    parts = file_name.split("_")
-    doc_id = f"{parts[0]}_{parts[1]}" if len(parts) >= 2 else parts[0]
-    return {
-        "id": _point_id(file_name, sheet_name, f"{prefix}:{part_idx}"),
-        "vector": vector_field,
-        "payload": {
-            "content": chunk_text,
-            "source_type": "table",
-            "metadata": {
-                "source_file": file_name,
-                "doc_id": doc_id,
-                "sheet_name": sheet_name,
-                "chunk_type": chunk_type,
-                "part": part_idx,
-                "row_ref": part_idx if chunk_type == "sheet_row" else None,
-                "num_rows": num_rows,
-            },
-        },
-    }
 
 def _point_id(file_name: str, sheet_name: str, key_suffix: Any) -> int:
     key = f"{file_name}::{sheet_name}::{key_suffix}"
