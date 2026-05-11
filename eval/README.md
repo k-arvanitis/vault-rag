@@ -17,6 +17,7 @@ The primary answer evaluator is a compact custom LLM judge:
 - one JSON-only `gpt-4o-mini` call for non-exact answers
 - retrieved-context selection around the answer and gold evidence terms
 - deterministic retrieval metrics against gold evidence annotations
+- **claim-level faithfulness** (RAGAS-style): a claim is supported if it can be *inferred* from the retrieved context, not only if it appears verbatim — so a cross-document conclusion is faithful when its component facts are present in the chunks; only contradictions, absent facts, or wrong-source mixing are penalised
 
 DeepEval remains available with `EVAL_JUDGE_MODE=deepeval`, but it is not the default reported run. In practice, its multi-step metrics were brittle for this corpus: Qwen judges returned invalid JSON, and GPT-mini judges timed out or under-scored faithfulness when context was trimmed too aggressively.
 
