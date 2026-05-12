@@ -92,18 +92,22 @@ The live `/query` path is one **ReAct agent** (`src/rag_agent.py`, LangGraph `cr
        ▼
   GRAPH 1 — ReAct agent   (src/rag_agent.py — LangGraph create_react_agent, name="vault-rag")
     LLM: qwen3-32b  (Groq primary, served through the LiteLLM proxy → OpenRouter / NVIDIA NIM on failover)
-    One tool-calling loop; the loop itself handles multi-hop by re-querying. Two tools:
+    One tool-calling loop; the loop itself handles multi-hop by re-querying. Two tools — each
+    call returns to the agent, which decides whether to call again or answer:
 
-      search_knowledge_base  →  PDF / Qdrant retrieval
-        step 1 — search the document_summary chunks → resolve which doc_id(s) the question is about
-        step 2 — scoped hybrid search on those docs (dense + sparse, RRF-fused)
-                 + HyDE query expansion  (HyDE LLM: qwen3-32b @ temperature 0)
-                 → cross-encoder rerank: top-100 → top-10
-                   reranker model: cross-encoder/ms-marco-MiniLM-L-6-v2  (.env.example + Docker;
-                   BAAI/bge-reranker-v2-m3 is the in-code fallback if RERANKER_MODEL is unset)
-
-      query_excel  →  hands the question to GRAPH 2
+   ┌── search_knowledge_base ──▶ PDF / Qdrant retrieval  (no sub-graph — just retrieval + rerank)
+   │     step 1 — search the document_summary chunks → resolve which doc_id(s) the question is about
+   │     step 2 — scoped hybrid search on those docs (dense + sparse, RRF-fused)
+   │              + HyDE query expansion  (HyDE LLM: qwen3-32b @ temperature 0)
+   │              → cross-encoder rerank: top-100 → top-10
+   │                reranker model: cross-encoder/ms-marco-MiniLM-L-6-v2  (.env.example + Docker;
+   │                BAAI/bge-reranker-v2-m3 is the in-code fallback if RERANKER_MODEL is unset)
+   │     └─ ranked chunks ──────────────────────────────────────────────────────▶ back to GRAPH 1
+   │
+   └── query_excel ───────────▶ invokes GRAPH 2 (below)
+                                   └─ per-part answers ──────────────────────────▶ back to GRAPH 1
        │
+       │ (only the query_excel branch reaches GRAPH 2)
        ▼
   GRAPH 2 — Excel sub-graph   (src/excel_agent.py — two hand-built LangGraph StateGraphs)
     LLM: gpt-4o-mini  (OpenAI)   ← the only model not served via Groq; needs EXCEL_AGENT_API_KEY,
