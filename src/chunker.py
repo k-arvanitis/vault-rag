@@ -15,6 +15,7 @@ import os
 import tiktoken
 
 from src.config import CHUNK_LLM_API_BASE, CHUNK_LLM_MODEL, CHUNK_LLM_API_KEY
+from src.prompts import CHUNK_CONTEXT_PROMPT, DOCUMENT_SUMMARY_PROMPT
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -39,12 +40,7 @@ def generate_document_summary(client: OpenAI, model_name: str, markdown: str) ->
     """Generate a 3-5 sentence document-level summary for the whole document."""
     max_input_chars = int(os.getenv("SUMMARY_MAX_INPUT_CHARS", "6000"))
     truncated = markdown[:max_input_chars]
-    prompt = (
-        "Write a concise 3-5 sentence summary of this document. "
-        "Cover the main topic, key contributions or findings, and intended audience. "
-        "Return only the summary, no preamble.\n\n"
-        f"Document:\n{truncated}"
-    )
+    prompt = DOCUMENT_SUMMARY_PROMPT.format(document=truncated)
     try:
         response = client.chat.completions.create(
             model=model_name,
@@ -67,19 +63,9 @@ def contextualize_chunk(client: OpenAI, model_name: str, doc_context: str, chunk
     heading_hint = (heading_match.group(1).strip() if heading_match else "none")
     table_hint = (table_match.group(0).strip() if table_match else "none")
 
-    prompt = f"""You are generating retrieval context for one chunk.
-Write exactly one concise sentence (max 30 words) that describes the main topic, entities, and purpose of this chunk.
-Be specific to this chunk only. Do not use generic filler.
-Use these chunk-specific hints when relevant:
-- heading_hint: {heading_hint}
-- table_hint: {table_hint}
-Return only the sentence.
-
-Here is the chunk:
-<chunk>
-{chunk_content}
-</chunk>
-"""
+    prompt = CHUNK_CONTEXT_PROMPT.format(
+        heading_hint=heading_hint, table_hint=table_hint, chunk_content=chunk_content
+    )
 
     try:
         response = client.chat.completions.create(
