@@ -67,3 +67,78 @@ When the LLM returns a `400 Bad Request` due to token overflow, the agent retrie
 ## Contextual Retrieval (chunking)
 
 For each chunk a fast LLM writes one sentence describing the topic, entities, and purpose; that sentence is prepended before embedding. Each vector therefore captures both what the chunk is *about* and what it *says*, improving recall for short or indirect queries. Implementation of [Anthropic Contextual Retrieval (2024)](https://www.anthropic.com/news/contextual-retrieval). Full chunking pipeline: [chunking.md](chunking.md).
+
+## Retrieval-quality refinements
+
+A second wave of changes after manual UI testing surfaced specific failure modes — answers that were `Unsupported` despite the data being present, source cards that showed irrelevant chunks, and broad queries dumping file lists instead of asking for clarification. Each refinement below is domain-agnostic; none targets a specific question or document.
+
+### Filename resolution at the LLM layer
+
+Chunks are stored with `file_name=foo.md` (post-parse) but the original source is `foo.pdf`. Without resolution, the LLM echoes `.md` in answers — a parsing artifact the user shouldn't see. `src/file_resolver.py` exposes `resolve_original_name(filename)` which maps stem → real filename by scanning `data/input/` and `eval/data/raw/`. Applied at every LLM-visible chunk header and in the FastAPI source parser. Same code, single source of truth.
+
+### Stage-2 excludes summary chunks
+
+Stage 1 explicitly retrieves `document_summary` chunks for doc routing (`force_chunk_types=["document_summary"]`). Stage 2 (the actual content fetch) was previously also returning these summaries through dense+sparse search, where they consistently scored at the top because of their dense topic coverage. They consumed rerank slots but never answer-bearing — by definition. All five stage-2 retrieve calls now pass `force_exclude_chunk_types=["sheet_summary", "document_summary"]`.
+
+`sheet_summary` chunks are dual-purpose (they signal *"this sheet has these columns, route to the Excel tool"*) so they're fetched separately and capped at 2 with a stopword-filtered column-overlap threshold of `≥2`, not `>0` — generic words like `and/the/of` no longer count toward overlap.
+
+### Stage-1 stem-overlap doc-routing boost
+
+The stage-1 router uses dense similarity over `document_summary` chunks to identify likely source docs. This works well when the query is paraphrased prose; it fails when the query literally names the doc. Example: *"What does the procurement policy say about supplier selection?"* — the embedding is similar to multiple HR-policy summaries because they all discuss "policy" and "selection criteria", so HR docs win the top-5.
+
+Fix: after dense routing, add any doc whose filename stem shares `≥2` tokens with the query (after stopword filter `{the, and, for, with, from}`) to `stage1_doc_ids`. For *"procurement policy"*, `doc_001_procurement_policy` matches on `{procurement, policy}` regardless of dense rank.
+
+This is a strong signal — the user literally typed the title — so stem-matched docs are tracked separately as `stem_match_doc_ids` and treated with higher priority downstream.
+
+### Force-inject missing stage-1 docs
+
+The boost above only matters if the doc's chunks are in the candidate pool. With `retrieval_top_k=100`, popular docs can crowd a stage-1-identified doc out entirely. After the main hits assembly, missing stage-1 docs trigger a scoped `retrieve(scope_doc_id=missing_id, top_k=5)` which guarantees their chunks reach the reranker.
+
+Presence detection uses a filename regex (`doc_\d+`) instead of `metadata.doc_id` because older ingestions only set `doc_id` on `document_summary` chunks — PDF chunks lacked it, so they appeared "missing" while actually being present.
+
+### Per-doc slot reservation
+
+The reranker often gives high logits to chunks with surface-form similarity to the query (e.g. an HR chunk with the phrase *"selection criteria"* outranks the actual procurement-policy text for *"supplier selection"*). A weak tiebreaker on stage-1 membership wasn't enough.
+
+Replaced with explicit slot reservation: stem-matched docs and explicitly-mentioned doc_ids each get up to 2 guaranteed slots in the top-N. Rest of the slots fill from the reranker's order, skipping anything already reserved. Reranking now runs on **all** candidates (`top_n=len(docs)`) instead of cutting at `_rerank_top_n` first, so reserved chunks aren't silently dropped before reservation runs.
+
+### Neighbor-chunk expansion
+
+The classic chunker-boundary problem: section header lives in chunk N, the values table lives in N+1, the reranker scores N high (matches "vacation accrual schedule") but never sees N+1. Generic and content-agnostic fix: after the top-N is decided, batch-fetch `chunk_index ± 1` from each file via Qdrant scroll filter on `(source_file, chunk_index IN [...])` and append with `[prev chunk]` / `[next chunk]` separators bounded by `max_chunk_chars`. Skipped for `sheet_*` and `document_summary` chunks (they're standalone, no useful neighbors).
+
+This single change fixes a class of misses — header-then-table, intro-then-list, definition-then-example — without re-ingesting or re-chunking.
+
+### Tool-call boundary aware source display
+
+For questions that name a specific document, the agent makes two calls per the system prompt: an unscoped `search_knowledge_base` to discover the doc_id from `document_summary`, then a scoped follow-up. The first call returns 8 noise chunks (matched on `filter_token` exact-match scroll); the second returns the answer-bearing chunks the LLM actually cites.
+
+The previous source parser concatenated chunks from both calls and capped at 8 — call-1's noise filled all slots, call-2's real sources were never displayed. Fix: `stream_agent` and `ask_agent` insert a `---CALL_BOUNDARY---` marker between tool calls; `_parse_sources` groups by boundary and iterates in **reverse**, so the later (typically scoped) call's chunks display first. Falls back to single-call behavior when only one call happened.
+
+### Prompt-driven clarification
+
+A new `_CLARIFICATION_BLOCK` in the system prompt instructs the agent to respond with `Clarify: <one short question listing 2-4 specific topics>` when the question is too broad to answer with a specific value (e.g. *"what about HR policies?"*) and the retrieved chunks span 3+ unrelated docs or contain only summary chunks. Picks the topics from what was actually retrieved, so the clarification is grounded in available content.
+
+Implemented as a prompt rule rather than a separate classifier node — zero infra change, easily tunable, and the LLM at temp=0 is consistent enough at evaluating the trigger condition.
+
+### Deterministic HyDE
+
+`_llm_call` default temperature was 0.5; only the main agent loop and the direct-answer paths explicitly passed `temperature=0`. HyDE expansion (used for query embedding) inherited the 0.5 default, which made retrieval results vary across identical queries. Default is now `0.0` — every LLM call in the pipeline is reproducible.
+
+### Forced retry on bare Unsupported
+
+Even at `temperature=0`, Groq inference is not perfectly deterministic — speculative decoding and other engine-side optimizations introduce small variation that can flip a tool-call decision. Observed symptom: identical query *"What does the procurement policy say about supplier selection?"* sometimes triggers the 2-step doc-routing protocol (correct answer with `doc_001` chunks) and sometimes skips it (bare `Unsupported`).
+
+Mitigation at the API layer (`api.py /query`):
+
+1. Run the agent normally.
+2. If the final answer is exactly `"Unsupported"` (after `.strip().lower()`), re-run the agent **once** with the original question plus an explicit instruction:
+   > *"This is a retry. The previous attempt returned Unsupported. You MUST follow the doc-routing protocol strictly: (1) call search_knowledge_base with the topic words to identify the relevant document_summary and read its doc_id; (2) call search_knowledge_base again with the original question scoped to that doc_id."*
+3. If the retry produces a non-`Unsupported` answer, use it; otherwise keep the original abstention.
+
+Trade-offs deliberately considered:
+
+- **Cost** — adds at most one extra agent run per request, only on bare Unsupported. Real abstentions (e.g. *"home phone number of the CEO"*) return a longer abstention text containing `Unsupported` plus an explanation, so the exact-match check (`==`, not `in`) doesn't fire and the retry is skipped.
+- **Hallucination risk** — the retry doesn't change retrieval logic; it just nudges the agent to use it more thoroughly. The reranker, abstention rule, and citation requirements still apply on the second pass.
+- **Why not vLLM** — a self-hosted vLLM endpoint with a fixed seed would give true determinism, but the demo runs against Groq for cost and latency. The forced retry is the pragmatic substitute.
+
+Validated: 5/5 runs of the previously-flaky procurement query now produce real answers with `doc_001_procurement_policy.pdf` in the source list.
