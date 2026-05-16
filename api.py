@@ -33,7 +33,8 @@ from src.config import (  # noqa: E402
     RERANKER_MODEL,
     RETRIEVAL_TOP_K,
 )
-from src.vector_store import scroll_all_payloads, get_chunks_by_file, _request as _qdrant  # noqa: E402
+from src.vector_store import scroll_all_payloads, get_chunks_by_file, delete_by_file, _request as _qdrant  # noqa: E402
+from src.file_resolver import resolve_original_name as _resolve_original_name  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -171,61 +172,93 @@ _HEADER_RE = re.compile(
 )
 _MD_HEADING_RE = re.compile(r"^#{1,3}\s+(.+)$", re.MULTILINE)
 _TABLE_MARKER_RE = re.compile(r"\[TABLE_START\]|\[TABLE_END\]")
+_PAGE_MARKER_RE = re.compile(r"<!--\s*PAGE\s+(\d+)")
+
+
+_CALL_BOUNDARY = "---CALL_BOUNDARY---"
 
 
 def _parse_sources(collected: list[str]) -> list[dict]:
+    """Parse collected tool chunks into source cards for the UI.
+
+    Groups chunks by tool call (boundaries marked by `---CALL_BOUNDARY---`) and
+    iterates calls in REVERSE order — later calls are typically scoped/refined
+    and contain the answer-bearing chunks the LLM actually used. This prevents
+    the first broad call's noise chunks from monopolizing the displayed list.
+    """
+    calls: list[list[str]] = [[]]
+    for raw in collected:
+        if raw == _CALL_BOUNDARY:
+            calls.append([])
+        else:
+            calls[-1].append(raw)
+    calls = [c for c in calls if c]
+
     seen: set[tuple[str, str]] = set()
     sources: list[dict] = []
-    for raw in collected:
-        lines = raw.strip().splitlines()
-        if not lines:
-            continue
-        m = _HEADER_RE.match(lines[0])
-        filename = m.group("file") if m else "unknown"
-        loc_key = m.group("loc_key") or "" if m else ""
-        loc_val = m.group("loc_val") or "" if m else ""
-        score_str = m.group("score") if m else None
+    for call_chunks in reversed(calls):
+        for raw in call_chunks:
+            lines = raw.strip().splitlines()
+            if not lines:
+                continue
+            m = _HEADER_RE.match(lines[0])
+            filename = m.group("file") if m else "unknown"
+            loc_key = m.group("loc_key") or "" if m else ""
+            loc_val = m.group("loc_val") or "" if m else ""
+            score_str = m.group("score") if m else None
 
-        body_lines = lines[1:] if len(lines) > 1 else []
-        body = "\n".join(body_lines).strip()
+            body_lines = lines[1:] if len(lines) > 1 else []
+            body = "\n".join(body_lines).strip()
 
-        # Extract section heading from chunk body (chunker prepends headings)
-        heading_m = _MD_HEADING_RE.search(body[:600])
-        if heading_m:
-            section = heading_m.group(1).strip()
-        elif loc_key == "sheet":
-            section = loc_val
-        else:
-            section = ""
+            page_m = _PAGE_MARKER_RE.search(body)
+            page = int(page_m.group(1)) if page_m else None
 
-        # Build location label shown in the UI badge
-        if loc_key == "chunk":
-            location = f"chunk {loc_val}"
-        elif loc_key == "sheet":
-            location = f"sheet: {loc_val}"
-        elif loc_key == "part":
-            location = f"part {loc_val}"
-        else:
-            location = ""
+            if filename.startswith("eval/data/raw/"):
+                filename = filename[len("eval/data/raw/"):]
+            filename = _resolve_original_name(filename)
 
-        # Excerpt: strip markdown headings and table markers, take first 350 chars
-        plain = _TABLE_MARKER_RE.sub("", body)
-        plain = re.sub(r"^#{1,3}\s+.+$", "", plain, flags=re.MULTILINE).strip()
-        excerpt = " ".join(plain.split())[:350]
+            heading_m = _MD_HEADING_RE.search(body[:600])
+            if heading_m:
+                section = heading_m.group(1).strip()
+            elif loc_key == "sheet":
+                section = loc_val
+            else:
+                section = ""
 
-        score = float(score_str) if score_str else None
+            is_doc_summary = loc_key == "chunk" and loc_val == "-1"
+            is_sheet_summary = loc_key == "sheet" and "Sheet summary:" in body[:200]
 
-        key = (filename, excerpt[:80])
-        if key in seen:
-            continue
-        seen.add(key)
-        sources.append({
-            "filename": filename,
-            "section": section,
-            "location": location,
-            "excerpt": excerpt,
-            "score": round(score, 4) if score else None,
-        })
+            if is_doc_summary:
+                location = "document summary"
+            elif is_sheet_summary:
+                location = f"sheet summary: {loc_val}"
+            elif loc_key == "chunk":
+                location = f"chunk {loc_val}"
+            elif loc_key == "sheet":
+                location = f"sheet: {loc_val}"
+            elif loc_key == "part":
+                location = f"part {loc_val}"
+            else:
+                location = ""
+
+            plain = _TABLE_MARKER_RE.sub("", body)
+            plain = re.sub(r"^#{1,3}\s+.+$", "", plain, flags=re.MULTILINE).strip()
+            excerpt = " ".join(plain.split())[:350]
+
+            score = float(score_str) if score_str else None
+
+            key = (filename, excerpt[:80])
+            if key in seen:
+                continue
+            seen.add(key)
+            sources.append({
+                "filename": filename,
+                "section": section,
+                "location": location,
+                "page": page,
+                "excerpt": excerpt,
+                "score": round(score, 4) if score else None,
+            })
     return sources[:8]
 
 
@@ -319,20 +352,68 @@ class QueryRequest(BaseModel):
     question: str
 
 
+_RETRY_INSTRUCTION = (
+    "\n\nIMPORTANT: This is a retry. The previous attempt returned Unsupported. "
+    "You MUST follow the doc-routing protocol strictly: "
+    "(1) call search_knowledge_base with the topic words alone to identify the relevant "
+    "document_summary chunk and read its Document ID (doc_XXX). "
+    "(2) call search_knowledge_base again with the original question, passing that doc_id "
+    "as the doc_id argument to scope the search to that specific document."
+)
+
+
 @app.post("/query")
 async def query(req: QueryRequest):
     from src.rag_agent import stream_agent
     agent = _get_agent()
-    collected: list[str] = []
-    tokens: list[str] = []
     loop = asyncio.get_running_loop()
 
-    def _run():
-        for token in stream_agent(agent, req.question, collected_chunks=collected):
-            tokens.append(token)
+    async def _run_once(question: str) -> tuple[str, list[str], dict]:
+        collected: list[str] = []
+        tokens: list[str] = []
+        trace_holder: dict = {}
 
-    await loop.run_in_executor(_executor, _run)
-    return {"answer": "".join(tokens).strip(), "sources": _parse_sources(collected)}
+        def _run():
+            sql_trace: list[str] = []
+            for token in stream_agent(
+                agent, question, collected_chunks=collected, sql_trace=sql_trace
+            ):
+                tokens.append(token)
+            trace_holder["sql"] = sql_trace
+
+        await loop.run_in_executor(_executor, _run)
+        return "".join(tokens).strip(), collected, trace_holder
+
+    answer, collected, excel_trace = await _run_once(req.question)
+
+    # Forced retry on bare Unsupported. Groq inference at temp=0 still has small
+    # nondeterminism; the agent occasionally skips the doc-routing step on first
+    # attempt and returns Unsupported despite the answer existing in a specific
+    # document. The retry forces the 2-step protocol explicitly.
+    if answer.lower() == "unsupported":
+        retry_answer, retry_collected, retry_trace = await _run_once(req.question + _RETRY_INSTRUCTION)
+        if retry_answer.lower() != "unsupported" and retry_answer:
+            answer, collected, excel_trace = retry_answer, retry_collected, retry_trace
+
+    sources = _parse_sources(collected)
+    sql_list = [s for s in (excel_trace.get("sql") or []) if s]
+    return {
+        "answer": answer,
+        "sources": sources,
+        "sql": sql_list,
+        "tools_used": _tools_from_sources(sources, bool(sql_list)),
+    }
+
+
+def _tools_from_sources(sources: list[dict], used_sql: bool) -> list[str]:
+    """Derive a small pill list of tools used from source extensions + SQL flag."""
+    tools: list[str] = []
+    exts = {Path(s.get("filename", "")).suffix.lower() for s in sources}
+    if used_sql or {".xlsx", ".xls", ".csv"} & exts:
+        tools.append("query_excel")
+    if {".pdf", ".md", ".txt", ".docx"} & exts or any(not Path(s.get("filename", "")).suffix for s in sources):
+        tools.append("search_documents")
+    return tools or (["search_documents"] if sources else [])
 
 
 @app.delete("/collection", dependencies=[Depends(require_api_key)])
@@ -341,6 +422,17 @@ async def clear_collection():
     _qdrant("DELETE", f"{base}/collections/{QDRANT_COLLECTION}")
     _get_agent.cache_clear()
     return {"status": "cleared"}
+
+
+@app.delete("/documents/{filename:path}", dependencies=[Depends(require_api_key)])
+async def delete_document(filename: str):
+    """Remove all Qdrant points for a single file."""
+    try:
+        deleted = delete_by_file(QDRANT_URL, QDRANT_COLLECTION, filename)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    _get_agent.cache_clear()
+    return {"status": "deleted", "filename": filename, "points_deleted": deleted}
 
 
 # ── inspector endpoints ────────────────────────────────────────────────────────

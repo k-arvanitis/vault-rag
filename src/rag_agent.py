@@ -25,6 +25,7 @@ from pydantic import BaseModel
 from src.excel_agent import build_excel_agent_tools
 from src.excel_tool import DuckDBStore
 from src.file_resolver import resolve_original_name
+from src.prompts import compose_system_prompt
 from src.reranker import BGEReranker, QwenReranker
 from src.retriever import (
     _extract_table_filter_token,
@@ -47,89 +48,10 @@ from src.config import (
 )
 
 # ---------------------------------------------------------------------------
-# System prompt
+# System prompt — templates live in src/prompts.py; this is the model-specific wiring
 # ---------------------------------------------------------------------------
 
-_TOOLS_BLOCK_WITH_EXCEL = """You have two tools:
-
-1. **search_knowledge_base** — semantic search over all ingested documents: PDFs, reports, and table sheet summaries.
-2. **query_excel** — answers any question about structured data (Excel/CSV) stored in DuckDB. Pass the full question as 'question'. The agent inside discovers the right table(s), generates SQL, and retries automatically.
-
-Tool routing:
-- For structured data questions (Excel, CSV, spend reports, transactions): call **query_excel** directly with the complete question — include every filter detail (dates, amounts, supplier names, transaction numbers, departments) verbatim. Do NOT call search_knowledge_base first for Excel questions.
-- For PDFs, policies, reports, findings: use **search_knowledge_base** only — never query_excel.
-- If a question mixes PDF and Excel sources, use both tools.
-"""
-
-_TOOLS_BLOCK_SEARCH_ONLY = """You have one tool:
-
-1. **search_knowledge_base** — searches all knowledge sources: unstructured documents (PDFs, reports) and structured table rows (CSV/Excel) ingested into the vector store.
-"""
-
-_RULES_BLOCK = """Rules:
-- You MUST call a tool before answering every question, no exceptions. Never answer from your own knowledge without searching first.
-- Use a focused, specific sub-question as the search query. Include key entity names (supplier names, transaction IDs, beneficiary names, dates) verbatim so they match the indexed content.
-- MULTI-PART QUESTIONS: when a question asks about two or more distinct pieces of information, decompose it into separate sub-questions and issue one tool call per sub-question. If all parts are from the same Excel dataset, pass the full multi-part question to query_excel in one call.
-- **CROSS-DOCUMENT QUESTIONS**: for PDF/text docs — two separate search_knowledge_base calls, each scoped to one doc_id. For Excel/CSV cross-document questions — one query_excel call with the full question.
-- **DOC_ID IS MANDATORY**: whenever the question names or implies a specific document (by title, publisher, or alias), first call search_knowledge_base with the document name as the query to retrieve its document_summary chunk — that chunk contains the Document ID (e.g. "doc_001"). Then use that doc_id in your follow-up call to scope retrieval. For two-part questions naming two different documents, resolve each doc_id separately.
-- **EXACT QUALIFIER IN QUERY**: when the question includes an exact qualifier — a date, a count category, a status label, or a precise descriptor — copy that exact phrase verbatim into your search query. This is critical for retrieving the passage that matches the qualifier, not a nearby passage with a different value.
-- For table row lookups: include ALL distinguishing attributes from the question (supplier name, date, transaction ID, department) in your search query to land on the exact row.
-- After you receive tool results, answer from those results. Do not repeat identical tool calls.
-"""
-
-_CLARIFICATION_BLOCK = """CLARIFICATION RULE (apply BEFORE answering or returning Unsupported):
-- If the question is too broad to answer with a specific value — e.g. "what about HR policies?", "tell me about finance", "anything on procurement?" — and no specific entity, date, or value is being asked for, do NOT list files and do NOT synthesize a generic summary.
-- Instead, output exactly: "Clarify: <one short question listing 2-4 specific topics derived from the retrieved chunks>". Example: "Clarify: which HR topic — leave policy, harassment, equity, or monitoring?"
-- Trigger this rule when the retrieved chunks span 3+ unrelated documents OR contain only document_summary chunks with no detail-level content matching the question.
-- Do not use this rule when the question names a specific value, entity, date, or document — answer those normally.
-"""
-
-_ANSWERING_BLOCK = """When answering:
-- Lead with the direct answer value — a name, number, date, or phrase — before adding any context. Do not open with "According to..." or "The X is..."; just state the value.
-- Only state values that appear in the retrieved text. Do not interpolate, infer, or calculate anything not explicitly present.
-- Each retrieved passage is prefixed with [N] file=<filename>. For multi-document questions, use the file= label to match each answer value to its correct source — do not mix values from different files.
-- If retrieved table rows are shown as "Relevant table rows", use the field labels to select the requested cell value exactly.
-- For multi-part questions, answer each part on its own line with a brief source label (e.g. "Source A: <value>. Source B: <value>."). Only mark a part Unsupported if that part's value is absent.
-- **TIME-SCOPED NUMBERS**: when the question specifies an exact date or time qualifier, report only the number explicitly paired with that exact date in the retrieved text. Do NOT report numbers paired with a different date, even if both appear in the same passage.
-- **MULTI-NUMBER DISAMBIGUATION**: when a passage contains multiple numbers with different descriptors, read the question to identify which descriptor it asks about, then report only the number paired with that descriptor. Never report the first number you see.
-- Markdown headings (lines starting with #) in the retrieved text are document titles — quote them exactly when asked for a title.
-- Never perform arithmetic. If a sum or average is not pre-computed in the source, list the raw values and note the calculation is unavailable.
-- **VERBATIM VALUES**: when stating a specific number, rate, date, or named quantity, copy it exactly as it appears in the source. Preserve original formatting — do not normalize fractions, units, or date formats.
-- **SHEET COUNT QUESTIONS**: when asked whether a document contains one sheet or multiple sheets, count the number of distinct sheet_summary chunks returned for that document. If more than one, answer "No" (it has multiple sheets).
-"""
-
-_ABSTENTION_BLOCK = """ABSTENTION RULE (CRITICAL — follow exactly):
-- If the retrieved text does not contain the requested answer, you MUST output only the single word: Unsupported
-- Do not output Unsupported when the retrieved text contains the requested value under a matching field label or in a matching sentence.
-- No explanation. No hedging. No "I cannot find...". Just the single word: Unsupported
-- This applies unconditionally to: personal phone numbers, home addresses, passwords, login credentials, government ID numbers (SSN, passport), GPS coordinates, salaries or pay of named individuals, and any other detail not present verbatim in the retrieved text.
-- Do not use your general knowledge to fill gaps — if it is not in the retrieved text, output: Unsupported. Only answers explicitly stated in the retrieved passages are valid.
-- **FILENAMES AND INTERNAL PATHS are not answers**: if the retrieved text only contains a filename or a file path, do not return that as the answer value — output: Unsupported
-- **DOCUMENT IDENTITY CHECK**: when the question asks about a specific document by title or alias, verify the retrieved text's file= label matches that specific document. If the retrieved content is from a different document, do not use it — search again with the correct doc_id.
-"""
-
-_CITATION_BLOCK = """Always cite your sources:
-- Document chunks: [1], [2], etc.
-- Table results: mention the sheet/file name from the tool output.
-"""
-
-
-def _compose_system_prompt(*, with_excel: bool) -> str:
-    """Compose the agent system prompt from shared blocks plus the right tools header."""
-    tools = _TOOLS_BLOCK_WITH_EXCEL if with_excel else _TOOLS_BLOCK_SEARCH_ONLY
-    return (
-        "You are an intelligent RAG assistant.\n\n"
-        f"{tools}\n"
-        f"{_RULES_BLOCK}\n"
-        f"{_CLARIFICATION_BLOCK}\n"
-        f"{_ANSWERING_BLOCK}\n"
-        f"{_ABSTENTION_BLOCK}\n"
-        f"{_CITATION_BLOCK}"
-    )
-
-
-_SYSTEM_PROMPT_SEARCH_ONLY = _compose_system_prompt(with_excel=False)
-_SYSTEM_PROMPT_WITH_EXCEL = _compose_system_prompt(with_excel=True)
+_SYSTEM_PROMPT_WITH_EXCEL = compose_system_prompt(with_excel=True)
 
 
 def _is_thinking_model(model_name: str) -> bool:
@@ -1525,7 +1447,12 @@ def _make_unified_tool(
     tool = StructuredTool.from_function(
         func=search_knowledge_base,
         name="search_knowledge_base",
-        description="Search all knowledge sources (documents and tables). Input: a focused sub-question.",
+        description=(
+            "Search unstructured documents (PDFs, reports, policies, handbooks) for "
+            "text passages. Input: a focused sub-question. This tool retrieves text — it "
+            "cannot compute sums, counts, maxima, or other aggregates over Excel/CSV "
+            "data. For any structured-data or arithmetic question, use query_excel instead."
+        ),
         args_schema=SearchInput,
     )
     return tool, _limits
@@ -1800,6 +1727,7 @@ def stream_agent(
     history: list[dict] | None = None,
     show_tool_uses: bool = False,
     collected_chunks: list[str] | None = None,
+    sql_trace: list[str] | None = None,
 ) -> Generator[str, None, None]:
     """Stream the agent's final answer token-by-token.
 
@@ -1810,6 +1738,7 @@ def stream_agent(
     Args:
         history: Prior conversation turns as [{"role": "user"/"assistant", "content": str}].
         collected_chunks: If provided, tool result chunks are appended to this list.
+        sql_trace: If provided, SQL generated by query_excel is appended to this list.
     """
     if _has_empty_reference_placeholder(query):
         yield "Unsupported"
@@ -1885,6 +1814,10 @@ def stream_agent(
                 _tool_used = True
                 _pre_tool_buf.clear()
                 _tool_contexts.append(chunk.content)
+                if sql_trace is not None and chunk.name == "query_excel":
+                    artifact = getattr(chunk, "artifact", None)
+                    if isinstance(artifact, dict):
+                        sql_trace.extend(s for s in (artifact.get("sql") or []) if s)
                 if collected_chunks is not None:
                     parts = re.split(r"\n\n(?=\[\d+\])", chunk.content.strip())
                     cleaned = [p.strip() for p in parts if p.strip()]

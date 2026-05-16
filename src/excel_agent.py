@@ -35,6 +35,12 @@ from src.config import (
     EXCEL_AGENT_MODEL,
 )
 from src.excel_tool import DuckDBStore, _normalize_sql, _truncate_ilike
+from src.prompts import (
+    DECOMPOSE_PROMPT,
+    FORMAT_PROMPT,
+    SQL_PROMPT_HEADER,
+    SQL_RETRY_HINT,
+)
 
 _MAX_SQL_ATTEMPTS = 2
 _ROW_LIMIT = 50
@@ -170,28 +176,12 @@ def _execute_sql(store: DuckDBStore, sql: str) -> tuple[bool, str, str | None]:
 # Decomposition: split cross-document questions into per-doc subqueries
 # ---------------------------------------------------------------------------
 
-_DECOMPOSE_PROMPT = """\
-You are a question-decomposition planner for a SQL agent over per-document tables.
-Split the user's question into one subquestion per source document or per distinct \
-filter target. If the question targets a single source, return a one-element list.
-
-Output a JSON array of strings. No prose, no fences.
-
-Examples:
-Q: "For supplier Foo on 2025-04-01 in doc_006 what is NET Amount? And for transaction 123 in doc_007 what is Beneficiary?"
-A: ["For supplier Foo on 2025-04-01 in doc_006 what is the NET Amount?", "For transaction 123 in doc_007 what is the Beneficiary?"]
-
-Q: "What is the NET Amount for supplier Bar in the purchase card transactions?"
-A: ["What is the NET Amount for supplier Bar in the purchase card transactions?"]
-"""
-
-
 def _decompose(question: str) -> list[str]:
     """Return [question] if single-target, else 2+ focused subquestions."""
     try:
         raw = _llm_chat(
             messages=[
-                {"role": "system", "content": _DECOMPOSE_PROMPT},
+                {"role": "system", "content": DECOMPOSE_PROMPT},
                 {"role": "user", "content": question},
             ],
             max_tokens=300,
@@ -209,61 +199,6 @@ def _decompose(question: str) -> list[str]:
 # Inner SQL agent: select_table → inspect → write_sql → run_sql → evaluate
 # ---------------------------------------------------------------------------
 
-_SQL_PROMPT_HEADER = """\
-You are a DuckDB SQL expert. Write ONE SQL SELECT query to answer the question.
-
-## Selected table
-{table_name}
-
-## Columns
-{schema}
-
-## Sample rows
-{samples}
-
-## SQL rules
-- Always double-quote column names: `"Column Name"`.
-- Use ILIKE for ALL string filters — VARCHAR columns often have trailing whitespace.
-- Special chars in ILIKE patterns (*, ?, &, /, +) are treated as literals — no escaping.
-- Dates stored as `'YYYY-MM-DD'`. Rewrite any date in the question to that format.
-- BIGINT/DOUBLE numeric columns: use `=`. VARCHAR amount columns: use ILIKE.
-- Keep filters minimal — fewer filters = better recall when text is messy.
-- Wrap your SQL in ```sql ... ``` fences. Output the SQL only, no commentary.
-"""
-
-_SQL_RETRY_HINT = """\
-
-## Previous attempt(s)
-{history}
-
-The previous attempt did not return rows or hit a SQL error. Try ONE adjustment:
-- SQL error → fix the column name (read "candidate bindings" if listed in the error).
-- 0 rows → shorten ONE ILIKE pattern by trimming a few trailing characters
-  (data values are sometimes truncated). Keep ALL other filters intact.
-Do NOT drop the date/department/transaction-number filters — that risks matching the wrong row.
-Wrap your new SQL in ```sql ... ``` fences.
-"""
-
-_FORMAT_PROMPT = """\
-SQL result rows (table "{table_name}"):
-
-{result}
-
-Question: {question}
-
-Read the rows above. Extract the answer.
-
-RULES (follow EXACTLY):
-1. The rows have at least one row of data → ALWAYS output a value, never abstain.
-2. Multiple data rows → use the FIRST data row. Never refuse because of multiple rows.
-3. Multiple fields asked → "Field1=value; Field2=value".
-4. Single field asked → output the value alone (no field name, no units).
-5. Copy values verbatim (e.g. 99.99 not "$99.99", text values exactly).
-6. Output only: "Query returned 0 rows." → output exactly: Unsupported
-7. No preamble, no markdown, no explanation. Just the value(s).
-"""
-
-
 class _SQLState(TypedDict):
     """Inner-loop state for one subquestion."""
     question: str
@@ -276,6 +211,7 @@ class _SQLState(TypedDict):
     last_single_col_value: str | None    # deterministic fallback when LLM punts
     attempts: int
     answer: str
+    final_sql: str
 
 
 def _extract_sql(text: str) -> str | None:
@@ -318,13 +254,13 @@ def _build_inner_graph(store: DuckDBStore) -> Any:
 
         schema_text = "\n".join(f'  "{c}" ({t})' for c, t in state["schema"])
         samples_text = _format_samples(state["samples"]) or "(no rows in sample)"
-        prompt = _SQL_PROMPT_HEADER.format(
+        prompt = SQL_PROMPT_HEADER.format(
             table_name=state["selected_table"],
             schema=schema_text,
             samples=samples_text,
         )
         if history_text:
-            prompt += _SQL_RETRY_HINT.format(history=history_text)
+            prompt += SQL_RETRY_HINT.format(history=history_text)
 
         try:
             raw = _llm_chat(
@@ -380,7 +316,7 @@ def _build_inner_graph(store: DuckDBStore) -> Any:
             try:
                 answer = _llm_chat(
                     messages=[
-                        {"role": "user", "content": _FORMAT_PROMPT.format(
+                        {"role": "user", "content": FORMAT_PROMPT.format(
                             table_name=state["selected_table"],
                             result=last_result[:2000],
                             question=state["question"],
@@ -393,8 +329,8 @@ def _build_inner_graph(store: DuckDBStore) -> Any:
             # When the SQL projects exactly one column and rows came back, the answer is
             # unambiguous — a punted "Unsupported" from the format LLM is a false negative.
             if (not answer or answer.lower() == "unsupported") and state.get("last_single_col_value"):
-                return {"answer": state["last_single_col_value"]}
-            return {"answer": answer or "Unsupported"}
+                return {"answer": state["last_single_col_value"], "final_sql": last_sql}
+            return {"answer": answer or "Unsupported", "final_sql": last_sql}
 
         # Routing rules:
         #  - SQL/column error on this table: retry SAME table once (let the model fix the column).
@@ -460,6 +396,7 @@ class _OuterState(TypedDict):
     subquestions: list[str]
     candidate_tables_per_sub: list[list[str]]
     answers: Annotated[list[str], operator.add]
+    sql_trace: Annotated[list[str], operator.add]
     final_answer: str
 
 
@@ -498,6 +435,7 @@ def _build_outer_graph(store: DuckDBStore) -> Any:
                     "last_single_col_value": None,
                     "attempts": 0,
                     "answer": "",
+                    "final_sql": "",
                 },
             )
             for sq, cands in zip(state["subquestions"], state["candidate_tables_per_sub"])
@@ -507,8 +445,12 @@ def _build_outer_graph(store: DuckDBStore) -> Any:
         try:
             result = inner.invoke(state, config={"recursion_limit": 60})
         except Exception:
-            return {"answers": ["Unsupported"]}
-        return {"answers": [result.get("answer") or "Unsupported"]}
+            return {"answers": ["Unsupported"], "sql_trace": []}
+        sql = (result.get("final_sql") or "").strip()
+        return {
+            "answers": [result.get("answer") or "Unsupported"],
+            "sql_trace": [sql] if sql else [],
+        }
 
     def synthesize_node(state: _OuterState) -> dict:
         answers = state.get("answers") or []
@@ -569,24 +511,35 @@ def build_excel_agent_tools(store: DuckDBStore) -> list[StructuredTool]:
     class _Input(BaseModel):
         question: str
 
-    def query_excel(question: str) -> str:
-        """Answer a structured-data question by decomposing per-source, running a SQL ReAct agent per part, and synthesising."""
+    def query_excel(question: str) -> tuple[str, dict[str, Any]]:
+        """Answer a structured-data question by decomposing per-source, running a SQL ReAct agent per part, and synthesising.
+
+        Returns (answer, artifact). The artifact carries the generated SQL and
+        subquestions for the UI trace panel; it rides on the ToolMessage and is
+        not shown to the LLM, so the tool's content stays clean.
+        """
         try:
             result = graph.invoke({
                 "question": question,
                 "subquestions": [],
                 "candidate_tables_per_sub": [],
                 "answers": [],
+                "sql_trace": [],
                 "final_answer": "",
             })
         except Exception as exc:
-            return f"Excel agent error: {exc}"
-        return result.get("final_answer") or "Unsupported"
+            return f"Excel agent error: {exc}", {}
+        artifact = {
+            "sql": list(result.get("sql_trace") or []),
+            "subquestions": list(result.get("subquestions") or []),
+        }
+        return result.get("final_answer") or "Unsupported", artifact
 
     return [
         StructuredTool.from_function(
             func=query_excel,
             name="query_excel",
+            response_format="content_and_artifact",
             description=(
                 "Answer any question about structured data (Excel/CSV) stored in DuckDB. "
                 "Pass the full question as 'question' — include all filter details "
