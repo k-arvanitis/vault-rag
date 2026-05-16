@@ -33,7 +33,8 @@ data/output/*
 !data/output/.gitkeep
 
 CLAUDE.md
-BLACKBOX.md 
+BLACKBOX.md
+OWNERSHIP.md
 vault-rag.code-workspace
 
 /notebooks
