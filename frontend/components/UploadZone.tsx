@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { Upload, X } from "lucide-react";
+import { Upload } from "lucide-react";
 import { ingestFile, getIngestStatus } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -102,11 +102,13 @@ export default function UploadZone({ onUploaded, onToast }: Props) {
   };
 
   return (
-    <div className="mt-auto pt-3 border-t border-zinc-800">
+    <div className="space-y-2 border-t border-ink-200 pt-3">
       <div
         className={cn(
-          "rounded-lg border-2 border-dashed p-3 text-center cursor-pointer transition-colors",
-          dragging ? "border-zinc-500 bg-zinc-800/50" : "border-zinc-700 hover:border-zinc-600"
+          "cursor-pointer rounded-lg border-2 border-dashed p-3 text-center transition-colors",
+          dragging
+            ? "border-brand bg-ink-100"
+            : "border-ink-200 hover:border-ink-300 hover:bg-ink-100"
         )}
         onDragOver={(e) => {
           e.preventDefault();
@@ -116,9 +118,9 @@ export default function UploadZone({ onUploaded, onToast }: Props) {
         onDrop={onDrop}
         onClick={() => inputRef.current?.click()}
       >
-        <Upload className="mx-auto mb-1 h-4 w-4 text-zinc-500" />
-        <p className="text-xs text-zinc-400">Upload Documents</p>
-        <p className="text-[10px] text-zinc-600 mt-0.5">PDF · Excel · CSV · DOCX · MD · Image</p>
+        <Upload className="mx-auto mb-1 h-4 w-4 text-ink-400" />
+        <p className="text-xs font-medium text-ink-700">Upload documents</p>
+        <p className="mt-0.5 text-[10px] text-ink-400">PDF · Excel · CSV · DOCX · MD · Image</p>
         <input
           ref={inputRef}
           type="file"
@@ -129,19 +131,19 @@ export default function UploadZone({ onUploaded, onToast }: Props) {
         />
       </div>
 
-      {/* Pipeline selector — PDF only, ignored for other file types */}
-      <div className="mt-2 flex items-center gap-1">
-        <span className="text-[10px] text-zinc-600 shrink-0">PDF pipeline:</span>
-        <div className="flex gap-0.5 ml-1">
+      {/* PDF pipeline selector — ignored for non-PDF file types */}
+      <div className="flex items-center gap-1">
+        <span className="shrink-0 text-[10px] text-ink-400">PDF pipeline:</span>
+        <div className="ml-1 flex gap-0.5">
           {(["auto", "ocr", "text"] as Pipeline[]).map((p) => (
             <button
               key={p}
               onClick={() => setPipeline(p)}
               className={cn(
-                "text-[10px] px-2 py-0.5 rounded transition-colors",
+                "rounded px-2 py-0.5 text-[10px] transition-colors",
                 pipeline === p
-                  ? "bg-zinc-700 text-zinc-200"
-                  : "text-zinc-600 hover:text-zinc-400"
+                  ? "bg-brand text-white"
+                  : "text-ink-500 hover:bg-ink-100 hover:text-ink-700"
               )}
             >
               {PIPELINE_LABELS[p]}
@@ -151,38 +153,30 @@ export default function UploadZone({ onUploaded, onToast }: Props) {
       </div>
 
       {files.length > 0 && (
-        <div className="mt-2 space-y-2">
+        <div className="space-y-2 pt-1">
           {files.map((f) => (
             <div key={f.id} className="text-xs">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-zinc-300 truncate max-w-[180px]">{f.name}</span>
-                <span
-                  className={cn(
-                    "text-[10px] ml-1 shrink-0",
-                    f.error ? "text-red-400" : "text-zinc-500"
-                  )}
-                >
+              <div className="mb-1 flex items-center justify-between">
+                <span className="max-w-[180px] truncate text-ink-700">{f.name}</span>
+                <span className={cn("ml-1 shrink-0 text-[10px]", f.error ? "text-red-600" : "text-ink-500")}>
                   {f.stage}
                 </span>
               </div>
-              <div className="h-1 bg-zinc-800 rounded-full overflow-hidden">
+              <div className="h-1.5 overflow-hidden rounded-full bg-ink-100">
                 <div
                   className={cn(
                     "h-full rounded-full transition-all duration-500",
-                    f.error ? "bg-red-600" : f.progress === 100 ? "bg-emerald-600" : "bg-zinc-400"
+                    f.error ? "bg-red-500" : f.progress === 100 ? "bg-emerald-500" : "bg-brand"
                   )}
                   style={{ width: `${f.progress}%` }}
                 />
               </div>
               {f.stage !== "Indexed" && !f.error && (
-                <div className="flex gap-1 mt-1">
+                <div className="mt-1 flex gap-1.5">
                   {STAGES.map((s) => (
                     <span
                       key={s}
-                      className={cn(
-                        "text-[9px]",
-                        f.stage === s ? "text-zinc-300" : "text-zinc-700"
-                      )}
+                      className={cn("text-[9px]", f.stage === s ? "text-ink-700" : "text-ink-300")}
                     >
                       {s}
                     </span>

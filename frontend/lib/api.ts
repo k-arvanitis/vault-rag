@@ -22,6 +22,7 @@ export interface Source {
   filename: string;
   section: string;
   location: string;
+  page: number | null;
   excerpt: string;
   score: number | null;
 }
@@ -29,6 +30,8 @@ export interface Source {
 export interface QueryResponse {
   answer: string;
   sources: Source[];
+  sql?: string[];
+  tools_used?: string[];
 }
 
 export interface Stats {
@@ -123,6 +126,13 @@ export async function queryDocuments(question: string): Promise<QueryResponse> {
 
 export async function clearCollection(): Promise<void> {
   await fetch(`${BASE_URL}/collection`, { method: "DELETE" });
+}
+
+export async function deleteDocument(filename: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/documents/${encodeURIComponent(filename)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(`Delete failed (${res.status})`);
 }
 
 export async function checkHealth(): Promise<boolean> {

@@ -1,28 +1,15 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { FileText, FileSpreadsheet, Image, FileCode, File, ScanSearch } from "lucide-react";
-import { getDocuments, getStats, type Document, type Stats } from "@/lib/api";
+import { FileText, FileSpreadsheet, Image, FileCode, File, ScanSearch, Trash2 } from "lucide-react";
+import { getDocuments, getStats, deleteDocument, clearCollection, type Document, type Stats } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import UploadZone from "./UploadZone";
 
-const TYPE_COLORS: Record<string, string> = {
-  pdf: "bg-red-900 text-red-300",
-  xlsx: "bg-green-900 text-green-300",
-  xls: "bg-green-900 text-green-300",
-  csv: "bg-yellow-900 text-yellow-300",
-  docx: "bg-blue-900 text-blue-300",
-  doc: "bg-blue-900 text-blue-300",
-  md: "bg-zinc-700 text-zinc-300",
-  png: "bg-purple-900 text-purple-300",
-  jpg: "bg-purple-900 text-purple-300",
-  jpeg: "bg-purple-900 text-purple-300",
-};
-
-const STATUS_COLORS: Record<string, string> = {
-  indexed: "bg-emerald-900/60 text-emerald-400",
-  processing: "bg-zinc-700 text-zinc-400",
-  failed: "bg-red-900/60 text-red-400",
+const STATUS_CHIP: Record<string, string> = {
+  indexed: "bg-emerald-50 text-emerald-700",
+  processing: "bg-ink-100 text-ink-500",
+  failed: "bg-red-50 text-red-700",
 };
 
 function fileExt(name: string) {
@@ -30,11 +17,11 @@ function fileExt(name: string) {
 }
 
 function FileIcon({ ext }: { ext: string }) {
-  const cls = "h-3.5 w-3.5 shrink-0 text-zinc-500";
-  if (["pdf"].includes(ext)) return <FileText className={cls} />;
+  const cls = "h-3.5 w-3.5 shrink-0 text-ink-400";
+  if (ext === "pdf") return <FileText className={cls} />;
   if (["xlsx", "xls", "csv"].includes(ext)) return <FileSpreadsheet className={cls} />;
   if (["png", "jpg", "jpeg"].includes(ext)) return <Image className={cls} />;
-  if (["md"].includes(ext)) return <FileCode className={cls} />;
+  if (ext === "md") return <FileCode className={cls} />;
   return <File className={cls} />;
 }
 
@@ -43,11 +30,13 @@ const INSPECTABLE = new Set(["pdf", "xlsx", "xls", "csv"]);
 interface Props {
   onToast: (msg: string, variant?: "error") => void;
   onInspect: (filename: string) => void;
+  onCollectionCleared: () => void;
 }
 
-export default function Sidebar({ onToast, onInspect }: Props) {
+export default function Sidebar({ onToast, onInspect, onCollectionCleared }: Props) {
   const [docs, setDocs] = useState<Document[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -55,7 +44,7 @@ export default function Sidebar({ onToast, onInspect }: Props) {
       setDocs(d);
       setStats(s);
     } catch {
-      // backend unreachable — handled by banner upstream
+      // backend unreachable — handled by the offline banner upstream
     }
   }, []);
 
@@ -64,18 +53,47 @@ export default function Sidebar({ onToast, onInspect }: Props) {
   }, [refresh]);
 
   return (
-    <aside className="w-[280px] shrink-0 flex flex-col h-full bg-zinc-950 border-r border-zinc-800 px-3 py-4">
-      {/* Wordmark */}
-      <div className="mb-5 px-1">
-        <span className="text-base font-semibold tracking-tight text-zinc-100">Vault RAG</span>
+    <aside className="flex w-[300px] flex-shrink-0 flex-col gap-3 border-r border-ink-200 bg-ink-50 p-3">
+      {/* Documents header + clear control */}
+      <div className="flex items-center justify-between px-0.5">
+        <span className="text-xs font-semibold uppercase tracking-wide text-ink-500">Documents</span>
+        {!confirmClear ? (
+          <button
+            onClick={() => setConfirmClear(true)}
+            title="Clear collection"
+            className="flex items-center gap-1 text-[10px] text-ink-400 hover:text-red-600"
+          >
+            <Trash2 className="h-3 w-3" />
+            Clear all
+          </button>
+        ) : (
+          <div className="flex items-center gap-1.5 text-[10px]">
+            <button
+              onClick={async () => {
+                try {
+                  await clearCollection();
+                  setConfirmClear(false);
+                  onCollectionCleared();
+                  refresh();
+                } catch (e) {
+                  onToast(e instanceof Error ? e.message : "Clear failed", "error");
+                  setConfirmClear(false);
+                }
+              }}
+              className="font-medium text-red-600 hover:text-red-700"
+            >
+              Confirm
+            </button>
+            <button onClick={() => setConfirmClear(false)} className="text-ink-500 hover:text-ink-700">
+              Cancel
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Documents section */}
-      <p className="text-[10px] uppercase tracking-widest text-zinc-600 mb-2 px-1">Documents</p>
-
-      <div className="flex-1 overflow-y-auto min-h-0 space-y-1">
+      <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto">
         {docs.length === 0 ? (
-          <p className="text-xs text-zinc-600 px-1 mt-2">No documents indexed yet.</p>
+          <p className="px-0.5 pt-1 text-xs text-ink-400">No documents indexed yet.</p>
         ) : (
           docs.map((doc) => {
             const ext = fileExt(doc.filename);
@@ -85,55 +103,69 @@ export default function Sidebar({ onToast, onInspect }: Props) {
             return (
               <div
                 key={doc.filename}
-                className="group flex items-start gap-2 rounded-md px-2 py-2 hover:bg-zinc-900 transition-colors"
+                className="group flex items-start gap-2 rounded-md border border-ink-200 bg-surface px-2.5 py-2 transition-colors hover:border-ink-300"
               >
-                <FileIcon ext={ext} />
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-zinc-300 truncate leading-tight">{basename}</p>
-                  <div className="flex items-center gap-1.5 mt-1">
-                    <span
-                      className={cn(
-                        "text-[9px] px-1.5 py-0.5 rounded font-medium uppercase tracking-wide",
-                        TYPE_COLORS[ext] ?? "bg-zinc-800 text-zinc-400"
-                      )}
-                    >
+                <span className="pt-0.5">
+                  <FileIcon ext={ext} />
+                </span>
+                <div className="min-w-0 flex-1 space-y-1">
+                  <p className="truncate text-xs font-medium leading-tight text-ink-800">{basename}</p>
+                  <div className="flex items-center gap-1.5">
+                    <span className="rounded bg-ink-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-ink-600">
                       {typeLabel}
                     </span>
                     <span
                       className={cn(
-                        "text-[9px] px-1.5 py-0.5 rounded font-medium",
-                        STATUS_COLORS[doc.status] ?? "bg-zinc-800 text-zinc-400"
+                        "rounded px-1.5 py-0.5 text-[10px]",
+                        STATUS_CHIP[doc.status] ?? "bg-ink-100 text-ink-500"
                       )}
                     >
                       {doc.status}
                     </span>
                   </div>
                 </div>
-                {canInspect && (
+                <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                  {canInspect && (
+                    <button
+                      onClick={() => onInspect(doc.filename)}
+                      title="Inspect document"
+                      className="rounded p-1 text-ink-400 hover:bg-ink-100 hover:text-ink-700"
+                    >
+                      <ScanSearch className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                   <button
-                    onClick={() => onInspect(doc.filename)}
-                    title="Inspect document"
-                    className="shrink-0 p-1 rounded text-zinc-600 hover:text-zinc-300 hover:bg-zinc-800 opacity-0 group-hover:opacity-100 transition-all"
+                    onClick={async () => {
+                      if (!confirm(`Delete "${basename}" from the collection?`)) return;
+                      try {
+                        await deleteDocument(doc.filename);
+                        onToast(`Deleted ${basename}`);
+                        refresh();
+                      } catch (e) {
+                        onToast(e instanceof Error ? e.message : "Delete failed", "error");
+                      }
+                    }}
+                    title="Delete document"
+                    className="rounded p-1 text-ink-400 hover:bg-ink-100 hover:text-red-600"
                   >
-                    <ScanSearch className="h-3.5 w-3.5" />
+                    <Trash2 className="h-3.5 w-3.5" />
                   </button>
-                )}
+                </div>
               </div>
             );
           })
         )}
       </div>
 
-      {/* Stats row */}
       {stats && (
-        <div className="flex gap-4 px-1 pt-3 pb-2 border-t border-zinc-800 mt-2">
+        <div className="flex gap-5 border-t border-ink-200 px-0.5 pt-3">
           <div>
-            <p className="text-[10px] text-zinc-600">Docs</p>
-            <p className="text-sm font-semibold text-zinc-300">{stats.total_docs}</p>
+            <p className="text-[10px] text-ink-400">Docs</p>
+            <p className="text-sm font-semibold text-ink-800">{stats.total_docs}</p>
           </div>
           <div>
-            <p className="text-[10px] text-zinc-600">Chunks</p>
-            <p className="text-sm font-semibold text-zinc-300">{stats.total_chunks.toLocaleString()}</p>
+            <p className="text-[10px] text-ink-400">Chunks</p>
+            <p className="text-sm font-semibold text-ink-800">{stats.total_chunks.toLocaleString()}</p>
           </div>
         </div>
       )}

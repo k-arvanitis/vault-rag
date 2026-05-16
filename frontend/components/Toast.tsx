@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -17,15 +17,15 @@ interface Props {
 
 export default function ToastContainer({ toasts, onDismiss }: Props) {
   return (
-    <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none">
+    <div className="pointer-events-none fixed right-4 top-4 z-50 flex flex-col gap-2">
       {toasts.map((t) => (
-        <ToastItem key={t.id} toast={t} onDismiss={onDismiss} />
+        <Toast key={t.id} toast={t} onDismiss={onDismiss} />
       ))}
     </div>
   );
 }
 
-function ToastItem({ toast, onDismiss }: { toast: ToastItem; onDismiss: (id: string) => void }) {
+function Toast({ toast, onDismiss }: { toast: ToastItem; onDismiss: (id: string) => void }) {
   useEffect(() => {
     const timer = setTimeout(() => onDismiss(toast.id), 4000);
     return () => clearTimeout(timer);
@@ -34,15 +34,18 @@ function ToastItem({ toast, onDismiss }: { toast: ToastItem; onDismiss: (id: str
   return (
     <div
       className={cn(
-        "pointer-events-auto flex items-center gap-3 rounded-lg px-4 py-3 shadow-lg text-sm",
-        "border animate-in slide-in-from-right-5 fade-in",
+        "pointer-events-auto flex items-center gap-3 rounded-lg border px-4 py-2.5 text-sm",
         toast.variant === "error"
-          ? "bg-red-950 border-red-800 text-red-200"
-          : "bg-zinc-800 border-zinc-700 text-zinc-200"
+          ? "border-red-200 bg-red-50 text-red-800"
+          : "border-ink-200 bg-surface text-ink-800"
       )}
     >
       <span className="flex-1">{toast.message}</span>
-      <button onClick={() => onDismiss(toast.id)} className="text-current opacity-50 hover:opacity-100">
+      <button
+        onClick={() => onDismiss(toast.id)}
+        className="opacity-50 transition-opacity hover:opacity-100"
+        aria-label="Dismiss"
+      >
         <X className="h-3.5 w-3.5" />
       </button>
     </div>

@@ -2,9 +2,36 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Oikia front-desk colour tokens — one .dark class on <html> flips everything ── */
 :root {
-  --background: #0a0a0a;
-  --foreground: #ededed;
+  color-scheme: light;
+  --ink-50: 248 250 252;
+  --ink-100: 241 245 249;
+  --ink-200: 226 232 240;
+  --ink-300: 203 213 225;
+  --ink-400: 148 163 184;
+  --ink-500: 100 116 139;
+  --ink-600: 71 85 105;
+  --ink-700: 51 65 85;
+  --ink-800: 30 41 59;
+  --ink-900: 15 23 42;
+  --surface: 255 255 255;
+  --brand-strong: 67 56 202;
+}
+.dark {
+  color-scheme: dark;
+  --ink-50: 15 23 42;
+  --ink-100: 30 41 59;
+  --ink-200: 51 65 85;
+  --ink-300: 71 85 105;
+  --ink-400: 100 116 139;
+  --ink-500: 148 163 184;
+  --ink-600: 203 213 225;
+  --ink-700: 226 232 240;
+  --ink-800: 241 245 249;
+  --ink-900: 248 250 252;
+  --surface: 30 41 59;
+  --brand-strong: 165 180 252;
 }
 
 * {
@@ -18,9 +45,11 @@ body {
 }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  background: rgb(var(--ink-50));
+  color: rgb(var(--ink-900));
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
 #__next,
@@ -28,73 +57,89 @@ main {
   height: 100%;
 }
 
-/* Custom scrollbar for dark theme */
+/* Thin token-driven scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
+  height: 6px;
 }
-
 ::-webkit-scrollbar-track {
   background: transparent;
 }
-
 ::-webkit-scrollbar-thumb {
-  background: #3f3f46;
+  background: rgb(var(--ink-200));
   border-radius: 3px;
 }
-
 ::-webkit-scrollbar-thumb:hover {
-  background: #52525b;
+  background: rgb(var(--ink-300));
 }
 
-/* Markdown prose styles */
-.prose-dark p {
-  margin-bottom: 0.75rem;
+/* Markdown prose — token-driven, works in both themes */
+.prose-ui p {
+  margin-bottom: 0.6rem;
   line-height: 1.6;
 }
-
-.prose-dark p:last-child {
+.prose-ui p:last-child {
   margin-bottom: 0;
 }
-
-.prose-dark code {
-  background: #27272a;
+.prose-ui code {
+  background: rgb(var(--ink-100));
   padding: 0.1em 0.3em;
   border-radius: 3px;
   font-size: 0.875em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
-
-.prose-dark pre {
-  background: #18181b;
-  padding: 1rem;
-  border-radius: 6px;
+.prose-ui pre {
+  background: rgb(15 23 42);
+  color: rgb(248 250 252);
+  padding: 0.6rem 0.75rem;
+  border-radius: 4px;
   overflow-x: auto;
-  margin: 0.75rem 0;
+  margin: 0.6rem 0;
+  font-size: 0.78em;
 }
-
-.prose-dark pre code {
+.prose-ui pre code {
   background: none;
   padding: 0;
+  font-size: inherit;
 }
-
-.prose-dark ul,
-.prose-dark ol {
-  padding-left: 1.5rem;
-  margin-bottom: 0.75rem;
+.prose-ui ul,
+.prose-ui ol {
+  padding-left: 1.4rem;
+  margin-bottom: 0.6rem;
 }
-
-.prose-dark li {
-  margin-bottom: 0.25rem;
+.prose-ui li {
+  margin-bottom: 0.2rem;
 }
-
-.prose-dark strong {
-  color: #e4e4e7;
-}
-
-.prose-dark h1,
-.prose-dark h2,
-.prose-dark h3 {
+.prose-ui strong {
   font-weight: 600;
-  margin-bottom: 0.5rem;
-  margin-top: 1rem;
-  color: #f4f4f5;
+  color: rgb(var(--ink-900));
+}
+.prose-ui a {
+  color: rgb(var(--brand-strong));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.prose-ui h1,
+.prose-ui h2,
+.prose-ui h3 {
+  font-weight: 600;
+  margin-bottom: 0.4rem;
+  margin-top: 0.9rem;
+  color: rgb(var(--ink-900));
+}
+.prose-ui table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.6rem 0;
+  font-size: 0.9em;
+}
+.prose-ui th,
+.prose-ui td {
+  border: 1px solid rgb(var(--ink-200));
+  padding: 0.25rem 0.45rem;
+  text-align: left;
+}
+.prose-ui th {
+  background: rgb(var(--ink-100));
+  font-weight: 600;
 }

@@ -12,7 +12,6 @@ import {
   type MarkdownPage,
   type TableSheetResponse,
 } from "@/lib/api";
-import { cn } from "@/lib/utils";
 
 interface Props {
   filename: string;
@@ -21,6 +20,14 @@ interface Props {
 
 const IS_PDF = (f: string) => f.toLowerCase().endsWith(".pdf");
 const IS_TABLE = (f: string) => /\.(xlsx|xls|csv)$/i.test(f);
+
+function Spinner() {
+  return (
+    <div className="flex flex-1 items-center justify-center">
+      <Loader2 className="h-5 w-5 animate-spin text-ink-400" />
+    </div>
+  );
+}
 
 // ── PDF Inspector ──────────────────────────────────────────────────────────────
 
@@ -38,10 +45,7 @@ function PdfInspector({ filename }: { filename: string }) {
 
   useEffect(() => {
     setLoading(true);
-    Promise.all([
-      getDocumentMarkdown(filename),
-      getDocumentChunks(filename),
-    ])
+    Promise.all([getDocumentMarkdown(filename), getDocumentChunks(filename)])
       .then(([md, chunks]) => {
         setHasMarkers(md.has_page_markers);
         setPages(md.pages);
@@ -64,29 +68,23 @@ function PdfInspector({ filename }: { filename: string }) {
 
   const totalPages = pages.length || 0;
 
-  if (loading) {
-    return (
-      <div className="flex-1 flex items-center justify-center">
-        <Loader2 className="h-5 w-5 animate-spin text-zinc-500" />
-      </div>
-    );
-  }
+  if (loading) return <Spinner />;
 
   const mdPage = pages.find((p) => p.page === currentPage);
 
   return (
-    <div className="flex-1 flex flex-col min-h-0">
+    <div className="flex min-h-0 flex-1 flex-col">
       {/* Summary */}
       {summary && (
         <div className="px-5 pt-3">
           <button
             onClick={() => setShowSummary((v) => !v)}
-            className="text-xs text-zinc-400 hover:text-zinc-300 mb-2 underline underline-offset-2"
+            className="mb-2 text-xs text-ink-500 underline underline-offset-2 hover:text-ink-700"
           >
             {showSummary ? "Hide" : "Show"} document summary
           </button>
           {showSummary && (
-            <div className="prose-dark text-xs text-zinc-300 bg-zinc-800/60 rounded-lg p-3 mb-3 border border-zinc-700/40 max-h-40 overflow-y-auto">
+            <div className="prose-ui mb-3 max-h-40 overflow-y-auto rounded-md border border-ink-200 bg-surface p-3 text-xs text-ink-700">
               <ReactMarkdown>{summary.replace("## Document Summary\n\n", "")}</ReactMarkdown>
             </div>
           )}
@@ -96,63 +94,62 @@ function PdfInspector({ filename }: { filename: string }) {
       {hasMarkers ? (
         <>
           {/* Page nav */}
-          <div className="flex items-center gap-3 px-5 py-2 border-b border-zinc-800 shrink-0">
+          <div className="flex shrink-0 items-center gap-3 border-b border-ink-200 bg-surface px-5 py-2">
             <button
               onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
               disabled={currentPage <= 1}
-              className="p-1 rounded text-zinc-400 hover:text-zinc-200 disabled:opacity-30"
+              className="rounded p-1 text-ink-500 hover:bg-ink-100 hover:text-ink-800 disabled:opacity-30"
+              aria-label="Previous page"
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
-            <span className="text-xs text-zinc-400 tabular-nums">
+            <span className="text-xs tabular-nums text-ink-500">
               Page {currentPage} / {totalPages}
             </span>
             <button
               onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
               disabled={currentPage >= totalPages}
-              className="p-1 rounded text-zinc-400 hover:text-zinc-200 disabled:opacity-30"
+              className="rounded p-1 text-ink-500 hover:bg-ink-100 hover:text-ink-800 disabled:opacity-30"
+              aria-label="Next page"
             >
               <ChevronRight className="h-4 w-4" />
             </button>
             {mdPage?.pipeline && (
-              <span className="ml-auto text-[10px] font-mono text-zinc-600 bg-zinc-800 px-2 py-0.5 rounded">
+              <span className="ml-auto rounded bg-ink-100 px-2 py-0.5 font-mono text-[10px] text-ink-500">
                 {mdPage.pipeline}
               </span>
             )}
           </div>
 
           {/* Side-by-side */}
-          <div className="flex-1 overflow-hidden flex min-h-0">
-            {/* PDF image */}
-            <div className="w-1/2 overflow-y-auto border-r border-zinc-800 p-3">
+          <div className="flex min-h-0 flex-1 overflow-hidden">
+            <div className="w-1/2 overflow-y-auto border-r border-ink-200 p-3">
               {pdfMissing ? (
-                <p className="text-xs text-zinc-600 mt-4 text-center">Original PDF not available locally.</p>
+                <p className="mt-4 text-center text-xs text-ink-400">Original PDF not available locally.</p>
               ) : imgLoading ? (
-                <div className="flex justify-center mt-10">
-                  <Loader2 className="h-5 w-5 animate-spin text-zinc-600" />
+                <div className="mt-10 flex justify-center">
+                  <Loader2 className="h-5 w-5 animate-spin text-ink-400" />
                 </div>
               ) : imgSrc ? (
-                <img src={imgSrc} alt={`Page ${currentPage}`} className="w-full rounded shadow-lg" />
+                <img src={imgSrc} alt={`Page ${currentPage}`} className="w-full rounded border border-ink-200" />
               ) : null}
             </div>
 
-            {/* Markdown */}
             <div className="w-1/2 overflow-y-auto p-4">
               {mdPage ? (
-                <div className="prose-dark text-xs text-zinc-300 leading-relaxed">
+                <div className="prose-ui text-xs leading-relaxed text-ink-700">
                   <ReactMarkdown>{mdPage.content}</ReactMarkdown>
                 </div>
               ) : (
-                <p className="text-xs text-zinc-600">No content for this page.</p>
+                <p className="text-xs text-ink-400">No content for this page.</p>
               )}
             </div>
           </div>
         </>
       ) : (
-        /* No page markers — show full markdown */
         <div className="flex-1 overflow-y-auto p-5">
-          <p className="text-[10px] text-zinc-600 mb-3">No page markers — showing full parsed markdown.</p>
-          <div className="prose-dark text-xs text-zinc-300 leading-relaxed">
+          <p className="mb-3 text-[10px] text-ink-400">No page markers — showing full parsed markdown.</p>
+          <div className="prose-ui text-xs leading-relaxed text-ink-700">
             <ReactMarkdown>{fullText ?? ""}</ReactMarkdown>
           </div>
         </div>
@@ -180,26 +177,37 @@ function SheetCompare({ filename, sheet }: { filename: string; sheet: string }) 
   return (
     <div className="mb-2">
       <button
-        onClick={() => { setOpen((v) => !v); if (!open) load(); }}
-        className="text-[10px] text-zinc-500 hover:text-zinc-300 underline underline-offset-2"
+        onClick={() => {
+          setOpen((v) => !v);
+          if (!open) load();
+        }}
+        className="text-[10px] text-ink-500 underline underline-offset-2 hover:text-ink-700"
       >
         {open ? "Hide" : "Show"} raw vs. cleaned
       </button>
 
       {open && (
-        <div className="mt-2 flex gap-3 min-h-0" style={{ maxHeight: "340px" }}>
+        <div className="mt-2 flex min-h-0 gap-3" style={{ maxHeight: "340px" }}>
           {/* Raw */}
-          <div className="flex-1 overflow-auto border border-zinc-700/40 rounded-md">
-            <p className="sticky top-0 bg-zinc-900 text-[10px] text-zinc-500 px-2 py-1 border-b border-zinc-700/40">Raw (from file)</p>
+          <div className="flex-1 overflow-auto rounded-md border border-ink-200">
+            <p className="sticky top-0 border-b border-ink-200 bg-ink-100 px-2 py-1 text-[10px] text-ink-500">
+              Raw (from file)
+            </p>
             {loading ? (
-              <div className="flex justify-center p-4"><Loader2 className="h-4 w-4 animate-spin text-zinc-600" /></div>
+              <div className="flex justify-center p-4">
+                <Loader2 className="h-4 w-4 animate-spin text-ink-400" />
+              </div>
             ) : data?.raw_rows ? (
-              <table className="text-[9px] text-zinc-400 font-mono w-full">
+              <table className="w-full font-mono text-[9px] text-ink-600">
                 <tbody>
                   {data.raw_rows.map((row, ri) => (
-                    <tr key={ri} className="border-b border-zinc-800/60">
+                    <tr key={ri} className="border-b border-ink-100">
                       {row.map((cell, ci) => (
-                        <td key={ci} className="px-2 py-0.5 whitespace-nowrap max-w-[180px] overflow-hidden text-ellipsis" title={cell}>
+                        <td
+                          key={ci}
+                          className="max-w-[180px] overflow-hidden text-ellipsis whitespace-nowrap px-2 py-0.5"
+                          title={cell}
+                        >
                           {cell}
                         </td>
                       ))}
@@ -208,21 +216,25 @@ function SheetCompare({ filename, sheet }: { filename: string; sheet: string }) 
                 </tbody>
               </table>
             ) : (
-              <p className="text-[10px] text-zinc-600 p-3">Not available</p>
+              <p className="p-3 text-[10px] text-ink-400">Not available</p>
             )}
           </div>
 
           {/* Cleaned */}
-          <div className="flex-1 overflow-auto border border-zinc-700/40 rounded-md">
-            <p className="sticky top-0 bg-zinc-900 text-[10px] text-zinc-500 px-2 py-1 border-b border-zinc-700/40">Cleaned markdown</p>
+          <div className="flex-1 overflow-auto rounded-md border border-ink-200">
+            <p className="sticky top-0 border-b border-ink-200 bg-ink-100 px-2 py-1 text-[10px] text-ink-500">
+              Cleaned markdown
+            </p>
             {loading ? (
-              <div className="flex justify-center p-4"><Loader2 className="h-4 w-4 animate-spin text-zinc-600" /></div>
+              <div className="flex justify-center p-4">
+                <Loader2 className="h-4 w-4 animate-spin text-ink-400" />
+              </div>
             ) : data?.cleaned_md ? (
-              <pre className="text-[9px] text-zinc-400 font-mono p-2 whitespace-pre-wrap leading-relaxed">
+              <pre className="whitespace-pre-wrap p-2 font-mono text-[9px] leading-relaxed text-ink-600">
                 {data.cleaned_md}
               </pre>
             ) : (
-              <p className="text-[10px] text-zinc-600 p-3">Not available</p>
+              <p className="p-3 text-[10px] text-ink-400">Not available</p>
             )}
           </div>
         </div>
@@ -249,15 +261,8 @@ function TableInspector({ filename }: { filename: string }) {
       .finally(() => setLoading(false));
   }, [filename]);
 
-  if (loading) {
-    return (
-      <div className="flex-1 flex items-center justify-center">
-        <Loader2 className="h-5 w-5 animate-spin text-zinc-500" />
-      </div>
-    );
-  }
+  if (loading) return <Spinner />;
 
-  // Group by sheet
   const sheets: Record<string, Chunk[]> = {};
   for (const c of chunks) {
     const sheet = c.metadata.sheet_name ?? "—";
@@ -266,20 +271,22 @@ function TableInspector({ filename }: { filename: string }) {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto p-5 space-y-4 min-h-0">
-      <p className="text-xs text-zinc-500">{chunks.length} data chunks indexed</p>
+    <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
+      <p className="text-xs text-ink-500">{chunks.length} data chunks indexed</p>
 
       {summary && (
         <div>
           <button
             onClick={() => setShowSummary((v) => !v)}
-            className="text-xs text-zinc-400 hover:text-zinc-300 underline underline-offset-2 mb-2"
+            className="mb-2 text-xs text-ink-500 underline underline-offset-2 hover:text-ink-700"
           >
             {showSummary ? "Hide" : "Show"} document summary
           </button>
           {showSummary && (
-            <div className="prose-dark text-xs text-zinc-300 bg-zinc-800/60 rounded-lg p-3 border border-zinc-700/40">
-              <ReactMarkdown>{summary.replace("## Document Summary\n\n", "").replace(/ 00:00:00/g, "")}</ReactMarkdown>
+            <div className="prose-ui rounded-md border border-ink-200 bg-surface p-3 text-xs text-ink-700">
+              <ReactMarkdown>
+                {summary.replace("## Document Summary\n\n", "").replace(/ 00:00:00/g, "")}
+              </ReactMarkdown>
             </div>
           )}
         </div>
@@ -287,7 +294,7 @@ function TableInspector({ filename }: { filename: string }) {
 
       {Object.entries(sheets).map(([sheet, sheetChunks]) => (
         <div key={sheet}>
-          <p className="text-xs font-semibold text-zinc-300 mb-2">Sheet: {sheet}</p>
+          <p className="mb-2 text-xs font-semibold text-ink-800">Sheet: {sheet}</p>
 
           <SheetCompare filename={filename} sheet={sheet} />
 
@@ -303,21 +310,15 @@ function TableInspector({ filename }: { filename: string }) {
                     ? `row ${rowRef}`
                     : `rows ${rowRef}–${rowRef + numRows - 1}`
                   : null;
-              const label = [
-                `Chunk ${i + 1}`,
-                chunkType,
-                rowLabel,
-              ]
-                .filter(Boolean)
-                .join(" · ");
+              const label = [`Chunk ${i + 1}`, chunkType, rowLabel].filter(Boolean).join(" · ");
 
               return (
-                <details key={i} className="group rounded-md bg-zinc-800/40 border border-zinc-700/40">
-                  <summary className="flex items-center gap-2 px-3 py-2 cursor-pointer text-[11px] text-zinc-400 select-none">
-                    <ChevronRight className="h-3 w-3 shrink-0 group-open:rotate-90 transition-transform" />
+                <details key={i} className="group rounded-md border border-ink-200 bg-surface">
+                  <summary className="flex cursor-pointer select-none items-center gap-2 px-3 py-2 text-[11px] text-ink-600 hover:bg-ink-100">
+                    <ChevronRight className="h-3 w-3 shrink-0 transition-transform group-open:rotate-90" />
                     {label}
                   </summary>
-                  <pre className="px-3 pb-3 text-[10px] text-zinc-400 whitespace-pre-wrap font-mono leading-relaxed overflow-x-auto">
+                  <pre className="overflow-x-auto whitespace-pre-wrap px-3 pb-3 font-mono text-[10px] leading-relaxed text-ink-600">
                     {c.content}
                   </pre>
                 </details>
@@ -339,19 +340,23 @@ export default function InspectorPanel({ filename, onClose }: Props) {
 
   return (
     <div className="fixed inset-0 z-30 flex">
-      {/* panel */}
-      <div className="w-full flex flex-col h-full bg-zinc-950 shadow-2xl">
+      <div className="flex h-full w-full flex-col bg-ink-50">
         {/* header */}
-        <div className="flex items-center gap-3 px-5 py-3 border-b border-zinc-800 shrink-0">
-          <div className="flex-1 min-w-0">
-            <p className="text-xs font-semibold text-zinc-200 truncate">{basename}</p>
-            <p className="text-[10px] text-zinc-600">
-              {isPdf ? "PDF · side-by-side view" : isTable ? "Spreadsheet · chunk view" : "Document inspector"}
+        <div className="flex shrink-0 items-center gap-3 border-b border-ink-200 bg-surface px-5 py-3">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-xs font-semibold text-ink-800">{basename}</p>
+            <p className="text-[10px] text-ink-400">
+              {isPdf
+                ? "PDF · side-by-side view"
+                : isTable
+                ? "Spreadsheet · chunk view"
+                : "Document inspector"}
             </p>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-md text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors"
+            className="rounded-md p-1.5 text-ink-500 transition-colors hover:bg-ink-100 hover:text-ink-800"
+            aria-label="Close inspector"
           >
             <X className="h-4 w-4" />
           </button>
@@ -362,8 +367,8 @@ export default function InspectorPanel({ filename, onClose }: Props) {
         ) : isTable ? (
           <TableInspector filename={filename} />
         ) : (
-          <div className="flex-1 flex items-center justify-center">
-            <p className="text-xs text-zinc-600">Inspector not available for this file type.</p>
+          <div className="flex flex-1 items-center justify-center">
+            <p className="text-xs text-ink-400">Inspector not available for this file type.</p>
           </div>
         )}
       </div>
