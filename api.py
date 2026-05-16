@@ -375,11 +375,17 @@ async def query(req: QueryRequest):
 
         def _run():
             sql_trace: list[str] = []
+            tool_calls: list[str] = []
             for token in stream_agent(
-                agent, question, collected_chunks=collected, sql_trace=sql_trace
+                agent,
+                question,
+                collected_chunks=collected,
+                sql_trace=sql_trace,
+                tool_calls=tool_calls,
             ):
                 tokens.append(token)
             trace_holder["sql"] = sql_trace
+            trace_holder["tools"] = tool_calls
 
         await loop.run_in_executor(_executor, _run)
         return "".join(tokens).strip(), collected, trace_holder
@@ -401,19 +407,22 @@ async def query(req: QueryRequest):
         "answer": answer,
         "sources": sources,
         "sql": sql_list,
-        "tools_used": _tools_from_sources(sources, bool(sql_list)),
+        "tools_used": _tools_used(excel_trace.get("tools") or []),
     }
 
 
-def _tools_from_sources(sources: list[dict], used_sql: bool) -> list[str]:
-    """Derive a small pill list of tools used from source extensions + SQL flag."""
-    tools: list[str] = []
-    exts = {Path(s.get("filename", "")).suffix.lower() for s in sources}
-    if used_sql or {".xlsx", ".xls", ".csv"} & exts:
-        tools.append("query_excel")
-    if {".pdf", ".md", ".txt", ".docx"} & exts or any(not Path(s.get("filename", "")).suffix for s in sources):
-        tools.append("search_documents")
-    return tools or (["search_documents"] if sources else [])
+# Real tool names → frontend pill keys (see TOOL_META in TraceSidebar.tsx).
+_TOOL_DISPLAY = {"search_knowledge_base": "search_documents", "query_excel": "query_excel"}
+
+
+def _tools_used(tool_calls: list[str]) -> list[str]:
+    """Map the agent's actual tool invocations to display keys, deduped in call order."""
+    seen: list[str] = []
+    for name in tool_calls:
+        key = _TOOL_DISPLAY.get(name, name)
+        if key not in seen:
+            seen.append(key)
+    return seen
 
 
 @app.delete("/collection", dependencies=[Depends(require_api_key)])
