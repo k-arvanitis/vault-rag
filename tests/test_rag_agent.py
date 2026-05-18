@@ -11,17 +11,18 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, Sys
 
 from src.rag_agent import (
     SYSTEM_PROMPT,
-    _best_snippet,
-    _context_source_count,
-    _extract_key_value_answer,
-    _repair_incomplete_answer,
     _extract_refs,
     _is_thinking_model,
     _build_system_prompt,
-    _hyde,
     ask_agent,
     stream_agent,
 )
+from src.answer_quality import (
+    _context_source_count,
+    _extract_key_value_answer,
+    _repair_incomplete_answer,
+)
+from src.tools.retrieval_tool import _best_snippet, _hyde
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +130,7 @@ class TestBuildSystemPrompt:
 
 class TestHyde:
     def test_thinking_model_prompt_has_no_think_prefix(self):
-        with patch("src.rag_agent._llm_call") as mock_llm:
+        with patch("src.tools.retrieval_tool._llm_call") as mock_llm:
             mock_llm.return_value = "A hypothetical passage."
             result = _hyde("What is RAG?", "http://localhost:4000", "qwen3-30b")
             call_args = mock_llm.call_args
@@ -139,7 +140,7 @@ class TestHyde:
             assert result == "A hypothetical passage."
 
     def test_regular_model_prompt_no_prefix(self):
-        with patch("src.rag_agent._llm_call") as mock_llm:
+        with patch("src.tools.retrieval_tool._llm_call") as mock_llm:
             mock_llm.return_value = "Another passage."
             result = _hyde("Explain vector DBs", "http://localhost:4000", "gpt-4o")
             call_args = mock_llm.call_args
@@ -209,10 +210,10 @@ class TestIncompleteAnswerRepair:
         )
 
         with (
-            patch("src.rag_agent._llm_split_subqueries") as split,
-            patch("src.rag_agent._coverage_check") as coverage,
-            patch("src.rag_agent.retrieve") as retrieve_mock,
-            patch("src.rag_agent._direct_answer_from_context") as answer_from_context,
+            patch("src.answer_quality._llm_split_subqueries") as split,
+            patch("src.answer_quality._coverage_check") as coverage,
+            patch("src.answer_quality.retrieve") as retrieve_mock,
+            patch("src.answer_quality._direct_answer_from_context") as answer_from_context,
         ):
             split.return_value = [
                 "services contract 30-day payment deadline valid invoice",

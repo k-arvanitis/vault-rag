@@ -1,4 +1,4 @@
-"""Tests for slack_app.py — all Slack and agent calls mocked.
+"""Tests for slack_app.py — Slack calls and the RAG API call mocked.
 
 Handler functions are imported directly so no live Slack connection is needed.
 """
@@ -39,8 +39,7 @@ class TestHandleMention:
     def _run(self, text: str, answer: str = "The answer."):
         event = {"text": text, "ts": "123.456"}
         say = MagicMock()
-        with patch("slack_app._get_agent", return_value=MagicMock()), \
-             patch("slack_app.ask_agent", return_value=answer):
+        with patch("slack_app._query_api", return_value=answer):
             handle_mention(event, say)
         return say
 
@@ -55,8 +54,7 @@ class TestHandleMention:
     def test_uses_existing_thread_ts(self):
         event = {"text": "<@UBOT> q", "ts": "111.0", "thread_ts": "999.0"}
         say = MagicMock()
-        with patch("slack_app._get_agent", return_value=MagicMock()), \
-             patch("slack_app.ask_agent", return_value="a"):
+        with patch("slack_app._query_api", return_value="a"):
             handle_mention(event, say)
         assert say.call_args.kwargs["thread_ts"] == "999.0"
 
@@ -70,13 +68,12 @@ class TestHandleMention:
         say = self._run("")
         assert say.call_args.kwargs["text"]
 
-    def test_ask_agent_called_with_stripped_query(self):
+    def test_query_api_called_with_stripped_query(self):
         event = {"text": "<@UBOT> payment terms", "ts": "1.0"}
         say = MagicMock()
-        with patch("slack_app._get_agent", return_value=MagicMock()), \
-             patch("slack_app.ask_agent", return_value="a") as mock_ask:
+        with patch("slack_app._query_api", return_value="a") as mock_query:
             handle_mention(event, say)
-        assert mock_ask.call_args[0][1] == "payment terms"
+        assert mock_query.call_args[0][0] == "payment terms"
 
 
 # ---------------------------------------------------------------------------
@@ -89,8 +86,7 @@ class TestHandleDm:
 
     def _run(self, event: dict, answer: str = "DM answer."):
         say = MagicMock()
-        with patch("slack_app._get_agent", return_value=MagicMock()), \
-             patch("slack_app.ask_agent", return_value=answer):
+        with patch("slack_app._query_api", return_value=answer):
             handle_dm(event, say)
         return say
 

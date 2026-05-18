@@ -3,6 +3,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { X, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
 import {
   getDocumentChunks,
   getDocumentMarkdown,
@@ -17,6 +19,10 @@ interface Props {
   filename: string;
   onClose: () => void;
 }
+
+// remark-gfm renders markdown pipe-tables; rehype-raw renders embedded HTML
+// (e.g. OCR'd <table> blocks) as real elements instead of leaking raw tags.
+const MD_PLUGINS = { remarkPlugins: [remarkGfm], rehypePlugins: [rehypeRaw] };
 
 const IS_PDF = (f: string) => f.toLowerCase().endsWith(".pdf");
 const IS_TABLE = (f: string) => /\.(xlsx|xls|csv)$/i.test(f);
@@ -85,7 +91,7 @@ function PdfInspector({ filename }: { filename: string }) {
           </button>
           {showSummary && (
             <div className="prose-ui mb-3 max-h-40 overflow-y-auto rounded-md border border-ink-200 bg-surface p-3 text-xs text-ink-700">
-              <ReactMarkdown>{summary.replace("## Document Summary\n\n", "")}</ReactMarkdown>
+              <ReactMarkdown {...MD_PLUGINS}>{summary.replace("## Document Summary\n\n", "")}</ReactMarkdown>
             </div>
           )}
         </div>
@@ -138,7 +144,7 @@ function PdfInspector({ filename }: { filename: string }) {
             <div className="w-1/2 overflow-y-auto p-4">
               {mdPage ? (
                 <div className="prose-ui text-xs leading-relaxed text-ink-700">
-                  <ReactMarkdown>{mdPage.content}</ReactMarkdown>
+                  <ReactMarkdown {...MD_PLUGINS}>{mdPage.content}</ReactMarkdown>
                 </div>
               ) : (
                 <p className="text-xs text-ink-400">No content for this page.</p>
@@ -150,7 +156,7 @@ function PdfInspector({ filename }: { filename: string }) {
         <div className="flex-1 overflow-y-auto p-5">
           <p className="mb-3 text-[10px] text-ink-400">No page markers — showing full parsed markdown.</p>
           <div className="prose-ui text-xs leading-relaxed text-ink-700">
-            <ReactMarkdown>{fullText ?? ""}</ReactMarkdown>
+            <ReactMarkdown {...MD_PLUGINS}>{fullText ?? ""}</ReactMarkdown>
           </div>
         </div>
       )}
@@ -280,11 +286,11 @@ function TableInspector({ filename }: { filename: string }) {
             onClick={() => setShowSummary((v) => !v)}
             className="mb-2 text-xs text-ink-500 underline underline-offset-2 hover:text-ink-700"
           >
-            {showSummary ? "Hide" : "Show"} document summary
+            {showSummary ? "Hide" : "Show"} schema &amp; sample values — read by the SQL generator
           </button>
           {showSummary && (
             <div className="prose-ui rounded-md border border-ink-200 bg-surface p-3 text-xs text-ink-700">
-              <ReactMarkdown>
+              <ReactMarkdown {...MD_PLUGINS}>
                 {summary.replace("## Document Summary\n\n", "").replace(/ 00:00:00/g, "")}
               </ReactMarkdown>
             </div>
@@ -298,6 +304,9 @@ function TableInspector({ filename }: { filename: string }) {
 
           <SheetCompare filename={filename} sheet={sheet} />
 
+          <p className="mb-2 mt-3 text-[10px] text-ink-400">
+            Indexed retrieval chunk — routes queries to the DuckDB table
+          </p>
           <div className="space-y-2">
             {sheetChunks.map((c, i) => {
               const meta = c.metadata;
@@ -311,6 +320,8 @@ function TableInspector({ filename }: { filename: string }) {
                     : `rows ${rowRef}–${rowRef + numRows - 1}`
                   : null;
               const label = [`Chunk ${i + 1}`, chunkType, rowLabel].filter(Boolean).join(" · ");
+              // Drop the leading "[File: … | Sheet: …]" line — already shown in the section header.
+              const body = c.content.replace(/^\[File:[^\]]*\]\n/, "");
 
               return (
                 <details key={i} className="group rounded-md border border-ink-200 bg-surface">
@@ -319,7 +330,7 @@ function TableInspector({ filename }: { filename: string }) {
                     {label}
                   </summary>
                   <pre className="overflow-x-auto whitespace-pre-wrap px-3 pb-3 font-mono text-[10px] leading-relaxed text-ink-600">
-                    {c.content}
+                    {body}
                   </pre>
                 </details>
               );

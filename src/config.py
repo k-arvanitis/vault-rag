@@ -23,7 +23,7 @@ QDRANT_URL: str = os.getenv("QDRANT_URL", "http://localhost:7333")
 QDRANT_COLLECTION: str = os.getenv("QDRANT_COLLECTION", "documents_chunks")
 
 GENERATION_API_BASE: str = os.getenv("GENERATION_API_BASE", "http://localhost:4000/v1")
-GENERATION_MODEL: str = os.getenv("GENERATION_MODEL", "qwen3-32b")
+GENERATION_MODEL: str = os.getenv("GENERATION_MODEL", "qwen/qwen3-32b")
 
 # Required — get a free key at console.groq.com
 GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
@@ -63,6 +63,9 @@ DOC_MIN_SCORE: float = float(os.getenv("DOC_MIN_SCORE", "0.01"))
 # Max chars of a chunk/table shown to the LLM (prevents context overflow)
 MAX_CHUNK_CHARS: int = int(os.getenv("MAX_CHUNK_CHARS", "1500"))
 MAX_TABLE_CHARS: int = int(os.getenv("MAX_TABLE_CHARS", "3000"))
+
+# Max chunks a single search_knowledge_base call may return to the agent
+MAX_TOOL_RESULTS: int = int(os.getenv("MAX_TOOL_RESULTS", "8"))
 
 # Max chars per ingested table chunk — wide sheets are split further at ingest time
 MAX_CHARS_PER_TABLE_CHUNK: int = int(os.getenv("MAX_CHARS_PER_TABLE_CHUNK", "6000"))
@@ -116,3 +119,7 @@ API_CORS_ORIGINS: str = os.getenv("API_CORS_ORIGINS", "http://localhost:3000")
 # If set, every mutating endpoint (/ingest, DELETE /collection) requires the
 # request header X-API-Key to match this value. Empty means no auth (dev only).
 API_KEY: str = os.getenv("API_KEY", "")
+
+# Base URL of the Vault RAG FastAPI server. The Slack bot queries through this
+# so only the API process holds the DuckDB lock.
+API_BASE: str = os.getenv("API_BASE", "http://localhost:8001")

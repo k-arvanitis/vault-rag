@@ -12,12 +12,10 @@ from unittest.mock import MagicMock, patch
 from src.pipeline import (
     _is_unsupported,
     _looks_excel,
-    ask_supervisor,
     ask_with_decomposition,
     ask_with_reflection,
     build_decomposition_pipeline,
     build_reflection_pipeline,
-    build_supervisor_pipeline,
 )
 
 
@@ -236,43 +234,3 @@ class TestDecompositionPipeline:
             answer = ask_with_decomposition(pipeline, question)
 
         assert answer == "Simple answer."
-
-
-# ---------------------------------------------------------------------------
-# Supervisor pipeline
-# ---------------------------------------------------------------------------
-
-class TestSupervisorPipeline:
-    def test_pdf_question_routes_to_pdf_agent(self):
-        pdf_agent = MagicMock()
-        excel_agent = MagicMock()
-        with patch("src.rag_agent.ask_agent", return_value="PDF answer."):
-            pipeline = build_supervisor_pipeline(pdf_agent, excel_agent)
-            result = ask_supervisor(pipeline, "Who is the authorizing manager?")
-        assert result == "PDF answer."
-
-    def test_excel_question_routes_to_excel_agent(self):
-        pdf_agent = MagicMock()
-        excel_agent = MagicMock()
-        with patch("src.rag_agent.ask_agent", return_value="Excel answer."):
-            pipeline = build_supervisor_pipeline(pdf_agent, excel_agent)
-            result = ask_supervisor(pipeline, "What is the total supplier spend?")
-        assert result == "Excel answer."
-
-    def test_excel_unsupported_returns_unsupported(self):
-        pdf_agent = MagicMock()
-        excel_agent = MagicMock()
-        with patch("src.rag_agent.ask_agent", return_value="Unsupported"):
-            pipeline = build_supervisor_pipeline(pdf_agent, excel_agent)
-            result = ask_supervisor(pipeline, "What is the total transaction amount?")
-        assert result == "Unsupported"
-
-    def test_single_pdf_result_strips_bracket_prefix(self):
-        # _pdf_node wraps the answer as "[pdf] <answer>"; _synthesise_node strips it for single results.
-        pdf_agent = MagicMock()
-        excel_agent = MagicMock()
-        with patch("src.rag_agent.ask_agent", return_value="The answer is here."):
-            pipeline = build_supervisor_pipeline(pdf_agent, excel_agent)
-            result = ask_supervisor(pipeline, "Who signed the policy?")
-        assert not result.startswith("[pdf]")
-        assert "answer is here" in result

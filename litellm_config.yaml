@@ -1,33 +1,34 @@
 # LiteLLM Proxy — Vault RAG gateway
 #
 # Exposes a single OpenAI-compatible endpoint at http://localhost:4000/v1
-# Priority order (same model_name = automatic failover):
-#   1. Groq       — Llama 3.3 70B   (primary agent model)
-#   2. Groq       — Qwen3 32B       (fast fallback)
+# The app sends model name "qwen/qwen3-32b" (GENERATION_MODEL); all three
+# entries share that name, so LiteLLM treats them as one failover chain:
+#   1. Groq       — Qwen3 32B       (primary agent model)
+#   2. Groq       — Llama 3.3 70B   (fallback)
 #   3. NVIDIA NIM — Qwen3 Next 80B  (reasoning fallback, if configured)
 #
 # Start with:  make litellm
 #              OR  litellm --config litellm_config.yaml --port 4000
 
 model_list:
-  # ── Primary: Groq Llama ──────────────────────────────────────────────────
-  - model_name: llama-3.3-70b-versatile     # the name your app sends
+  # ── Primary: Groq Qwen3 32B ──────────────────────────────────────────────
+  - model_name: qwen/qwen3-32b               # the name your app sends
     litellm_params:
-      model: groq/llama-3.3-70b-versatile
+      model: groq/qwen/qwen3-32b
       api_key: os.environ/GROQ_API_KEY
       max_tokens: 4096
 
-  # ── Fallback #1: Groq Qwen ───────────────────────────────────────────────
-  - model_name: llama-3.3-70b-versatile     # same name -> automatic fallback
+  # ── Fallback #1: Groq Llama 3.3 70B ──────────────────────────────────────
+  - model_name: qwen/qwen3-32b               # same name -> automatic fallback
     litellm_params:
-      model: groq/qwen/qwen3-32b
+      model: groq/llama-3.3-70b-versatile
       api_key: os.environ/GROQ_API_KEY
       max_tokens: 4096
 
   # ── Fallback #2: NVIDIA NIM ───────────────────────────────────────────────
   # Qwen3 Next is a reasoning fallback when your NIM key is available.
   # Uses your existing NVIDIA_API_KEY; endpoint is OpenAI-compatible.
-  - model_name: llama-3.3-70b-versatile     # same name -> third-tier fallback
+  - model_name: qwen/qwen3-32b               # same name -> third-tier fallback
     litellm_params:
       model: nvidia_nim/qwen/qwen3-next-80b-a3b-thinking
       api_base: https://integrate.api.nvidia.com/v1

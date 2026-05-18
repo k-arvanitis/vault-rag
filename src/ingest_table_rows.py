@@ -456,7 +456,7 @@ def _load_into_duckdb(file_path: str, file_name: str, verbose: bool) -> dict[str
     """Clean file with LLM and load all sheets into DuckDB. Returns {sheet_name: [columns]}."""
     import duckdb
     from src.preprocessing.excel_cleaner import process_file
-    from src.excel_tool import _table_name, _normalize_dates, _make_groq_llm_fn
+    from src.duckdb_store import _table_name, _normalize_dates, _make_groq_llm_fn
 
     db_path = os.getenv("DUCKDB_PATH", DUCKDB_PATH)
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -503,7 +503,7 @@ def _build_sheet_summary_point(
 
     Includes the DuckDB table name so the agent can map directly to the right table.
     """
-    from src.excel_tool import _table_name
+    from src.duckdb_store import _table_name
     tname = _table_name(file_name, sheet_name)
     parts = file_name.split("_")
     doc_id = f"{parts[0]}_{parts[1]}" if len(parts) >= 2 else parts[0]

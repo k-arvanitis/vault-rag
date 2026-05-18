@@ -34,7 +34,7 @@ from src.config import (
     EXCEL_AGENT_API_KEY,
     EXCEL_AGENT_MODEL,
 )
-from src.excel_tool import DuckDBStore, _normalize_sql, _truncate_ilike
+from src.duckdb_store import DuckDBStore, _normalize_sql, _truncate_ilike
 from src.prompts import (
     DECOMPOSE_PROMPT,
     FORMAT_PROMPT,
@@ -105,6 +105,7 @@ def _rank_tables(tables: dict[str, list[str]], question: str) -> list[str]:
     q_tokens = _question_keywords(question)
 
     def score(tname: str) -> tuple[int, int, str]:
+        """Score a table by how many query tokens overlap its column names."""
         col_tokens: set[str] = set()
         for col in tables.get(tname, []):
             col_tokens.update(re.findall(r"[a-z][a-z0-9]{2,}", col.lower()))
@@ -117,6 +118,7 @@ def _rank_tables(tables: dict[str, list[str]], question: str) -> list[str]:
 
 
 def _format_samples(samples: list[dict]) -> str:
+    """Render sample rows as one JSON object per line."""
     return "\n".join(json.dumps(row, ensure_ascii=False, default=str) for row in samples)
 
 
@@ -228,6 +230,7 @@ def _build_inner_graph(store: DuckDBStore) -> Any:
     """Compile the per-subquestion SQL ReAct graph."""
 
     def select_table(state: _SQLState) -> dict:
+        """Pick the current candidate table for the SQL attempt, or abstain."""
         idx = state.get("table_index", 0)
         candidates = state.get("candidate_tables") or []
         if idx >= len(candidates):
@@ -235,6 +238,7 @@ def _build_inner_graph(store: DuckDBStore) -> Any:
         return {"selected_table": candidates[idx]}
 
     def inspect(state: _SQLState) -> dict:
+        """Load the selected table's schema and sample rows into state."""
         tname = state["selected_table"]
         try:
             schema = store.describe(tname)
@@ -244,6 +248,7 @@ def _build_inner_graph(store: DuckDBStore) -> Any:
         return {"schema": schema, "samples": samples}
 
     def write_sql(state: _SQLState) -> dict:
+        """Prompt the LLM to write the next SQL query from schema, samples and history."""
         history_text = ""
         if state.get("sql_history"):
             blocks = []
@@ -285,6 +290,7 @@ def _build_inner_graph(store: DuckDBStore) -> Any:
         }
 
     def run_sql(state: _SQLState) -> dict:
+        """Execute the most recent SQL against DuckDB and record its result."""
         history = state.get("sql_history") or []
         if not history:
             return {}
@@ -301,6 +307,7 @@ def _build_inner_graph(store: DuckDBStore) -> Any:
         }
 
     def evaluate(state: _SQLState) -> dict:
+        """Judge the last SQL result and decide retry, next table, or final answer."""
         history = state.get("sql_history") or []
         last_result = history[-1][1] if history else ""
         last_sql = history[-1][0] if history else ""
@@ -352,6 +359,7 @@ def _build_inner_graph(store: DuckDBStore) -> Any:
         return {"answer": "Unsupported"}
 
     def route_after_evaluate(state: _SQLState) -> str:
+        """Route the SQL graph after evaluation — retry, next table, or END."""
         if state.get("answer"):
             return END
         # State after evaluate:
@@ -416,11 +424,13 @@ def _build_outer_graph(store: DuckDBStore) -> Any:
     inner = _build_inner_graph(store)
 
     def decompose_node(state: _OuterState) -> dict:
+        """Split the question into sub-questions and find candidate tables for each."""
         subqs = _decompose(state["question"])
         cands = [_candidate_tables_for(store, sq) for sq in subqs]
         return {"subquestions": subqs, "candidate_tables_per_sub": cands}
 
     def fan_out(state: _OuterState) -> Any:
+        """Fan out one parallel sql_agent branch per sub-question (LangGraph Send)."""
         return [
             Send(
                 "sql_agent",
@@ -442,6 +452,7 @@ def _build_outer_graph(store: DuckDBStore) -> Any:
         ]
 
     def sql_agent_node(state: _SQLState) -> dict:
+        """Run the inner SQL graph for one sub-question; abstain on error."""
         try:
             result = inner.invoke(state, config={"recursion_limit": 60})
         except Exception:
@@ -453,6 +464,7 @@ def _build_outer_graph(store: DuckDBStore) -> Any:
         }
 
     def synthesize_node(state: _OuterState) -> dict:
+        """Merge the per-sub-question answers into one final answer."""
         answers = state.get("answers") or []
         subqs = state.get("subquestions") or []
         if not answers:

@@ -1,16 +1,11 @@
 """LangGraph pipelines for vault-rag.
 
-Three graphs are exported:
+Two graphs are exported:
 
 build_reflection_pipeline()
     Wraps the RAG agent in a StateGraph with an explicit reflection node.
     If the agent returns "Unsupported" and the question is retryable, retries
     with a widened search hint.
-
-build_supervisor_pipeline()
-    Multi-agent supervisor graph that classifies each question and routes
-    to a PDF-RAG agent node, an Excel-SQL agent node, or both (mixed
-    questions get parallel branches merged before final synthesis).
 
 build_decomposition_pipeline()
     Plan-first pipeline: an LLM decomposer splits multi-hop questions into
@@ -25,7 +20,6 @@ import operator
 import re
 from typing import Annotated, Any
 
-from langgraph.types import Send
 from langgraph.graph import END, StateGraph
 from typing_extensions import TypedDict
 
@@ -39,6 +33,7 @@ _DOC_ID_RE = re.compile(r"\bdoc_\d+\b", re.IGNORECASE)
 
 
 def _is_unsupported(answer: str) -> bool:
+    """Return True when an answer is the bare 'Unsupported' abstention token."""
     return answer.strip().lower() == "unsupported"
 
 
@@ -74,6 +69,7 @@ def build_reflection_pipeline(agent: Any) -> Any:
     from src.rag_agent import ask_agent  # noqa: PLC0415
 
     def _run_node(state: _ReflectState) -> dict:
+        """Run the agent on the question, widening the search hint on a retry."""
         question = state["question"]
         if state.get("drop_filter"):
             # Hint the agent to relax its text filters on retry
@@ -90,6 +86,7 @@ def build_reflection_pipeline(agent: Any) -> Any:
         }
 
     def _reflect_node(state: _ReflectState) -> dict:
+        """Decide whether an Unsupported answer warrants one widened retry."""
         answer = state["answer"]
         retry_count = state.get("retry_count", 0)
         question = state["question"]
@@ -102,6 +99,7 @@ def build_reflection_pipeline(agent: Any) -> Any:
         return {"drop_filter": retryable}
 
     def _route_after_reflect(state: _ReflectState) -> str:
+        """Route back to the run node when a retry was requested, else END."""
         return "run" if state.get("drop_filter") else END
 
     builder: StateGraph = StateGraph(_ReflectState)
@@ -121,119 +119,6 @@ def ask_with_reflection(pipeline: Any, question: str) -> str:
         "retry_count": 0,
         "drop_filter": False,
         "retrieved_contexts": [],
-    })
-    return result["answer"]
-
-
-# ---------------------------------------------------------------------------
-# Multi-agent supervisor pipeline
-# ---------------------------------------------------------------------------
-
-class _SupervisorState(TypedDict):
-    question: str
-    question_type: str          # "pdf" | "excel" | "mixed"
-    doc_ids: list[str]
-    pdf_results: Annotated[list[str], operator.add]   # parallel merge
-    excel_result: str
-    answer: str
-
-
-class _ParallelPDFState(TypedDict):
-    """State passed to each parallel PDF retrieval branch via Send."""
-    question: str
-    doc_id: str
-
-
-def build_supervisor_pipeline(pdf_agent: Any, excel_agent: Any) -> Any:
-    """Return a supervisor StateGraph routing between specialized agents.
-
-    pdf_agent  — agent built with search_knowledge_base tool only.
-    excel_agent — agent built with query_excel tool only.
-
-    The supervisor:
-      1. Classifies the question as pdf / excel / mixed.
-      2. For PDF questions: fans out a parallel retrieval branch per doc_id
-         (LangGraph Send API) then merges answers.
-      3. For Excel questions: calls the Excel agent directly.
-      4. For mixed questions: runs both branches and synthesises a combined answer.
-    """
-    from src.rag_agent import ask_agent  # noqa: PLC0415
-
-    def _classify_node(state: _SupervisorState) -> dict:
-        q = state["question"]
-        doc_ids = list({d.lower() for d in _DOC_ID_RE.findall(q)})
-        if _looks_excel(q) and not doc_ids:
-            qtype = "excel"
-        elif _looks_excel(q) and doc_ids:
-            qtype = "mixed"
-        else:
-            qtype = "pdf"
-        return {"question_type": qtype, "doc_ids": doc_ids}
-
-    def _route_after_classify(state: _SupervisorState) -> list | str:
-        qtype = state["question_type"]
-        doc_ids = state["doc_ids"]
-        if qtype == "excel":
-            return "excel_node"
-        if qtype == "mixed":
-            # Fan out PDF retrieval per doc in parallel AND call excel
-            sends = [Send("pdf_node", {"question": state["question"], "doc_id": d}) for d in doc_ids]
-            return sends + ["excel_node"]
-        if doc_ids:
-            # Fan out one branch per mentioned doc_id
-            return [Send("pdf_node", {"question": state["question"], "doc_id": d}) for d in doc_ids]
-        return "pdf_node"  # no specific doc — single unscoped PDF search
-
-    def _pdf_node(state: _ParallelPDFState) -> dict:
-        q = state["question"]
-        doc_id = state.get("doc_id", "")
-        scoped_q = f"{q} (focus on {doc_id})" if doc_id else q
-        answer = ask_agent(pdf_agent, scoped_q)
-        return {"pdf_results": [f"[{doc_id or 'pdf'}] {answer}"]}
-
-    def _excel_node(state: _SupervisorState) -> dict:
-        answer = ask_agent(excel_agent, state["question"])
-        return {"excel_result": answer}
-
-    def _synthesise_node(state: _SupervisorState) -> dict:
-        parts = state.get("pdf_results", []) + (
-            [f"[excel] {state['excel_result']}"] if state.get("excel_result") else []
-        )
-        if not parts:
-            return {"answer": "Unsupported"}
-        if len(parts) == 1:
-            # Strip the leading [doc_id] prefix for single-result answers
-            text = re.sub(r"^\[[^\]]+\]\s*", "", parts[0])
-            return {"answer": text}
-        return {"answer": "\n\n".join(parts)}
-
-    builder: StateGraph = StateGraph(_SupervisorState)
-    builder.add_node("classify", _classify_node)
-    builder.add_node("pdf_node", _pdf_node)
-    builder.add_node("excel_node", _excel_node)
-    builder.add_node("synthesise", _synthesise_node)
-
-    builder.set_entry_point("classify")
-    builder.add_conditional_edges(
-        "classify",
-        _route_after_classify,
-        {"pdf_node": "pdf_node", "excel_node": "excel_node"},
-    )
-    builder.add_edge("pdf_node", "synthesise")
-    builder.add_edge("excel_node", "synthesise")
-    builder.add_edge("synthesise", END)
-    return builder.compile()
-
-
-def ask_supervisor(pipeline: Any, question: str) -> str:
-    """Invoke a supervisor pipeline and return the final answer string."""
-    result = pipeline.invoke({
-        "question": question,
-        "question_type": "",
-        "doc_ids": [],
-        "pdf_results": [],
-        "excel_result": "",
-        "answer": "",
     })
     return result["answer"]
 

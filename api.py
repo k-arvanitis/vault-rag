@@ -27,6 +27,7 @@ from src.config import (  # noqa: E402
     API_KEY,
     GENERATION_API_BASE,
     GENERATION_MODEL,
+    MAX_TOOL_RESULTS,
     QDRANT_COLLECTION,
     QDRANT_URL,
     RERANK_TOP_N,
@@ -103,6 +104,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
 @lru_cache(maxsize=1)
 def _get_agent() -> Any:
+    """Build (and cache) the RAG agent — one instance reused across requests."""
     from src.rag_agent import build_rag_agent
     return build_rag_agent(
         qdrant_url=QDRANT_URL,
@@ -118,6 +120,7 @@ def _get_agent() -> Any:
 # ── helpers ────────────────────────────────────────────────────────────────────
 
 def _run_ingest_sync(job_id: str, dest: Path, force_pipeline: str | None = None) -> None:
+    """Ingest one uploaded file into Qdrant/DuckDB, updating the job record."""
     suffix = dest.suffix.lower()
     _jobs[job_id]["status"] = "processing"
     try:
@@ -140,6 +143,7 @@ def _run_ingest_sync(job_id: str, dest: Path, force_pipeline: str | None = None)
 
 
 def _payloads_to_docs(payloads: list[dict]) -> list[dict]:
+    """Group Qdrant payloads into one document card per source file."""
     from collections import defaultdict
     counts: dict[str, int] = defaultdict(int)
     for p in payloads:
@@ -176,6 +180,36 @@ _PAGE_MARKER_RE = re.compile(r"<!--\s*PAGE\s+(\d+)")
 
 
 _CALL_BOUNDARY = "---CALL_BOUNDARY---"
+
+# The model sometimes copies a raw retrieved-chunk header line
+# ("[1] file=doc.pdf chunk=2 ...") or a dangling "Sources:" label into its final
+# answer. Strip those whole lines so they never reach the user. Inline citation
+# markers like "[1]" are NOT matched — the pattern requires "file=" after them.
+_LEAKED_HEADER_RE = re.compile(
+    r"^[ \t]*(?:\[\d+\][ \t]+file=\S+.*|sources?[ \t]*:[ \t]*)$",
+    re.MULTILINE | re.IGNORECASE,
+)
+# Inline [N] citation markers — dropped because the answer's numbering does not
+# correspond to the trace panel's, so they would be misleading. The "Retrieved
+# chunks" panel is the source list. Only [N] within the retrieved-chunk range
+# (1..MAX_TOOL_RESULTS) is treated as a citation — a bracketed year like [2024]
+# or any larger number is left alone. List markers like "1." (no brackets) too.
+_INLINE_CITATION_RE = re.compile(r"[ \t]*\[(\d+)\]")
+_BLANK_LINES_RE = re.compile(r"\n{3,}")
+
+
+def _strip_inline_citation(match: re.Match) -> str:
+    """Drop a [N] marker only when N is a plausible retrieved-chunk index."""
+    return "" if 1 <= int(match.group(1)) <= MAX_TOOL_RESULTS else match.group(0)
+
+
+def _strip_leaked_headers(text: str) -> str:
+    """Remove raw chunk-header lines and inline [N] citation markers the LLM
+    echoes into its answer — the trace panel is the source list."""
+    cleaned = _LEAKED_HEADER_RE.sub("", text)
+    cleaned = _INLINE_CITATION_RE.sub(_strip_inline_citation, cleaned)
+    cleaned = _BLANK_LINES_RE.sub("\n\n", cleaned)
+    return cleaned.strip()
 
 
 def _parse_sources(collected: list[str]) -> list[dict]:
@@ -246,6 +280,11 @@ def _parse_sources(collected: list[str]) -> list[dict]:
             excerpt = " ".join(plain.split())[:350]
 
             score = float(score_str) if score_str else None
+            # 1.0 is the retriever's placeholder for filter/scroll fetches
+            # (doc-routed chunks carry no similarity score) — drop it so the UI
+            # doesn't show a misleading "perfect match" chip.
+            if score == 1.0:
+                score = None
 
             key = (filename, excerpt[:80])
             if key in seen:
@@ -263,6 +302,7 @@ def _parse_sources(collected: list[str]) -> list[dict]:
 
 
 def _resolve_pdf_path(filename: str) -> Path | None:
+    """Find the on-disk PDF for a filename, or None if it cannot be located."""
     p = Path(filename)
     candidates = [
         INPUT_DIR / p.name,
@@ -276,6 +316,7 @@ def _resolve_pdf_path(filename: str) -> Path | None:
 
 
 def _resolve_markdown_path(filename: str) -> Path | None:
+    """Find the parsed-markdown file for a document, or None if absent."""
     stem = Path(filename).stem
     for d in MARKDOWN_DIRS:
         candidate = d / f"{stem}.md"
@@ -311,6 +352,7 @@ async def health():
 
 @app.post("/ingest", dependencies=[Depends(require_api_key)])
 async def ingest(file: UploadFile = File(...), pipeline: str = Form("auto")):
+    """POST /ingest — save the uploaded file and start a background ingest job."""
     dest = INPUT_DIR / file.filename
     dest.write_bytes(await file.read())
     job_id = str(uuid.uuid4())
@@ -323,6 +365,7 @@ async def ingest(file: UploadFile = File(...), pipeline: str = Form("auto")):
 
 @app.get("/ingest/status/{job_id}")
 async def ingest_status(job_id: str):
+    """GET /ingest/status — report a background ingest job's progress."""
     job = _jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -331,6 +374,7 @@ async def ingest_status(job_id: str):
 
 @app.get("/documents")
 async def list_documents():
+    """GET /documents — list ingested documents as UI cards."""
     try:
         payloads = scroll_all_payloads(QDRANT_URL, QDRANT_COLLECTION)
     except Exception:
@@ -340,6 +384,7 @@ async def list_documents():
 
 @app.get("/stats")
 async def stats():
+    """GET /stats — return total document and chunk counts."""
     try:
         payloads = scroll_all_payloads(QDRANT_URL, QDRANT_COLLECTION)
     except Exception:
@@ -364,16 +409,20 @@ _RETRY_INSTRUCTION = (
 
 @app.post("/query")
 async def query(req: QueryRequest):
-    from src.rag_agent import stream_agent
+    """POST /query — answer a question with the RAG agent, splitting multi-part questions and merging the sub-answers."""
+    from src.rag_agent import stream_agent, route_question, routing_directive
+    from src.answer_quality import _is_multi_part_query, _split_multi_part_query
     agent = _get_agent()
     loop = asyncio.get_running_loop()
 
     async def _run_once(question: str) -> tuple[str, list[str], dict]:
+        """Run the agent once for a question; return (answer, collected chunks, trace)."""
         collected: list[str] = []
         tokens: list[str] = []
         trace_holder: dict = {}
 
         def _run():
+            """Drive stream_agent in a worker thread, collecting tokens, chunks and trace."""
             sql_trace: list[str] = []
             tool_calls: list[str] = []
             for token in stream_agent(
@@ -390,17 +439,57 @@ async def query(req: QueryRequest):
         await loop.run_in_executor(_executor, _run)
         return "".join(tokens).strip(), collected, trace_holder
 
-    answer, collected, excel_trace = await _run_once(req.question)
+    async def _answer(question: str) -> tuple[str, list[str], dict]:
+        """Answer one question, with a forced retry on a bare Unsupported.
 
-    # Forced retry on bare Unsupported. Groq inference at temp=0 still has small
-    # nondeterminism; the agent occasionally skips the doc-routing step on first
-    # attempt and returns Unsupported despite the answer existing in a specific
-    # document. The retry forces the 2-step protocol explicitly.
-    if answer.lower() == "unsupported":
-        retry_answer, retry_collected, retry_trace = await _run_once(req.question + _RETRY_INSTRUCTION)
-        if retry_answer.lower() != "unsupported" and retry_answer:
-            answer, collected, excel_trace = retry_answer, retry_collected, retry_trace
+        First resolves the tool deterministically: route_question matches the
+        question against document summaries in Qdrant and, if it lands on a
+        spreadsheet vs a text document, a routing directive is prepended so the
+        agent uses query_excel vs search_knowledge_base accordingly — instead of
+        guessing the tool from question wording.
 
+        Groq inference at temp=0 still has small nondeterminism; the agent
+        occasionally skips doc-routing on the first attempt and returns
+        Unsupported despite the answer existing. The retry forces the protocol.
+        """
+        route = await loop.run_in_executor(_executor, route_question, question)
+        q = routing_directive(route) + question
+        ans, coll, trace = await _run_once(q)
+        if ans.lower() == "unsupported":
+            r_ans, r_coll, r_trace = await _run_once(q + _RETRY_INSTRUCTION)
+            if r_ans.lower() != "unsupported" and r_ans:
+                return r_ans, r_coll, r_trace
+        return ans, coll, trace
+
+    # Multi-part questions are split and answered one sub-question at a time,
+    # then merged here deterministically. The agent's single-pass synthesis
+    # intermittently drops a part, so we never rely on it for that — each
+    # sub-question runs on its own and every part is guaranteed in the output.
+    parts = (
+        _split_multi_part_query(req.question)
+        if _is_multi_part_query(req.question)
+        else [req.question]
+    )
+    if len(parts) == 1:
+        answer, collected, excel_trace = await _answer(req.question)
+    else:
+        sub_answers: list[str] = []
+        collected = []
+        sql_all: list[str] = []
+        tools_all: list[str] = []
+        for part in parts:
+            p_ans, p_coll, p_trace = await _answer(part)
+            sub_answers.append(p_ans.strip())
+            collected += p_coll
+            sql_all += p_trace.get("sql") or []
+            tools_all += p_trace.get("tools") or []
+        # Blank line between parts (a single \n is only a soft break in
+        # markdown); number them so a terse part still reads as its own answer.
+        kept = [a for a in sub_answers if a]
+        answer = "\n\n".join(f"{i}. {a}" for i, a in enumerate(kept, 1)) or "Unsupported"
+        excel_trace = {"sql": sql_all, "tools": tools_all}
+
+    answer = _strip_leaked_headers(answer)
     sources = _parse_sources(collected)
     sql_list = [s for s in (excel_trace.get("sql") or []) if s]
     return {
@@ -427,6 +516,7 @@ def _tools_used(tool_calls: list[str]) -> list[str]:
 
 @app.delete("/collection", dependencies=[Depends(require_api_key)])
 async def clear_collection():
+    """DELETE /collection — drop the Qdrant collection and reset the agent."""
     base = QDRANT_URL.rstrip("/")
     _qdrant("DELETE", f"{base}/collections/{QDRANT_COLLECTION}")
     _get_agent.cache_clear()

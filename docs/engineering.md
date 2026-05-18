@@ -24,7 +24,11 @@ Every Qdrant point is assigned a SHA-1 hash of `(file_name, chunk_index)` rather
 
 ## HyDE query expansion
 
-The agent first generates a *hypothetical answer* using a fast LLM call and embeds that instead of the raw question. The embedded hypothetical is semantically much closer to real document text, improving recall for vague queries like "what were the sales figures" where the question shares few tokens with the answer.
+A question and its answer rarely share vocabulary — "what were the sales figures" embeds nowhere near "Q3 revenue totalled £4.2m". HyDE bridges that gap: a fast LLM call generates a *hypothetical answer* to the question, and that answer is embedded for retrieval, landing much closer to real document text.
+
+HyDE does not *replace* the raw-query search — it runs alongside it. Retrieval issues two Qdrant searches: one with the raw question (strong on exact keywords, codes, entity names) and one with the HyDE hypothetical (strong on paraphrased, answer-style content). The two hit lists are combined with `_merge_hits` before reranking, so each search covers the other's blind spot.
+
+The expansion is fault-tolerant and optional. The HyDE call is wrapped in a `try/except` — if it fails, retrieval continues on the raw-query hits alone. It is also gated by the `use_hyde` flag on `build_rag_agent`, so it can be disabled wholesale. The HyDE LLM runs at `temperature=0`, so query expansion is reproducible across identical queries.
 
 ## Sheet-summary chunks with ingest-time sample values
 
@@ -56,9 +60,19 @@ To handle both, the system runs two independent retrieval paths:
 - **Qdrant** for PDF and OCR documents — hybrid dense+sparse search, reranked by a cross-encoder.
 - **DuckDB** for flat-structure Excel and CSV files — the agent writes a `SELECT` query; the in-process database executes it and returns an exact result.
 
-The agent selects the path based on whether the target document appears in the DuckDB table list injected into its system prompt. PDF-format documents always go to Qdrant even when they contain numeric tables, because vector search on contextualised chunk summaries still outperforms SQL over unstructured OCR output.
+Path selection is deterministic — `route_question()` resolves it before the agent runs (see *Deterministic tool routing* below). PDF-format documents always go to Qdrant even when they contain numeric tables, because vector search on contextualised chunk summaries still outperforms SQL over unstructured OCR output.
 
 DuckDB specifically — rather than Postgres or SQLite — because it is in-process (no server to run, no connection pool), columnar (aggregations over 10k-row CSV files return in milliseconds), and loads directly from a pandas DataFrame. The entire structured store is a single file at `DUCKDB_PATH`.
+
+## Deterministic tool routing
+
+The ReAct agent has two tools — `search_knowledge_base` (Qdrant) and `query_excel` (DuckDB SQL). Left to itself, the agent chooses between them by reading the question wording against the tool descriptions. That is unreliable: a question like *"what fuel price per gallon is shown on the invoice?"* sounds like structured data and gets sent to `query_excel`, even though that invoice is a scanned PDF with no DuckDB table — the query then comes back "could not be determined."
+
+`route_question()` (`src/rag_agent.py`) removes the guess. It retrieves the top hits for the question and reads their **file modality**. This works because of an asymmetry in what gets indexed: a spreadsheet keeps its rows in DuckDB and only its summaries in Qdrant, while a PDF has its full text chunked into Qdrant. So a question whose top-3 hits are `.xlsx`/`.csv` chunks is a structured-data question (→ `query_excel`); one whose top hits are `.pdf` chunks is a document question (→ `search_knowledge_base`). The decision is the majority modality of the top-3 hits.
+
+The resolved tool is prepended to the question as a short directive (`[ROUTING — … use the query_excel tool …]`) inside `api.py`'s `/query`, before the agent runs. The agent still executes the tool call, but it now follows an explicit, index-grounded instruction instead of inferring intent from phrasing. When the router cannot resolve a modality it emits no directive and the agent falls back to its own choice.
+
+Multi-part questions are split first (`_split_multi_part_query`) and each sub-question is routed independently — so a single question needing one PDF lookup and one spreadsheet lookup dispatches each part to the correct tool.
 
 ## Context-overflow retry
 

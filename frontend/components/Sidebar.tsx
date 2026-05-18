@@ -41,7 +41,8 @@ export default function Sidebar({ onToast, onInspect, onCollectionCleared }: Pro
   const refresh = useCallback(async () => {
     try {
       const [d, s] = await Promise.all([getDocuments(), getStats()]);
-      setDocs(d);
+      const byName = (f: string) => (f.split("/").pop() ?? f).toLowerCase();
+      setDocs([...d].sort((a, b) => byName(a.filename).localeCompare(byName(b.filename))));
       setStats(s);
     } catch {
       // backend unreachable — handled by the offline banner upstream

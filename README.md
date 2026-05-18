@@ -19,7 +19,7 @@ A self-hosted RAG system for teams that need to query mixed-format business docu
 - Routes each PDF page independently — text-layer pages skip OCR entirely; only scanned pages hit the GPU.
 - Indexes prose in Qdrant (hybrid dense + sparse) and structured spreadsheet rows in DuckDB; the agent picks per query.
 - Cites every answer back to a chunk + page (PDF) or a sheet + SQL trace (Excel/CSV) — auditable, not a black box.
-- Runs a LangGraph ReAct agent (`src/rag_agent.py`, model `qwen3-32b` via Groq) over two tools — Qdrant retrieval and a delegated Excel sub-graph (`src/excel_agent.py`, model `gpt-4o-mini`) that decomposes spreadsheet questions and fans out parallel SQL loops via the `Send` API; a coverage/repair pass and an API-level retry on bare `Unsupported` close common failure modes.
+- Runs a LangGraph ReAct agent (`src/rag_agent.py`, model `qwen/qwen3-32b` via Groq) over two tools — Qdrant retrieval and a delegated Excel sub-graph (`src/excel_agent.py`, model `gpt-4o-mini`) that decomposes spreadsheet questions and fans out parallel SQL loops via the `Send` API; a coverage/repair pass and an API-level retry on bare `Unsupported` close common failure modes.
 - Two-stage retrieval — stage 1 routes the query to the most relevant document(s) via `document_summary` chunks; stage 2 fetches answer-bearing content from those documents only. Stem-overlap on the filename rescues stage-1 misses when generic phrasing dominates the embedding.
 - Asks for clarification on broad queries instead of dumping a file list — when the question spans 3+ unrelated documents, the agent returns `Clarify: <2-4 specific options>` derived from what was actually retrieved.
 - Forced API-level retry on bare `Unsupported` responses — mitigates Groq inference nondeterminism by re-running the agent once with explicit doc-routing instructions if the first attempt skipped it.
@@ -44,7 +44,7 @@ The live `/query` path is one **ReAct agent** (`src/rag_agent.py`, LangGraph `cr
   text layer ≥ 50 chars on the page?                    │  • an LLM extracts the real schema from the    │
    YES → pymupdf4llm  (reads the text layer; CPU,       │    raw rows — column names, data-start row,     │
          no model)                                      │    footnote-start row, 2-3-sentence summary     │
-         + figures → VLM, model:                        │    model: qwen3-32b  (Groq, via LiteLLM proxy) │
+         + figures → VLM, model:                        │model: qwen/qwen3-32b (Groq, via LiteLLM proxy) │
            meta-llama/llama-4-scout-17b-16e-instruct    │  • rows → DuckDB  (one table per sheet)        │
            (Groq) — raster .png + vector graphics       │    Why DuckDB: in-process, single file,        │
            rendered to an image, swapped for            │    columnar — fast SUM / GROUP BY / AVG, no    │
@@ -90,15 +90,27 @@ The live `/query` path is one **ReAct agent** (`src/rag_agent.py`, LangGraph `cr
   User question
        │
        ▼
+  api.py /query — PRE-AGENT ROUTING  (plain functions, not a graph)
+    • multi-part split — _split_multi_part_query fans a two-or-more-part question into separate
+      sub-questions; each is answered by its own GRAPH 1 run and the results are merged in code
+      (the agent's single-pass synthesis used to silently drop a part)
+    • deterministic tool routing — route_question matches each (sub)question against the index:
+      top-3 hits on .xlsx/.csv chunks ⇒ query_excel, on .pdf chunks ⇒ search_knowledge_base.
+      Spreadsheets keep their rows in DuckDB and only summaries in Qdrant, so the modality of the
+      hits is an unambiguous signal. The resolved tool is prepended to the question as a directive,
+      so the agent no longer infers the tool from question wording (which mis-routed e.g. a
+      scanned-invoice lookup to SQL because the words sounded tabular).
+       │
+       ▼
   GRAPH 1 — ReAct agent   (src/rag_agent.py — LangGraph create_react_agent, name="vault-rag")
-    LLM: qwen3-32b  (Groq primary, served through the LiteLLM proxy → OpenRouter / NVIDIA NIM on failover)
-    One tool-calling loop; the loop itself handles multi-hop by re-querying. Two tools — each
-    call returns to the agent, which decides whether to call again or answer:
+    LLM: qwen/qwen3-32b  (Groq primary, served through the LiteLLM proxy → Groq Llama 3.3 70B / NVIDIA NIM on failover)
+    One tool-calling loop. Two tools — each call returns to the agent, which decides
+    whether to call again or answer:
 
    ┌── search_knowledge_base ──▶ PDF / Qdrant retrieval  (no sub-graph — just retrieval + rerank)
    │     step 1 — search the document_summary chunks → resolve which doc_id(s) the question is about
    │     step 2 — scoped hybrid search on those docs (dense + sparse, RRF-fused)
-   │              + HyDE query expansion  (HyDE LLM: qwen3-32b @ temperature 0)
+   │              + HyDE query expansion  (HyDE LLM: qwen/qwen3-32b @ temperature 0)
    │              → cross-encoder rerank: top-100 → top-10
    │                reranker model: cross-encoder/ms-marco-MiniLM-L-6-v2  (.env.example + Docker;
    │                BAAI/bge-reranker-v2-m3 is the in-code fallback if RERANKER_MODEL is unset)
@@ -276,7 +288,7 @@ Full methodology and reproduction steps: [eval/README.md](eval/README.md).
 | Structured data store | DuckDB | In-process analytical database — zero ops (no server, just a file), columnar storage makes aggregations (SUM, GROUP BY, AVG) over large spreadsheets fast. Postgres would add a running server, connection pooling, and migrations for a use case that is read-only analytics, not transactions. |
 | Vector database | Qdrant | Dense + sparse retrieval in one system with simple local Docker deployment |
 | Reranker | `cross-encoder/ms-marco-MiniLM-L-6-v2` (shipped in `.env.example` + the Docker image) — `BAAI/bge-reranker-v2-m3` is the in-code fallback when `RERANKER_MODEL` is unset | Cross-encoder: scores query and chunk *together* in one forward pass, so it models their interaction directly. A bi-encoder scores them independently then compares embeddings — sharply less accurate when the relevance signal lives in the relationship between question and passage, not either alone. The MiniLM is small and pre-baked into the image; bge-reranker-v2-m3 is the multilingual, broader-domain upgrade if you have the VRAM |
-| Generation / answering LLM | `qwen3-32b` (Groq, via the LiteLLM proxy) | 32B params, 32k context, native tool calling and multi-step reasoning — served by Groq at ~400 tok/s with no local GPU; LiteLLM fails over to OpenRouter, then NVIDIA NIM. Also used for Excel schema extraction at ingest and HyDE expansion |
+| Generation / answering LLM | `qwen/qwen3-32b` (Groq, via the LiteLLM proxy) | 32B params, 32k context, native tool calling and multi-step reasoning — served by Groq at ~400 tok/s with no local GPU; LiteLLM fails over to Groq Llama 3.3 70B, then NVIDIA NIM. Also used for HyDE expansion and the coverage/repair judges |
 | Excel text-to-SQL LLM | `gpt-4o-mini` (OpenAI) | Drives the Excel sub-graph — table selection, SQL writing, answer extraction. Needs `EXCEL_AGENT_API_KEY`; without it `query_excel` is disabled. The only model not served via Groq |
 | ReAct agent — **wired into `/query`** | LangGraph `create_react_agent` (`src/rag_agent.py`) | The live query graph: tool-calling loop over `search_knowledge_base` + `query_excel`, with 2-step doc routing, HyDE expansion, and an inline coverage/repair pass |
 | Excel sub-graph — **wired into `/query`** | LangGraph `StateGraph` ×2 (`src/excel_agent.py`) | Outer graph decomposes a spreadsheet question per source and fans out via the `Send` API; inner graph loops `select_table → inspect → write_sql → run_sql → evaluate` with retries on column errors and a next-table fallback on empty results — the ReAct agent never sees table names |
@@ -294,9 +306,9 @@ Full methodology and reproduction steps: [eval/README.md](eval/README.md).
 | Scanned-page OCR | Nothing | LightOn OCR (`lightonocr-2-1b-ocr-soup`) runs on a local vLLM server; `PDF_PARSER=cpu` uses tesseract — also local |
 | Figure descriptions | Image bytes → Groq (`meta-llama/llama-4-scout-17b-16e-instruct`) when `VLM_ENABLED=true` | Set `VLM_ENABLED=false` to skip, or point `VLM_PROVIDER` / `VLM_MODEL` at a local model |
 | Embeddings | Nothing | Ollama serves `nomic-embed-text` (dense) on-device; sparse `bm42` runs locally via fastembed |
-| Excel schema extraction (ingest) | Sheet rows → Groq (`qwen3-32b`) | Point `GENERATION_API_BASE` / `TABLE_LLM_MODEL` at a local vLLM server |
+| Excel schema extraction (ingest) | Sheet rows → Groq (`llama-3.3-70b-versatile`) | Point `GENERATION_API_BASE` / `TABLE_LLM_MODEL` at a local vLLM server |
 | Contextual summaries (ingest) | Chunk text → OpenRouter (`google/gemma-4-31b-it:free`) | Point `CHUNK_LLM_API_BASE` at a local vLLM server |
-| Query answering | Retrieved chunks + question → Groq (`qwen3-32b`); Excel questions also → OpenAI (`gpt-4o-mini`) | Point `GENERATION_API_BASE` (and `EXCEL_AGENT_API_BASE`) at a local vLLM server |
+| Query answering | Retrieved chunks + question → Groq (`qwen/qwen3-32b`); Excel questions also → OpenAI (`gpt-4o-mini`) | Point `GENERATION_API_BASE` (and `EXCEL_AGENT_API_BASE`) at a local vLLM server |
 
 ---
 
@@ -384,7 +396,7 @@ Key overrides:
 
 | Variable | Default | Notes |
 |---|---|---|
-| `GENERATION_MODEL` | `qwen3-32b` | Main answering LLM |
+| `GENERATION_MODEL` | `qwen/qwen3-32b` | Main answering LLM |
 | `CHUNK_LLM_MODEL` | `google/gemma-4-31b-it:free` | Contextual summary model (ingest only) |
 | `OLLAMA_EMBED_MODEL` | `nomic-embed-text` | Local embedding model |
 | `RERANKER_MODEL` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Cross-encoder reranker |

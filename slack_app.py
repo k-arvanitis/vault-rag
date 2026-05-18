@@ -1,8 +1,11 @@
 """Slack Bolt app for Vault RAG — query interface only (Socket Mode).
 
-Documents are indexed by admins via the Streamlit UI. Slack is read-only:
-  app_mention  → run RAG agent, reply in thread
-  message (DM) → run RAG agent, reply in thread
+Documents are indexed by admins via the web UI. Slack is a thin client:
+  app_mention  → POST /query to the Vault RAG API, reply in thread
+  message (DM) → POST /query to the Vault RAG API, reply in thread
+
+The bot does not build the RAG agent or open DuckDB itself — the FastAPI server
+is the single backend, so the bot and the API never contend for the DuckDB lock.
 """
 
 from __future__ import annotations
@@ -10,26 +13,33 @@ from __future__ import annotations
 import os
 import re
 
+import httpx
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
-from src.rag_agent import ask_agent, build_rag_agent  # noqa: E402
+from src.config import API_BASE  # noqa: E402
 
-_agent = None
-
-
-def _get_agent():
-    """Build and cache the RAG agent — loaded once on first query."""
-    global _agent
-    if _agent is None:
-        _agent = build_rag_agent()
-    return _agent
+_QUERY_TIMEOUT = 120.0
 
 
 def _strip_mention(text: str) -> str:
     """Remove the leading <@USERID> mention token from a Slack message."""
     return re.sub(r"^<@[A-Z0-9]+>\s*", "", text).strip()
+
+
+def _query_api(question: str) -> str:
+    """Send a question to the Vault RAG API and return the answer text."""
+    try:
+        resp = httpx.post(
+            f"{API_BASE}/query",
+            json={"question": question},
+            timeout=_QUERY_TIMEOUT,
+        )
+        resp.raise_for_status()
+        return resp.json().get("answer") or "Unsupported"
+    except httpx.HTTPError as exc:
+        return f":warning: Could not reach the Vault RAG API — {exc}"
 
 
 # ---------------------------------------------------------------------------
@@ -53,8 +63,7 @@ def handle_mention(event: dict, say) -> None:
         )
         return
 
-    answer = ask_agent(_get_agent(), query)
-    say(text=answer, thread_ts=thread_ts)
+    say(text=_query_api(query), thread_ts=thread_ts)
 
 
 def handle_dm(event: dict, say) -> None:
@@ -65,8 +74,7 @@ def handle_dm(event: dict, say) -> None:
     if not query:
         return
     thread_ts = event.get("thread_ts") or event.get("ts")
-    answer = ask_agent(_get_agent(), query)
-    say(text=answer, thread_ts=thread_ts)
+    say(text=_query_api(query), thread_ts=thread_ts)
 
 
 # ---------------------------------------------------------------------------
@@ -82,10 +90,12 @@ def create_app():
 
     @app.event("app_mention")
     def _on_mention(event, say):
+        """Slack app_mention handler — delegate to the testable handle_mention."""
         handle_mention(event, say)
 
     @app.event("message")
     def _on_message(event, say):
+        """Slack message handler — handle DMs only, ignore channel messages."""
         if event.get("channel_type") not in ("im", "mpim"):
             return
         handle_dm(event, say)
@@ -98,11 +108,9 @@ def main() -> None:
     from slack_bolt.adapter.socket_mode import SocketModeHandler
 
     app = create_app()
-    print("[slack] Vault RAG bot starting (Socket Mode)...")
-    print("[slack] Warming up RAG agent...")
-    _get_agent()
-    print("[slack] Ready.")
+    print(f"[slack] Vault RAG bot starting (Socket Mode) — API at {API_BASE}")
     SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"]).start()
+    print("[slack] Ready.")
 
 
 if __name__ == "__main__":

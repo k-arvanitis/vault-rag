@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, useCallback, useEffect } from "react";
-import { Send, Loader2 } from "lucide-react";
+import { Send, Loader2, SquarePen } from "lucide-react";
 import { queryDocuments } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import MessageList, { type Message } from "./MessageList";
@@ -63,6 +63,14 @@ export default function ChatPanel({ onToast, resetSignal = 0, onTrace }: Props) 
     }
   }, [input, streaming, onToast, onTrace]);
 
+  const newConversation = useCallback(() => {
+    if (streaming) return;
+    setMessages([]);
+    setInput("");
+    onTrace?.(null);
+    textareaRef.current?.focus();
+  }, [streaming, onTrace]);
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -72,6 +80,22 @@ export default function ChatPanel({ onToast, resetSignal = 0, onTrace }: Props) 
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col bg-ink-50">
+      <div className="flex shrink-0 items-center justify-end border-b border-ink-200 bg-surface px-6 py-2">
+        <button
+          onClick={newConversation}
+          disabled={streaming || messages.length === 0}
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors",
+            streaming || messages.length === 0
+              ? "cursor-not-allowed border-ink-200 text-ink-300"
+              : "border-ink-200 text-ink-600 hover:bg-ink-100 hover:text-ink-800"
+          )}
+        >
+          <SquarePen className="h-3.5 w-3.5" />
+          New conversation
+        </button>
+      </div>
+
       <MessageList messages={messages} streaming={streaming} />
 
       {/* Input bar */}
