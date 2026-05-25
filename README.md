@@ -9,7 +9,18 @@
 
 A self-hosted RAG system for teams that need to query mixed-format business document collections — PDFs (digital and scanned), Excel, CSV, and figures — through one chat interface, with cited answers and an operator console for inspecting every step. Built for teams that want to keep document bytes on-prem and avoid per-page SaaS fees.
 
-**Benchmark — 82 questions over 14 real mixed-format public documents, graded by an independent `gpt-oss-120b` judge:** the agent finds the right source **94% of the time** (retrieval hit@5), keeps answers **grounded in the evidence** (**86%** claim-level RAGAS faithfulness) and **on-topic** (**92%** answer relevancy), nails **single-document factual & table lookups (~94%)**, and **refuses 100%** of unanswerable questions instead of hallucinating. Overall answer correctness is **79%** across all nine question types — held down by a deliberately hard adversarial subset (cross-document arithmetic, multi-report joins with no shared key, debatable-gold titles). No eval-set-specific shortcuts — every answer comes from the model and tool outputs.
+**Benchmark — 82 questions over 14 mixed-format public documents, graded by an independent `gpt-oss-120b` judge** (distinct from the answer model, so no self-grading bias):
+
+| Capability | Score | Reading |
+|---|---:|---|
+| Finds the right source (retrieval hit@5) | **94%** | Correct evidence in the top 5 for nearly every question |
+| Grounded answers (faithfulness) | **86%** | Claims supported by / inferable from retrieved text |
+| On-topic answers (relevancy) | **92%** | Answers address the question asked |
+| Single-document factual & table lookups | **~94%** | The bulk of real-world usage |
+| Refuses unanswerable questions | **100%** | Returns `Unsupported` instead of fabricating |
+| Overall answer correctness (all 9 types) | **79%** | Includes adversarial cross-doc arithmetic & multi-report joins |
+
+No eval-set-specific shortcuts — every answer comes from the model and tool outputs. Full methodology and detailed metric breakdowns in [Evaluation](#evaluation).
 
 ---
 
@@ -44,7 +55,7 @@ https://github.com/user-attachments/assets/7f3fe838-6336-4a5f-815d-f879a86c57b9
 
 ## Architecture
 
-The live `/query` path is one **ReAct agent** (`src/rag_agent.py`, LangGraph `create_react_agent`) that calls a delegated **Excel sub-graph** (`src/tools/excel.py`, two hand-built `StateGraph`s) — two graphs, not more. `src/pipeline.py` also ships standalone decomposition / reflection / supervisor `StateGraph`s, but they are *not* wired into `/query`; they're alternative orchestrations kept for experiments (covered by `test_pipeline.py`). Every model used at each step is named below.
+**Two LangGraph graphs are wired into `/query`** — a ReAct agent (`src/rag_agent.py`) for PDF/Qdrant retrieval, and an Excel sub-graph (`src/tools/excel.py`) for DuckDB SQL. Everything else (decomposition, reflection, supervisor graphs in `src/pipeline.py`) is kept for experiments only and is **not on the live path**. Every model used at each step is named below.
 
 ```
  ╔════════════════════════════════════════════════════════════════════════════════════╗
@@ -165,7 +176,15 @@ The live `/query` path is one **ReAct agent** (`src/rag_agent.py`, LangGraph `cr
 
 ## Key engineering decisions
 
-The bets that materially moved eval scores — per-page PDF routing, contextual retrieval, sheet-summary sample values, dual-modality DuckDB+Qdrant retrieval, deterministic Qdrant IDs, HyDE expansion, three-pass table repair, context-overflow retry — are written up in [docs/engineering.md](docs/engineering.md).
+Four design choices that materially moved eval scores. The full writeup of these and the rest (HyDE expansion, three-pass table repair, sheet-summary sample values, deterministic tool routing, context-overflow retry) lives in [docs/engineering.md](docs/engineering.md).
+
+**Per-page PDF routing.** Every PDF page is routed independently, not the whole document. Pages with ≥50 chars of extractable text go through pymupdf4llm on CPU with zero API calls; scanned pages (no usable text layer) go to a local LightOn OCR vLLM server. Mixed documents — a contract where pages 1–10 are digital and page 11 is a faxed addendum — are handled correctly per page with no configuration. OCRing born-digital pages would *introduce* errors on numbers and equations that are already perfect as text.
+
+**Dual-modality retrieval — Qdrant for prose, DuckDB for tables.** Vector search breaks down for spreadsheets: a dense vector for *"how much did supplier X pay"* is semantically similar to every row in a payment sheet — the right answer needs exact string matching and aggregation (`SUM`, `GROUP BY`), not proximity in embedding space. So Excel/CSV rows go to DuckDB (in-process, columnar, no server) and only summaries go to Qdrant; PDFs and OCR chunks go to Qdrant (hybrid dense + sparse, reranked). `route_question()` resolves the path deterministically from the modality of the top-3 hits before the agent runs, so the LLM never has to guess.
+
+**Deterministic Qdrant point IDs.** Every point gets a SHA-1 hash of `(file_name, chunk_index)` instead of a random UUID. Re-ingesting the same file overwrites vectors in place rather than appending duplicates. With random IDs, re-running ingestion silently doubles every chunk and degrades retrieval precision without any visible error — a subtle bug that surfaces only as gradually-worse answers.
+
+**Contextual retrieval at ingest.** For each chunk a fast LLM writes one sentence describing its topic, entities, and purpose; that sentence is prepended before embedding ([Anthropic Contextual Retrieval, 2024](https://www.anthropic.com/news/contextual-retrieval)). The background shown to the LLM adapts to document length — full document text when it fits the token budget, otherwise summary + a bounded window of neighbouring chunks, so per-chunk cost stays bounded on a 150-page report. Each vector then captures both what the chunk is *about* and what it *says*, sharply improving recall for short or indirect queries.
 
 ### Retrieval-quality refinements
 
@@ -225,18 +244,7 @@ All 14 documents are publicly available. `make seed` automatically downloads and
 
 ### Results
 
-**At a glance — by capability** (what the system is actually good at):
-
-| Capability | Score | Reading |
-|---|---:|---|
-| Finds the right source (retrieval hit@5) | **94%** | Correct evidence in the top 5 for nearly every question |
-| Grounded answers (faithfulness) | **86%** | Claims supported by / inferable from retrieved text |
-| On-topic answers (relevancy) | **92%** | Answers address the question asked |
-| Single-document factual & table lookups | **~94%** | The bulk of real-world usage |
-| Refuses unanswerable questions | **100%** | Returns `Unsupported` instead of fabricating |
-| Overall answer correctness (all 9 types) | **79%** | Includes the hardest adversarial cases — see notes |
-
-Graded by an **independent `gpt-oss-120b` judge** (distinct from the `qwen/qwen3-32b` answer model, so no self-grading bias).
+The high-level capability summary is at the top of the README; this section is the detailed breakdown by metric and modality. All numbers are graded by an independent `gpt-oss-120b` judge (distinct from the `qwen/qwen3-32b` answer model).
 
 **Agent answer metrics** (all 82 questions)
 
@@ -255,7 +263,7 @@ Graded by an **independent `gpt-oss-120b` judge** (distinct from the `qwen/qwen3
 | MRR | **82.9%** | Mean reciprocal rank of the first gold evidence chunk (1.0 = always ranked first) |
 | Evidence recall@10 | **90.9%** | Fraction of *all* annotated gold evidence chunks recovered within the top 10 |
 
-The correct evidence chunk lands in the top 5 for ~94% of answerable PDF questions, with no domain-specific fine-tuning. A cross-encoder reranker (BGE-reranker-v2-m3) reorders first-stage hybrid (dense + sparse) candidates; the OR-scoped doc_id filter (matching `metadata.doc_id`, `metadata.source_file`, and `metadata.file_name`) ensures scoped searches return full document coverage even for older ingestions that only set `source_file`.
+The correct evidence chunk lands in the top 5 for ~94% of answerable PDF questions, with no domain-specific fine-tuning. A cross-encoder reranker (`cross-encoder/ms-marco-MiniLM-L-6-v2` by default, with `BAAI/bge-reranker-v2-m3` as the in-code fallback when `RERANKER_MODEL` is unset) reorders first-stage hybrid (dense + sparse) candidates; the OR-scoped doc_id filter (matching `metadata.doc_id`, `metadata.source_file`, and `metadata.file_name`) ensures scoped searches return full document coverage even for older ingestions that only set `source_file`.
 
 **Structured retrieval** (21 Excel/CSV questions, DuckDB)
 
@@ -497,5 +505,4 @@ vault-rag/
 
 ---
 
-*Built by [Konstantinos Arvanitis](https://www.linkedin.com/in/konstantinos-arvanitis-0248b3246/) — AI Agent & RAG Developer*
-*[Upwork](https://www.upwork.com/freelancers/~01dffea4a9afbdc9f6) · [GitHub](https://github.com/k-arvanitis)*
+*Built by Konstantinos Arvanitis — AI Agent & RAG Developer*
