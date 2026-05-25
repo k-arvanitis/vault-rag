@@ -9,7 +9,20 @@
 
 A self-hosted RAG system for teams that need to query mixed-format business document collections — PDFs (digital and scanned), Excel, CSV, and figures — through one chat interface, with cited answers and an operator console for inspecting every step. Built for teams that want to keep document bytes on-prem and avoid per-page SaaS fees.
 
-**Latest benchmark:** 82 questions over 14 real mixed-format public documents — **80.4% agent correctness**, **89.3% faithfulness** (answer claims grounded in / inferable from retrieved text, RAGAS-style), **91.5% answer relevancy**, **71.4% structured (DuckDB) accuracy**, **100% unanswerable refusal rate**, **100% evidence hit@10**. No eval-set-specific shortcuts — every answer comes from the model and tool outputs.
+**Benchmark — 82 questions over 14 real mixed-format public documents, graded by an independent `gpt-oss-120b` judge:** the agent finds the right source **94% of the time** (retrieval hit@5), keeps answers **grounded in the evidence** (**86%** claim-level RAGAS faithfulness) and **on-topic** (**92%** answer relevancy), nails **single-document factual & table lookups (~94%)**, and **refuses 100%** of unanswerable questions instead of hallucinating. Overall answer correctness is **79%** across all nine question types — held down by a deliberately hard adversarial subset (cross-document arithmetic, multi-report joins with no shared key, debatable-gold titles). No eval-set-specific shortcuts — every answer comes from the model and tool outputs.
+
+---
+
+## Demo
+
+<!-- To embed the video inline like GitHub renders user-attachments, drag
+     assets/vault-rag-demo.mp4 into a GitHub issue or PR comment, copy the
+     resulting https://github.com/user-attachments/assets/... URL, and paste
+     it on a blank line below (no markdown wrapper needed). -->
+
+▶ **[Demo video](assets/vault-rag-demo.mp4)** — chat, document inspector, Slack bot, and the operator console end-to-end.
+
+![Chat UI](assets/chat-ui.png)
 
 ---
 
@@ -19,7 +32,7 @@ A self-hosted RAG system for teams that need to query mixed-format business docu
 - Routes each PDF page independently — text-layer pages skip OCR entirely; only scanned pages hit the GPU.
 - Indexes prose in Qdrant (hybrid dense + sparse) and structured spreadsheet rows in DuckDB; the agent picks per query.
 - Cites every answer back to a chunk + page (PDF) or a sheet + SQL trace (Excel/CSV) — auditable, not a black box.
-- Runs a LangGraph ReAct agent (`src/rag_agent.py`, model `qwen/qwen3-32b` via Groq) over two tools — Qdrant retrieval and a delegated Excel sub-graph (`src/excel_agent.py`, model `gpt-4o-mini`) that decomposes spreadsheet questions and fans out parallel SQL loops via the `Send` API; a coverage/repair pass and an API-level retry on bare `Unsupported` close common failure modes.
+- Runs a LangGraph ReAct agent (`src/rag_agent.py`, model `qwen/qwen3-32b` via Groq) over two tools — Qdrant retrieval and a delegated Excel sub-graph (`src/tools/excel.py`, model `llama-3.3-70b-versatile`) that decomposes spreadsheet questions and fans out parallel SQL loops via the `Send` API; a coverage/repair pass and an API-level retry on bare `Unsupported` close common failure modes.
 - Two-stage retrieval — stage 1 routes the query to the most relevant document(s) via `document_summary` chunks; stage 2 fetches answer-bearing content from those documents only. Stem-overlap on the filename rescues stage-1 misses when generic phrasing dominates the embedding.
 - Asks for clarification on broad queries instead of dumping a file list — when the question spans 3+ unrelated documents, the agent returns `Clarify: <2-4 specific options>` derived from what was actually retrieved.
 - Forced API-level retry on bare `Unsupported` responses — mitigates Groq inference nondeterminism by re-running the agent once with explicit doc-routing instructions if the first attempt skipped it.
@@ -29,7 +42,7 @@ A self-hosted RAG system for teams that need to query mixed-format business docu
 
 ## Architecture
 
-The live `/query` path is one **ReAct agent** (`src/rag_agent.py`, LangGraph `create_react_agent`) that calls a delegated **Excel sub-graph** (`src/excel_agent.py`, two hand-built `StateGraph`s) — two graphs, not more. `src/pipeline.py` also ships standalone decomposition / reflection / supervisor `StateGraph`s, but they are *not* wired into `/query`; they're alternative orchestrations kept for experiments (covered by `test_pipeline.py`). Every model used at each step is named below.
+The live `/query` path is one **ReAct agent** (`src/rag_agent.py`, LangGraph `create_react_agent`) that calls a delegated **Excel sub-graph** (`src/tools/excel.py`, two hand-built `StateGraph`s) — two graphs, not more. `src/pipeline.py` also ships standalone decomposition / reflection / supervisor `StateGraph`s, but they are *not* wired into `/query`; they're alternative orchestrations kept for experiments (covered by `test_pipeline.py`). Every model used at each step is named below.
 
 ```
  ╔════════════════════════════════════════════════════════════════════════════════════╗
@@ -121,8 +134,8 @@ The live `/query` path is one **ReAct agent** (`src/rag_agent.py`, LangGraph `cr
        │
        │ (only the query_excel branch reaches GRAPH 2)
        ▼
-  GRAPH 2 — Excel sub-graph   (src/excel_agent.py — two hand-built LangGraph StateGraphs)
-    LLM: gpt-4o-mini  (OpenAI)   ← the only model not served via Groq; needs EXCEL_AGENT_API_KEY,
+  GRAPH 2 — Excel sub-graph   (src/tools/excel.py — two hand-built LangGraph StateGraphs)
+    LLM: llama-3.3-70b-versatile  (Groq)   ← needs EXCEL_AGENT_API_KEY,
                                    without it query_excel is a no-op stub
     Outer graph:  decompose the question per source → Send fan-out (one inner run per sub-Q, in parallel)
                   → synthesize the per-part answers
@@ -154,24 +167,7 @@ The bets that materially moved eval scores — per-page PDF routing, contextual 
 
 ### Retrieval-quality refinements
 
-A second wave of changes after manual UI testing surfaced specific failure modes — answers that were Unsupported despite the data being present, source cards that showed irrelevant chunks, and broad queries that dumped file lists instead of asking for clarification. All fixes are domain-agnostic; none target a specific question.
-
-- **Filename resolution at LLM layer** (`src/file_resolver.py`) — chunk headers shown to the LLM resolve parsed `.md` filenames back to original `.pdf`/`.xlsx` names so the model doesn't echo parsing artifacts in cited answers.
-- **Stage-2 excludes summary chunks** — `document_summary` and `sheet_summary` chunks are routing signals (used in stage 1) and never answer content; excluding them from stage 2 frees rerank slots for real text.
-- **Stem-overlap doc-routing boost + force-inject** — when a doc's filename stem shares ≥2 content tokens with the query (after stopword filter), the doc is added to stage-1 even if dense routing missed it; if its chunks aren't in the candidate pool, a scoped retrieve injects them. Catches `"procurement policy"` → `doc_001_procurement_policy.pdf` when generic phrasing dominates the embedding.
-- **Per-doc slot reservation in reranker output** — stem-matched and explicitly-mentioned doc_ids each get up to 2 guaranteed slots in the top-N; the rest fills from reranker order. Prevents one popular stage-1 doc from monopolizing the reserved slots and squeezing out the doc the user actually named.
-- **Neighbor-chunk expansion** — for each top hit, the previous and next chunks from the same file are appended via `[prev chunk]` / `[next chunk]` separators. Generic fix for chunker boundary misses (section header in chunk N, value table in N+1). Surfaced the vacation accrual schedule numbers that the bare retrieval split off.
-- **Tool-call boundary aware source display** — `_parse_sources` groups chunks per tool call and iterates in reverse, so when the agent does a 2-step search (find doc, then scoped query) the displayed sources reflect the later scoped call instead of the first broad call's noise.
-- **Prompt-driven clarification rule** — the system prompt now tells the agent to return `Clarify: <question with 2-4 specific options>` when the question is too broad (chunks span 3+ unrelated docs OR are summary-only). Avoids file-list dumps for vague queries like *"what about HR policies?"*.
-- **Deterministic by default** — HyDE temperature lowered from 0.5 to 0.0 so query expansion is reproducible.
-- **Forced retry on bare Unsupported** — Groq inference at temp=0 still has small nondeterminism that occasionally makes the agent skip the doc-routing step and return Unsupported despite the answer existing. The API layer detects bare-`Unsupported` responses and re-runs the agent once with an explicit instruction to follow the 2-step protocol (find doc_id, then scoped search). 5/5 reproducibility on the procurement test query after the retry.
-- **Multi-part query detection extended for cross-doc forms** — `_is_multi_part_query` now recognises "X or Y?" disjunctive comparisons, "and which to" parallel structure, "? And for ..." continuation, and "comparing X and Y" framings. These trigger the multi-part repair path that was previously skipped for structurally cross-doc questions written in non-canonical phrasing.
-- **Source-diversity acceptance check on the repair pass** — the repair step that fires when an answer is incomplete only replaces a bare `Unsupported` with a synthesised answer if the repair actually retrieved a chunk from a *new source file* not already in the candidate pool. Stops the repair from fabricating a "complete" multi-part answer by re-shuffling chunks from the same doc the agent already correctly abstained on.
-- **Bare-filename answer guard** — runtime check on every final answer: strip filename tokens, question-echo tokens, and framing words; if no substantive token or new numeric value remains, the answer is essentially "the document is X.pdf" and gets converted to `Unsupported`. The check is content-based, not pattern-keyed to specific doc IDs or question forms — generalises to any new document. Lifted refusal rate from 75% → 100% on the unanswerable subset.
-- **Auto-scope on dominant filename-token overlap** — when the query's content tokens overlap one document's filename stem by ≥3 tokens with a gap of ≥2 over the next-best doc, retrieval is automatically scoped to that doc. Eliminates topically-similar but query-unrelated documents from competing for slots (e.g. "NTSB fueling records invoice" no longer pulls chunks from the unrelated FOIA-invoices PDF). Stays inert for symmetric cross-doc queries where two docs tie.
-- **Placeholder-question early refusal** — questions with empty reference slots ("...the difference between the cost in and the total shown in ?") are detected lexically and short-circuit to `Unsupported` before any retrieval, preventing the model from fabricating an answer to a structurally unanswerable question.
-
-Full rationale and the trade-offs considered for each: [docs/engineering.md](docs/engineering.md#retrieval-quality-refinements).
+A second wave of changes after manual UI testing closed specific failure modes — Unsupported-despite-present-data, irrelevant source chunks, file-list dumps for vague queries, and bare-filename "answers". All fixes are domain-agnostic (no question-specific shortcuts) and lifted the unanswerable refusal rate 75% → 100%. Highlights: stem-overlap doc-routing boost + force-inject, per-doc slot reservation in the reranker, neighbor-chunk expansion, prompt-driven `Clarify:` rule, content-based bare-filename answer guard, source-diversity acceptance check on the repair pass, and an API-level forced retry on bare-`Unsupported`. Full rationale + trade-offs: [docs/engineering.md](docs/engineering.md#retrieval-quality-refinements).
 
 ---
 
@@ -227,32 +223,45 @@ All 14 documents are publicly available. `make seed` automatically downloads and
 
 ### Results
 
+**At a glance — by capability** (what the system is actually good at):
+
+| Capability | Score | Reading |
+|---|---:|---|
+| Finds the right source (retrieval hit@5) | **94%** | Correct evidence in the top 5 for nearly every question |
+| Grounded answers (faithfulness) | **86%** | Claims supported by / inferable from retrieved text |
+| On-topic answers (relevancy) | **92%** | Answers address the question asked |
+| Single-document factual & table lookups | **~94%** | The bulk of real-world usage |
+| Refuses unanswerable questions | **100%** | Returns `Unsupported` instead of fabricating |
+| Overall answer correctness (all 9 types) | **79%** | Includes the hardest adversarial cases — see notes |
+
+Graded by an **independent `gpt-oss-120b` judge** (distinct from the `qwen/qwen3-32b` answer model, so no self-grading bias).
+
 **Agent answer metrics** (all 82 questions)
 
 | Metric | Score | What it measures |
 |---|---:|---|
-| Correctness | **80.4%** | Whether the answer states the facts the question asks for, judged against the gold answer — paraphrases, formatting, currency symbols, and source labels are accepted; exact matches short-circuit the LLM judge |
-| Faithfulness | **89.3%** | Whether every claim in the answer is supported by — or inferable from — the retrieved context. Cross-document conclusions count as supported when their component facts are present in the chunks; contradictions, invented facts, and wrong-source mixing are penalised (RAGAS-style, claim-level). Excludes unanswerable questions |
-| Answer relevancy | **91.5%** | Whether the answer actually addresses the question asked — not off-topic, not padded with irrelevant context |
+| Correctness | **79.3%** | Whether the answer states the facts the question asks for, judged against the gold answer — paraphrases, formatting, currency symbols, and source labels are accepted; exact matches short-circuit the LLM judge |
+| Faithfulness | **86.1%** | Whether every claim in the answer is supported by — or inferable from — the retrieved context. Cross-document conclusions count as supported when their component facts are present in the chunks; contradictions, invented facts, and wrong-source mixing are penalised (RAGAS-style, claim-level). Excludes unanswerable + structured questions |
+| Answer relevancy | **92.1%** | Whether the answer actually addresses the question asked — not off-topic, not padded with irrelevant context |
 
 **Vector retrieval metrics** (53 PDF/OCR questions, Qdrant)
 
 | Metric | Score | What it measures |
 |---|---:|---|
-| Hit@5 | **100%** | Fraction of questions where a gold evidence chunk appears in the top 5 retrieved |
-| Hit@10 | **100%** | …same, within the top 10 retrieved |
-| MRR | **89.0%** | Mean reciprocal rank of the first gold evidence chunk (1.0 = always ranked first) |
-| Evidence recall@10 | **96.5%** | Fraction of *all* annotated gold evidence chunks recovered within the top 10 |
+| Hit@5 | **94.3%** | Fraction of questions where a gold evidence chunk appears in the top 5 retrieved |
+| Hit@10 | **96.2%** | …same, within the top 10 retrieved |
+| MRR | **82.9%** | Mean reciprocal rank of the first gold evidence chunk (1.0 = always ranked first) |
+| Evidence recall@10 | **90.9%** | Fraction of *all* annotated gold evidence chunks recovered within the top 10 |
 
-Hit@5 and Hit@10 both at 100% — the correct evidence chunk lands in the top 5 (and 10) candidates for every answerable PDF question, with no domain-specific fine-tuning. The OR-scoped doc_id filter (matching `metadata.doc_id`, `metadata.source_file`, and `metadata.file_name`) ensures scoped searches return full document coverage even for older ingestions that only set `source_file`.
+The correct evidence chunk lands in the top 5 for ~94% of answerable PDF questions, with no domain-specific fine-tuning. A cross-encoder reranker (BGE-reranker-v2-m3) reorders first-stage hybrid (dense + sparse) candidates; the OR-scoped doc_id filter (matching `metadata.doc_id`, `metadata.source_file`, and `metadata.file_name`) ensures scoped searches return full document coverage even for older ingestions that only set `source_file`.
 
 **Structured retrieval** (21 Excel/CSV questions, DuckDB)
 
 | Metric | Score | What it measures |
 |---|---:|---|
-| Answer accuracy | **71.4%** | Fraction of Excel/CSV questions where the text-to-SQL path over DuckDB returns the correct cell value |
+| Answer accuracy | **81.0%** | Fraction of Excel/CSV questions where the text-to-SQL path over DuckDB returns the correct cell value |
 
-Excel and CSV questions bypass Qdrant entirely. The Excel sub-graph decomposes cross-document questions per source, fans out one inner SQL ReAct loop per part via the LangGraph `Send` API, and synthesises the per-part answers. Each inner loop ranks candidate tables by column-name overlap with the question, then writes / runs / evaluates SQL with retries on column errors and a next-table fallback on empty results.
+Excel and CSV questions bypass Qdrant entirely. The Excel sub-graph decomposes cross-document questions per source, fans out one inner SQL ReAct loop per part via the LangGraph `Send` API, and synthesises the per-part answers. Each inner loop ranks candidate tables by column-name overlap with the question, then writes / runs / evaluates SQL with retries on column errors, deterministic predicate-relaxation on empty results (drops an over-constraining filter rather than guessing), and a next-table fallback. Tables embedded in PDFs are now loaded into DuckDB too, so `SUM`/`COUNT`-style aggregation questions are answered exactly by SQL rather than by the LLM. The remaining misses are cross-document spreadsheet joins where two independent reports share no key — single-table lookups run **~94%**.
 
 **Unanswerable questions** (8 questions)
 
@@ -289,9 +298,9 @@ Full methodology and reproduction steps: [eval/README.md](eval/README.md).
 | Vector database | Qdrant | Dense + sparse retrieval in one system with simple local Docker deployment |
 | Reranker | `cross-encoder/ms-marco-MiniLM-L-6-v2` (shipped in `.env.example` + the Docker image) — `BAAI/bge-reranker-v2-m3` is the in-code fallback when `RERANKER_MODEL` is unset | Cross-encoder: scores query and chunk *together* in one forward pass, so it models their interaction directly. A bi-encoder scores them independently then compares embeddings — sharply less accurate when the relevance signal lives in the relationship between question and passage, not either alone. The MiniLM is small and pre-baked into the image; bge-reranker-v2-m3 is the multilingual, broader-domain upgrade if you have the VRAM |
 | Generation / answering LLM | `qwen/qwen3-32b` (Groq, via the LiteLLM proxy) | 32B params, 32k context, native tool calling and multi-step reasoning — served by Groq at ~400 tok/s with no local GPU; LiteLLM fails over to Groq Llama 3.3 70B, then NVIDIA NIM. Also used for HyDE expansion and the coverage/repair judges |
-| Excel text-to-SQL LLM | `gpt-4o-mini` (OpenAI) | Drives the Excel sub-graph — table selection, SQL writing, answer extraction. Needs `EXCEL_AGENT_API_KEY`; without it `query_excel` is disabled. The only model not served via Groq |
+| Excel text-to-SQL LLM | `llama-3.3-70b-versatile` (Groq) | Drives the Excel sub-graph — table selection, SQL writing, answer extraction. Needs `EXCEL_AGENT_API_KEY`; without it `query_excel` is disabled |
 | ReAct agent — **wired into `/query`** | LangGraph `create_react_agent` (`src/rag_agent.py`) | The live query graph: tool-calling loop over `search_knowledge_base` + `query_excel`, with 2-step doc routing, HyDE expansion, and an inline coverage/repair pass |
-| Excel sub-graph — **wired into `/query`** | LangGraph `StateGraph` ×2 (`src/excel_agent.py`) | Outer graph decomposes a spreadsheet question per source and fans out via the `Send` API; inner graph loops `select_table → inspect → write_sql → run_sql → evaluate` with retries on column errors and a next-table fallback on empty results — the ReAct agent never sees table names |
+| Excel sub-graph — **wired into `/query`** | LangGraph `StateGraph` ×2 (`src/tools/excel.py`) | Outer graph decomposes a spreadsheet question per source and fans out via the `Send` API; inner graph loops `select_table → inspect → write_sql → run_sql → evaluate` with retries on column errors and a next-table fallback on empty results — the ReAct agent never sees table names |
 | Decomposition / reflection / supervisor graphs — *not wired* | LangGraph `StateGraph` (`src/pipeline.py`) | Standalone orchestrations kept for experiments; **not on the default `/query` path** — exercised only by `test_pipeline.py` |
 | UI | Streamlit + Next.js | Streamlit for the operator console (Python-native, fast iteration); Next.js + FastAPI for the end-user chat UI |
 | Observability | Langfuse | End-to-end traces make it possible to inspect prompts, tool calls, retrieved chunks, and token usage |
@@ -308,18 +317,13 @@ Full methodology and reproduction steps: [eval/README.md](eval/README.md).
 | Embeddings | Nothing | Ollama serves `nomic-embed-text` (dense) on-device; sparse `bm42` runs locally via fastembed |
 | Excel schema extraction (ingest) | Sheet rows → Groq (`llama-3.3-70b-versatile`) | Point `GENERATION_API_BASE` / `TABLE_LLM_MODEL` at a local vLLM server |
 | Contextual summaries (ingest) | Chunk text → OpenRouter (`google/gemma-4-31b-it:free`) | Point `CHUNK_LLM_API_BASE` at a local vLLM server |
-| Query answering | Retrieved chunks + question → Groq (`qwen/qwen3-32b`); Excel questions also → OpenAI (`gpt-4o-mini`) | Point `GENERATION_API_BASE` (and `EXCEL_AGENT_API_BASE`) at a local vLLM server |
+| Query answering | Retrieved chunks + question → Groq (`qwen/qwen3-32b`); Excel questions also → Groq (`llama-3.3-70b-versatile`) | Point `GENERATION_API_BASE` (and `EXCEL_AGENT_API_BASE`) at a local vLLM server |
 
 ---
 
-## Demo
+## Walkthrough
 
-```bash
-make up && ollama pull nomic-embed-text && make app
-make eval         # full 82-question benchmark (14 docs, 9 question types)
-```
-
-Suggested flow in the Streamlit console: **Chat** → ask a cross-document question → **Retrieved Chunks** to inspect the exact text/table snippets used → **Document Inspector** to compare the original page with parsed Markdown and chunk boundaries → **Eval Results** for gold vs generated answers row by row.
+Suggested flow in the operator console: **Chat** — ask a cross-document question · **Retrieved Chunks** — inspect the exact snippets used · **Document Inspector** — compare the original page with parsed Markdown and chunk boundaries · **Eval Results** — gold vs generated answers row by row.
 
 Sample questions:
 
@@ -333,13 +337,13 @@ Google Ads2372193163 row and the SS SYSTEMS LTD row?
 What is the salary of the CEO of Doncaster School Solutions?
 ```
 
-| Chat | Retrieved chunks |
+| RAG answer over PDFs | Excel / SQL answer |
 |---|---|
-| ![Chat UI](assets/chat.png) | ![Retrieved chunks](assets/retrieved_chunks.png) |
+| ![RAG answer](assets/rag-answer.png) | ![SQL answer](assets/sql-answer.png) |
 
-| Document inspector | Eval results |
+| Document inspector | Slack bot |
 |---|---|
-| ![Document inspector](assets/document_inspector.png) | ![Eval results](assets/eval_results.png) |
+| ![Document inspector](assets/document-inspector.png) | ![Slack bot](assets/slack-bot.png) |
 
 ---
 
@@ -445,7 +449,7 @@ vault-rag/
 │   ├── retriever.py           # Hybrid search (dense + sparse + RRF), HyDE, cross-encoder rerank
 │   ├── rag_agent.py           # LangGraph ReAct agent (create_react_agent) — the live /query graph
 │   ├── pipeline.py            # Standalone LangGraph StateGraphs (decomposition / reflection / supervisor) — NOT on the /query path
-│   ├── excel_agent.py         # Excel sub-graph: two StateGraphs (decompose + Send fan-out → inner SQL loop)
+│   ├── tools/excel.py         # Excel sub-graph: two StateGraphs (decompose + Send fan-out → inner SQL loop)
 │   ├── parser/                # PDF routing + LightOn OCR client
 │   ├── ingestion/             # OCR + VLM clients (LightOn, Groq, unstructured)
 │   └── preprocessing/         # Excel cleaning + chunk building

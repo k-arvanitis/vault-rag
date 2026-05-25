@@ -1,8 +1,16 @@
-"""DuckDB-backed Excel query tool.
+"""DuckDB-backed Excel query layer.
 
 Pipeline: Raw Excel → excel_cleaner.process_file() → cleaned DataFrame → DuckDB table.
 DuckDB persists to disk so the LLM-assisted cleaning only runs once per file.
 Agent queries via SQL through a single query_excel tool.
+
+Provides: the DuckDBStore connection wrapper, table-name derivation, date
+normalisation, and SQL-literal rewriting helpers (date format + ILIKE
+truncation retry).
+Called by: src/ingest_table_rows.py (_table_name, _normalize_dates at ingest
+time) and src/tools/excel.py (DuckDBStore, _normalize_sql, _truncate_ilike at
+query time).
+Calls: duckdb and pandas (lazy import).
 """
 
 from __future__ import annotations
@@ -10,35 +18,20 @@ from __future__ import annotations
 import re
 import threading
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import duckdb
 
-from src.config import DUCKDB_PATH, GROQ_API_KEY
+from src.config import DUCKDB_PATH
 
 
-def _make_groq_llm_fn() -> Callable[[str], str]:
-    """Return a Groq LLM callable for excel_cleaner.process_file."""
-    import openai
-
-    client = openai.OpenAI(
-        base_url="https://api.groq.com/openai/v1",
-        api_key=GROQ_API_KEY,
-    )
-
-    def _call(prompt: str) -> str:
-        resp = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.0,
-        )
-        return resp.choices[0].message.content
-
-    return _call
-
+# ---------------------------------------------------------------------------
+# Ingest-time helpers: table naming + date normalisation
+# ---------------------------------------------------------------------------
 
 def _table_name(file: str, sheet: str) -> str:
     """Derive a valid DuckDB table name from file basename + sheet name."""
+    # Join the file stem and sheet, then strip out any non-identifier characters.
     stem = Path(file).stem
     combined = f"{stem}__{sheet}"
     return re.sub(r"[^a-zA-Z0-9_]", "_", combined).strip("_")
@@ -56,18 +49,22 @@ def _normalize_dates(df: "Any") -> "Any":
     df = df.copy()
     for col in df.columns:
         series = df[col]
+        # True datetime columns: format directly to ISO strings.
         if pd.api.types.is_datetime64_any_dtype(series):
             df[col] = series.dt.strftime("%Y-%m-%d").where(series.notna(), other=None)
             continue
+        # Skip non-object columns — they cannot hold string-formatted dates.
         if series.dtype != object:
             continue
         non_null = series.dropna().astype(str)
         if len(non_null) == 0:
             continue
+        # Skip the column unless most sampled values look like a date.
         sample = non_null.head(20)
         matching = sample.str.match(r"^\d{1,4}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}$").sum()
         if matching / len(sample) < 0.8:
             continue
+        # Parse the whole column; only convert if most values parsed cleanly.
         try:
             parsed = pd.to_datetime(series, dayfirst=True, errors="coerce")
             valid_ratio = parsed.notna().sum() / max(series.notna().sum(), 1)
@@ -78,6 +75,10 @@ def _normalize_dates(df: "Any") -> "Any":
             pass
     return df
 
+
+# ---------------------------------------------------------------------------
+# Query-time helpers: SQL-literal rewriting and ILIKE truncation retry
+# ---------------------------------------------------------------------------
 
 # DD/MM/YYYY or D/M/YYYY inside SQL string literals → YYYY-MM-DD
 _DATE_DMY = re.compile(r"'(\d{1,2})/(\d{1,2})/(\d{4})'")
@@ -101,6 +102,7 @@ def _truncate_ilike(sql: str, chars: int = 1) -> str:
     Only shortens values that end with a letter (not space or digit).
     """
     def _shorten(m: re.Match) -> str:
+        """Trim trailing chars off one ILIKE value if it is long and letter-ending."""
         prefix, text, suffix = m.group(1), m.group(2), m.group(3)
         if len(text) > chars + 3 and text[-1].isalpha():
             return f"{prefix}{text[:-chars]}{suffix}"
@@ -108,11 +110,16 @@ def _truncate_ilike(sql: str, chars: int = 1) -> str:
     return _ILIKE_VAL.sub(_shorten, sql)
 
 
+# ---------------------------------------------------------------------------
+# DuckDBStore: thread-safe query wrapper over the persistent database
+# ---------------------------------------------------------------------------
+
 class DuckDBStore:
     """Connect to the persistent DuckDB populated by ingest_table_rows."""
 
     def __init__(self, db_path: str = DUCKDB_PATH) -> None:
         """Connect to the existing DuckDB file. Tables are loaded at ingest time."""
+        # Open the connection and a lock guarding all query calls.
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._con = duckdb.connect(db_path)
         self._lock = threading.Lock()
@@ -120,6 +127,7 @@ class DuckDBStore:
         rows = self._con.execute(
             "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
         ).fetchall()
+        # Cache each table's column names for cheap schema lookups.
         self._tables: dict[str, list[str]] = {}
         for (tname,) in rows:
             cols = [r[0] for r in self._con.execute(f'DESCRIBE "{tname}"').fetchall()]

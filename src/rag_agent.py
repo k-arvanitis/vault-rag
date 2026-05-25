@@ -4,6 +4,15 @@ Two tools are registered: search_knowledge_base (text/PDF retrieval over Qdrant)
 and query_excel (text-to-SQL over spreadsheet rows in DuckDB). route_question
 resolves which tool a question needs from the modality of its best-matching
 document summary, so the agent does not have to infer it from question wording.
+
+Public API: build_rag_agent() constructs the agent; ask_agent() / stream_agent()
+run it for a single query and finalize the answer.
+
+Called by: src/api.py and slack_app.py (build + ask/stream), rag_cli.py (CLI).
+Calls into: src/prompts.py (system prompt), src/retriever.py (route_question),
+src/tools/retrieval_tool.py + src/tools/excel.py (the two agent tools),
+src/duckdb_store.py, src/reranker.py, src/llm_utils.py, and src/answer_quality.py
+for the answer-finalization pipeline.
 """
 
 from __future__ import annotations
@@ -33,6 +42,7 @@ from src.config import (
     QDRANT_URL,
     RERANK_TOP_N,
     RERANKER_DEVICE,
+    RERANKER_ENABLED,
     RERANKER_MODEL,
     RETRIEVAL_TOP_K,
 )
@@ -123,6 +133,8 @@ def route_question(
     hits. Returns {modality, source_file}; modality is "" when nothing matched,
     so the caller falls back to the agent's own tool choice.
     """
+    # Retrieve the question's nearest chunks; any failure or empty result yields
+    # an empty modality so the caller leaves tool choice to the agent.
     try:
         hits = retrieve(
             query=question,
@@ -141,6 +153,7 @@ def route_question(
         meta = hit.get("metadata") or {}
         return meta.get("source_file") or meta.get("file_name") or ""
 
+    # Majority vote over the top-3 hits: more table-extension sources -> excel.
     top = hits[:3]
     table_votes = sum(1 for h in top if _source(h).lower().endswith(_TABLE_EXTS))
     is_table = table_votes > len(top) - table_votes
@@ -178,6 +191,7 @@ def _build_doc_registry(qdrant_url: str, collection: str) -> dict[str, str]:
     """
     from urllib.request import Request, urlopen
 
+    # Scroll the Qdrant collection for document_summary points (one per document).
     base = qdrant_url.rstrip("/")
     url = f"{base}/collections/{collection}/points/scroll"
     body_bytes = json.dumps({
@@ -193,6 +207,7 @@ def _build_doc_registry(qdrant_url: str, collection: str) -> dict[str, str]:
     except Exception:
         return {}
 
+    # Index each document by both its filename stem and full filename -> doc_id.
     registry: dict[str, str] = {}
     for point in data.get("result", {}).get("points", []):
         meta = (point.get("payload") or {}).get("metadata") or {}
@@ -204,6 +219,11 @@ def _build_doc_registry(qdrant_url: str, collection: str) -> dict[str, str]:
             # Also index the full filename for direct matches
             registry[source_file.lower()] = doc_id
     return registry
+
+
+# ---------------------------------------------------------------------------
+# Agent construction — wire reranker, LLM, tools and doc registry into a ReAct agent
+# ---------------------------------------------------------------------------
 
 
 def build_rag_agent(
@@ -218,8 +238,10 @@ def build_rag_agent(
     use_hyde: bool = True,
 ) -> Any:
     """Build the LangGraph ReAct agent — reranker, LLM and the retrieval + Excel tools — with the limits/model metadata ask_agent reads."""
+    # Load the cross-encoder reranker (BGE/mxbai vs Qwen by model name); failure
+    # degrades gracefully to no reranker rather than aborting agent construction.
     ranker: BGEReranker | QwenReranker | None = None
-    if reranker_model_name:
+    if RERANKER_ENABLED and reranker_model_name:
         try:
             if "bge" in reranker_model_name.lower() or "mxbai" in reranker_model_name.lower():
                 ranker = BGEReranker(model_name=reranker_model_name, device=RERANKER_DEVICE)
@@ -241,6 +263,7 @@ def build_rag_agent(
         or os.getenv("OPENAI_API_KEY")
         or "EMPTY"
     )
+    # Generation LLM, deterministic (temperature 0) and capped at 2048 output tokens.
     llm = ChatOpenAI(
         model=model_name,
         base_url=_to_openai_base(generation_api_base),
@@ -249,10 +272,12 @@ def build_rag_agent(
         max_tokens=2048,
     )
 
+    # Filename -> doc_id lookup used to resolve titles the LLM passes instead of ids.
     doc_registry = _build_doc_registry(qdrant_url, collection)
     if doc_registry:
         print(f"[INFO] Doc registry built: {len(doc_registry)} source file entries.")
 
+    # Build the retrieval tool (search_knowledge_base) and its runtime limits dict.
     tool, _rag_limits = _make_unified_tool(
         qdrant_url=qdrant_url,
         collection=collection,
@@ -265,9 +290,12 @@ def build_rag_agent(
         doc_registry=doc_registry,
     )
 
+    # Add the Excel text-to-SQL tool (query_excel) backed by the DuckDB store.
     excel_store = DuckDBStore()
     tools = [tool] + build_excel_agent_tools(excel_store)
 
+    # Assemble the ReAct agent and stash metadata ask_agent/stream_agent read back
+    # off the agent object (the _rag_limits dict is mutated on context overflow).
     system_prompt = _build_system_prompt(model_name)
     agent = create_react_agent(model=llm, tools=tools, prompt=system_prompt, name="vault-rag")
     agent._rag_limits = _rag_limits  # type: ignore[attr-defined]
@@ -397,12 +425,15 @@ def ask_agent(
     """
     from openai import BadRequestError
 
+    # Guard: questions with an empty reference slot are unanswerable by construction.
     if _has_empty_reference_placeholder(query):
         return "Unsupported"
 
+    # Optional Langfuse tracing — None when not configured.
     lf = _get_langfuse()
     trace = lf.trace(name="rag-agent", input=query) if lf else None
 
+    # Replay prior turns as LangChain messages, then append the current question.
     messages: list = []
     for turn in (history or []):
         if turn["role"] == "user":
@@ -416,6 +447,7 @@ def ask_agent(
 
     _limits: dict = getattr(agent, "_rag_limits", {})
 
+    # Run the agent; the except block handles two provider error classes below.
     try:
         result = agent.invoke(_invoke_input, config=_invoke_config)
     except BadRequestError as exc:
@@ -442,6 +474,8 @@ def ask_agent(
 
     messages: list[Any] = result.get("messages", [])
 
+    # Collect every tool result: by call id (for tracing) and as raw contexts;
+    # also push split chunks into the caller's retrieved_contexts list if given.
     tool_results: dict[str, str] = {}
     tool_contexts: list[str] = []
     for msg in messages:
@@ -455,6 +489,7 @@ def ask_agent(
                     retrieved_contexts.append("---CALL_BOUNDARY---")
                     retrieved_contexts.extend(cleaned)
 
+    # Emit tool-call/result diagnostics and record one Langfuse span per call.
     for msg in messages:
         if isinstance(msg, AIMessage) and msg.tool_calls:
             for tc in msg.tool_calls:
@@ -470,6 +505,7 @@ def ask_agent(
         elif isinstance(msg, ToolMessage) and show_tool_uses:
             print(f"[TOOL_RESULT] {msg.name} ->\n{_extract_refs(msg.content)}\n")
 
+    # The final answer is the last AIMessage that made no further tool calls.
     answer = "No answer generated."
     for msg in reversed(messages):
         if isinstance(msg, AIMessage) and not msg.tool_calls:
@@ -477,6 +513,8 @@ def ask_agent(
             answer = _strip_think(text)
             break
 
+    # Answer-finalization pipeline (see the section header above): coverage repair,
+    # context/retrieval fallbacks for bad answers, then canonical normalization.
     api_base = getattr(agent, "_generation_api_base", None)
     model_name = getattr(agent, "_generation_model", None)
     if api_base and model_name and tool_contexts and (
@@ -539,10 +577,12 @@ def stream_agent(
         tool_calls: If provided, the name of each tool the agent actually invoked
             is appended to this list, in call order (with repeats).
     """
+    # Guard: questions with an empty reference slot are unanswerable by construction.
     if _has_empty_reference_placeholder(query):
         yield "Unsupported"
         return
 
+    # Replay prior turns as LangChain messages, then append the current question.
     messages: list = []
     for turn in (history or []):
         if turn["role"] == "user":
@@ -590,6 +630,9 @@ def stream_agent(
     _tool_contexts: list[str] = []
     _limits: dict = getattr(agent, "_rag_limits", {})
 
+    # Stream messages from the agent. Text chunks go to the pre-tool buffer until
+    # the first tool result arrives, then to the final buffer; tool-call argument
+    # chunks are skipped entirely.
     try:
         for chunk, metadata in agent.stream(_invoke_input, config=_invoke_config, stream_mode="messages"):
             if isinstance(chunk, AIMessageChunk):
@@ -603,6 +646,8 @@ def stream_agent(
                         else:
                             _pre_tool_buf.append(filtered)
             elif isinstance(chunk, ToolMessage):
+                # First tool result: discard any buffered reasoning preamble and
+                # record the tool name, SQL trace, and retrieved chunks.
                 _tool_used = True
                 _pre_tool_buf.clear()
                 _tool_contexts.append(chunk.content)
@@ -626,6 +671,8 @@ def stream_agent(
                 if show_tool_uses:
                     print(f"\n[TOOL_RESULT] {chunk.name} ->\n{_extract_refs(chunk.content)}\n")
     except (BadRequestError, APIError) as exc:
+        # Provider errors: context overflow retries with fewer chunks; a malformed
+        # final-answer tool call has its real text recovered below.
         err_str = str(exc).lower()
         if _is_context_overflow(err_str):
             yield _overflow_fallback_answer(agent, query, history, collected_chunks, _limits)
@@ -674,6 +721,8 @@ def stream_agent(
     if _think_buf and not _in_think:
         _final_buf.append(_think_buf)
 
+    # Tool path: assemble the streamed answer, then run coverage repair and the
+    # context fallback (same finalization stages as ask_agent).
     answer = "".join(_final_buf).strip()
     api_base = getattr(agent, "_generation_api_base", None)
     model_name = getattr(agent, "_generation_model", None)

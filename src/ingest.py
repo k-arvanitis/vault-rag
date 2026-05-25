@@ -620,7 +620,7 @@ def _run_ingest_pdf(
     md_path.write_text(markdown, encoding="utf-8")
 
     # 1c) Convert ASCII grid tables to row sentences, save to data/output/processed/
-    from src.table_processor import process_and_save as _process_md
+    from src.preprocessing.table_processor import process_and_save as _process_md
     processed_dir = REPO_ROOT / "data" / "output" / "processed"
     markdown, _ = _process_md(markdown, md_path.stem, processed_dir)
 
@@ -695,6 +695,17 @@ def _run_ingest_pdf(
         verbose=verbose,
     )
     _log(f"Done | upserted_points={len(embedding_rows)} | collection={collection}", step=4, enabled=verbose)
+
+    # 5) Load any tables embedded in the document into DuckDB (+ Qdrant summaries)
+    #    so the SQL agent can answer aggregation / exact-lookup questions over them.
+    _log("Load embedded tables -> DuckDB", step=5, enabled=verbose)
+    try:
+        from src.ingestion.pdf_tables import ingest_pdf_tables
+        n_tables = ingest_pdf_tables(md_path.stem, markdown, collection=collection, verbose=verbose)
+        _log(f"Done | tables_loaded={n_tables}", step=5, enabled=verbose)
+    except Exception as exc:  # noqa: BLE001 — table load must not crash the doc's ingest
+        _log(f"[WARN] embedded-table ingestion failed: {exc}", step=5, enabled=verbose)
+
     elapsed_seconds = time.perf_counter() - file_started_at
     _log(
         f"Pipeline finished successfully | pages={page_count} | elapsed={elapsed_seconds:.2f}s",

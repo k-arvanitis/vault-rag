@@ -8,6 +8,13 @@ Pipeline per file:
 The agent finds which sheet is relevant via Qdrant, then queries DuckDB directly.
 No sheet_table or sheet_row chunks are stored in Qdrant.
 
+Called by: the document-ingestion entry points and the CLI `python -m
+src.ingest_table_rows`.
+Calls: src.ingest_tables.load_sheets (raw sheet rows), src.duckdb_store
+(_table_name, _normalize_dates), src.llm_utils._make_groq_llm_fn (Groq LLM
+factory), src.preprocessing.excel_cleaner.process_file (LLM cleaning), the
+Ollama embedding API, and the Qdrant REST API for upserts.
+
 Usage:
     python -m src.ingest_table_rows data/myfile.xlsx
     python -m src.ingest_table_rows data/myfile.csv --collection documents_chunks
@@ -66,6 +73,7 @@ def _find_header_row(rows: list[list[Any]]) -> int:
 
     Picks the first row with multiple *distinct* text values.
     """
+    # Scan the first 20 rows for the first plausible header row.
     for i, row in enumerate(rows[:20]):
         non_empty = [str(v).strip() for v in row if v is not None and str(v).strip()]
         if len(non_empty) < 2:
@@ -74,6 +82,7 @@ def _find_header_row(rows: list[list[Any]]) -> int:
         # Real header rows have at least 3 distinct values
         if len(set(non_empty)) < 3:
             continue
+        # Accept the row if at least half its values are non-numeric text.
         text_count = sum(1 for v in non_empty if not _is_numeric(v))
         if text_count / len(non_empty) >= 0.5:
             return i
@@ -97,6 +106,7 @@ def _is_unit_like(v: str) -> bool:
 
 def _merge_units_into_headers(headers: list[str], units_row: list[Any]) -> list[str]:
     """Append unit annotations from the units row into the header names."""
+    # Pair each header with the unit value below it and append it in parentheses.
     merged = []
     for header, unit_val in zip(headers, units_row):
         unit_str = str(unit_val).strip() if unit_val is not None else ""
@@ -111,6 +121,7 @@ def _merge_units_into_headers(headers: list[str], units_row: list[Any]) -> list[
 
 def _detect_units_row(rows: list[list[Any]], header_idx: int) -> int | None:
     """If the row immediately after the header is a units row, return its index."""
+    # Look at the row directly below the header.
     next_idx = header_idx + 1
     if next_idx >= len(rows):
         return None
@@ -118,6 +129,7 @@ def _detect_units_row(rows: list[list[Any]], header_idx: int) -> int | None:
     non_empty = [str(v).strip() for v in row if v is not None and str(v).strip()]
     if not non_empty:
         return None
+    # It is a units row only if most of its cells look like unit annotations.
     unit_like = sum(1 for v in non_empty if _is_unit_like(v))
     if unit_like / len(non_empty) >= 0.6:
         return next_idx
@@ -143,6 +155,7 @@ def _extract_sheet_title(rows: list[list[Any]], header_idx: int) -> str:
     All distinct values are joined with ' | ' so nothing is lost.
     Returns empty string if nothing useful is found.
     """
+    # Collect distinct, non-numeric text values from every pre-header row.
     seen: set[str] = set()
     parts: list[str] = []
     for row in rows[:header_idx]:
@@ -170,10 +183,12 @@ def sheet_summary_text(
     """
     _SAMPLES_PER_COL = 20
 
+    # Build the summary prefix (file / sheet / optional title).
     prefix_parts = [f"File: {file_name}", f"Sheet: {sheet_name}"]
     if sheet_title:
         prefix_parts.append(sheet_title)
 
+    # For each named column, gather a distributed sample of its text values.
     sample_parts: list[str] = []
     for col_idx, header in enumerate(headers):
         h = str(header).strip() if header is not None else ""
@@ -205,6 +220,7 @@ def sheet_summary_text(
             samples = [unique_vals[int(i * step)] for i in range(_SAMPLES_PER_COL)]
         sample_parts.append(f"{h}: {', '.join(samples)}")
 
+    # Assemble the final summary text: prefix, row count, columns, sample values.
     lines = [
         f"[{' | '.join(prefix_parts)}]",
         f"Sheet summary: {len(data_rows)} rows.",
@@ -223,11 +239,13 @@ def _qualify_headers(headers: list[str], subheader_rows: list[list[Any]]) -> lis
     """
     if not subheader_rows:
         return headers
+    # Find header names that occur more than once — only those need qualifying.
     from collections import Counter
     counts = Counter(h for h in headers if h and not h.startswith("col_"))
     duplicate_headers = {h for h, c in counts.items() if c > 1}
     if not duplicate_headers:
         return headers
+    # For each duplicate header, append its subheader values in parentheses.
     qualified = []
     for i, h in enumerate(headers):
         if h not in duplicate_headers:
@@ -250,6 +268,7 @@ def _collect_subheaders(rows: list[list[Any]], after_idx: int) -> tuple[list[lis
     Stops as soon as a row contains numeric data (real data row).
     Returns (subheader_rows, first_data_row_idx).
     """
+    # Walk forward from after_idx, collecting annotation rows until a data row.
     subheaders = []
     i = after_idx
     while i < len(rows):
@@ -275,6 +294,7 @@ def _format_cell(v: Any) -> str:
     s = str(v).strip() if v is not None else ""
     if not s:
         return ""
+    # Numeric values: drop trailing .0, keep short numbers verbatim, else round.
     try:
         f = float(s.replace(",", ""))
         if f == int(f):
@@ -307,15 +327,18 @@ def sheet_to_markdown(
     Sub-header rows (column annotations, units) are prepended after the separator
     so every chunk is self-contained.
     """
+    # Emit the header row and the markdown separator row.
     lines = []
     lines.append("| " + " | ".join(str(h) for h in headers) + " |")
     lines.append("| " + " | ".join("---" for _ in headers) + " |")
 
+    # Emit any column-annotation / units rows right under the header.
     if subheader_rows:
         for sh_row in subheader_rows:
             cells = [_format_cell(sh_row[i]) if i < len(sh_row) else "" for i in range(len(headers))]
             lines.append("| " + " | ".join(cells) + " |")
 
+    # Emit each data row, skipping no-data and documentation rows.
     for row in data_rows:
         if _should_skip_data_row(row):
             continue
@@ -351,24 +374,30 @@ _MAX_EMBED_CHARS = int(os.getenv("MAX_EMBED_CHARS", "24000"))  # BGE-M3 supports
 
 
 def _embed(text: str) -> list[float]:
+    """Embed a single text via the batch embedder and return its vector."""
     return _embed_batch([text])[0]
 
 
 def _embed_batch(texts: list[str], batch_size: int = 64) -> list[list[float]]:
+    """Embed many texts in batches against the Ollama embedding endpoint."""
     import httpx
     client = OpenAI(
         base_url=f"{_ollama_base()}/v1",
         api_key="ollama",
         http_client=httpx.Client(timeout=300),
     )
+    # Embed in batches, truncating each text to the model's char budget.
     results: list[list[float]] = []
     for i in range(0, len(texts), batch_size):
         batch = [t[:_MAX_EMBED_CHARS] for t in texts[i : i + batch_size]]
         response = client.embeddings.create(model=_embed_model(), input=batch)
+        # Re-sort by index — the API may return embeddings out of order.
         results.extend([d.embedding for d in sorted(response.data, key=lambda d: d.index)])
     return results
 
 def _qdrant_request(method: str, url: str, body: dict | None = None) -> dict:
+    """Send a JSON request to the Qdrant REST API and return the parsed response."""
+    # Serialise the body and issue the HTTP request.
     data = json.dumps(body).encode() if body else None
     req = Request(url, data=data, method=method, headers={"Content-Type": "application/json"})
     try:
@@ -380,7 +409,9 @@ def _qdrant_request(method: str, url: str, body: dict | None = None) -> dict:
         raise RuntimeError(f"Cannot connect to Qdrant: {e}") from e
 
 def _ensure_collection(collection: str, dim: int) -> None:
+    """Create the Qdrant collection with the given vector dim if it is missing."""
     base = _qdrant_url().rstrip("/")
+    # Probe the collection; create it (dense + sparse vectors) only on a miss.
     try:
         _qdrant_request("GET", f"{base}/collections/{collection}")
     except RuntimeError:
@@ -391,12 +422,14 @@ def _ensure_collection(collection: str, dim: int) -> None:
         print(f"  Created collection '{collection}'")
 
 def _upsert(collection: str, points: list[dict], batch_size: int = 200) -> None:
+    """Upsert points into a Qdrant collection in batches."""
     base = _qdrant_url().rstrip("/")
     for i in range(0, len(points), batch_size):
         _qdrant_request("PUT", f"{base}/collections/{collection}/points?wait=true", {"points": points[i : i + batch_size]})
 
 
 def _point_id(file_name: str, sheet_name: str, key_suffix: Any) -> int:
+    """Derive a stable integer Qdrant point id from file/sheet/suffix via SHA-1."""
     key = f"{file_name}::{sheet_name}::{key_suffix}"
     return int(hashlib.sha1(key.encode()).hexdigest()[:15], 16)
 
@@ -420,9 +453,11 @@ def _build_file_document_summary(
     """
     if not sheet_summaries:
         return
+    # Derive the doc id and concatenate every sheet summary into one document text.
     parts = file_name.split("_")
     doc_id = f"{parts[0]}_{parts[1]}" if len(parts) >= 2 else parts[0]
     combined = f"## Document Summary\n\nDocument ID: {doc_id}\nFile: {file_name}\n\n" + "\n\n".join(sheet_summaries)
+    # Embed the combined text and build the document_summary Qdrant point.
     vec = _embed(combined)
     point_id = _point_id(file_name, "__summary__", "document_summary")
     point = {
@@ -456,13 +491,16 @@ def _load_into_duckdb(file_path: str, file_name: str, verbose: bool) -> dict[str
     """Clean file with LLM and load all sheets into DuckDB. Returns {sheet_name: [columns]}."""
     import duckdb
     from src.preprocessing.excel_cleaner import process_file
-    from src.duckdb_store import _table_name, _normalize_dates, _make_groq_llm_fn
+    from src.duckdb_store import _table_name, _normalize_dates
+    from src.llm_utils import _make_groq_llm_fn
 
+    # Open the persistent DuckDB file and build the Groq LLM callable for cleaning.
     db_path = os.getenv("DUCKDB_PATH", DUCKDB_PATH)
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect(db_path)
     llm_fn = _make_groq_llm_fn()
 
+    # Run LLM-assisted cleaning; abort this file (not the run) if it fails.
     try:
         sheet_results = process_file(file_path, llm_fn)
     except Exception as e:
@@ -470,6 +508,7 @@ def _load_into_duckdb(file_path: str, file_name: str, verbose: bool) -> dict[str
         con.close()
         return {}
 
+    # Load each cleaned sheet into its own DuckDB table (skip if already present).
     sheet_columns: dict[str, list[str]] = {}
     for sheet_name, sr in sheet_results.items():
         tname = _table_name(file_name, sheet_name)
@@ -480,12 +519,14 @@ def _load_into_duckdb(file_path: str, file_name: str, verbose: bool) -> dict[str
             if verbose:
                 print(f"  DuckDB cache hit: {tname}")
         else:
+            # Normalise dates to ISO strings, then create the table from the DataFrame.
             if verbose:
                 print(f"  DuckDB loading: {tname} ({len(sr.df)} rows)")
             normalized = _normalize_dates(sr.df)
             con.register("_tmp_df", normalized)
             con.execute(f'CREATE TABLE "{tname}" AS SELECT * FROM _tmp_df')
             con.unregister("_tmp_df")
+        # Record the final column names for this sheet.
         cols = [row[0] for row in con.execute(f'DESCRIBE "{tname}"').fetchall()]
         sheet_columns[sheet_name] = cols
     con.close()
@@ -504,10 +545,12 @@ def _build_sheet_summary_point(
     Includes the DuckDB table name so the agent can map directly to the right table.
     """
     from src.duckdb_store import _table_name
+    # Resolve the DuckDB table name and doc id for this sheet.
     tname = _table_name(file_name, sheet_name)
     parts = file_name.split("_")
     doc_id = f"{parts[0]}_{parts[1]}" if len(parts) >= 2 else parts[0]
 
+    # Build the discovery text linking the sheet to its DuckDB table and columns.
     content = (
         f"[File: {file_name} | Sheet: {sheet_name}]\n"
         f"DuckDB table: {tname}\n"
@@ -517,6 +560,7 @@ def _build_sheet_summary_point(
     if description:
         content += f"Description: {description}\n"
 
+    # Embed the text, ensure the collection exists, and upsert the point.
     vec = _embed(content)
     point_id = _point_id(file_name, sheet_name, "sheet_summary")
     _ensure_collection(collection, len(vec))
@@ -593,12 +637,14 @@ def ingest_table_rows(
             columns = _qualify_headers(headers, subheader_rows)
             description = ""
 
+        # Pull the merged-title text and the data rows below the header.
         sheet_title = _extract_sheet_title(rows, _find_header_row(rows))
         data_rows = rows[_find_header_row(rows) + 1:]
 
         if verbose:
             print(f"  {sheet_name}: {len(data_rows)} rows, {len(columns)} columns")
 
+        # Build the sheet summary text and record it for the chunks JSON.
         summary_text = sheet_summary_text(file_name, sheet_name, columns, data_rows, sheet_title)
         sheet_summary_texts.append(summary_text)
         all_chunks.append({
@@ -616,6 +662,7 @@ def ingest_table_rows(
             print("    → sheet_summary upserted to Qdrant")
 
         # Save markdown for inspector UI
+        # Re-derive raw headers, units and subheaders to render the full sheet table.
         header_idx = _find_header_row(rows)
         units_idx = _detect_units_row(rows, header_idx)
         raw_headers = [str(h).strip() if h is not None else f"col_{i}" for i, h in enumerate(rows[header_idx])]
@@ -646,6 +693,7 @@ def ingest_table_rows(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    """Parse CLI arguments and ingest one table file."""
     parser = argparse.ArgumentParser(description="Ingest table file: LLM cleaning → DuckDB, metadata → Qdrant.")
     parser.add_argument("file_path", help="Path to .xlsx or .csv file")
     parser.add_argument("--collection", default="documents_chunks")

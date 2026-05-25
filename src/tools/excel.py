@@ -15,6 +15,14 @@ The split fixes two failure modes:
    `decompose` node now produces one subquestion per source document.
 2. Single-doc lookups failed silently when the first SQL returned no rows. The inner
    loop now feeds the empty result back to the model and re-writes SQL up to N times.
+
+Entry point: build_excel_agent_tools(store) returns the `query_excel`
+StructuredTool.
+Called by: the main RAG agent tool registry (src/rag_agent.py / src/tools), which
+exposes `query_excel` to the orchestrating LLM.
+Calls: src.duckdb_store (DuckDBStore for data, _normalize_sql/_truncate_ilike for
+SQL rewriting), src.config (Excel-agent LLM endpoint), src.prompts (DECOMPOSE,
+SQL, FORMAT, RETRY prompts), the OpenAI-compatible chat API, and LangGraph.
 """
 from __future__ import annotations
 
@@ -42,7 +50,7 @@ from src.prompts import (
     SQL_RETRY_HINT,
 )
 
-_MAX_SQL_ATTEMPTS = 2
+_MAX_SQL_ATTEMPTS = 3
 _ROW_LIMIT = 50
 
 _DOC_TABLE_PREFIX_RE = re.compile(r"^doc_\d+_", re.IGNORECASE)
@@ -60,7 +68,7 @@ _TABLE_STOPWORDS = {
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Helpers: LLM calls, table ranking, and SQL execution
 # ---------------------------------------------------------------------------
 
 def _strip_think(text: str) -> str:
@@ -72,6 +80,7 @@ def _llm_chat(messages: list[dict], temperature: float = 0.0, max_tokens: int = 
     """One-shot chat completion against the configured Excel-agent endpoint."""
     if not EXCEL_AGENT_API_KEY:
         raise RuntimeError("EXCEL_AGENT_API_KEY is not configured")
+    # Build the client and run a single completion, stripping reasoning tags.
     client = openai.OpenAI(base_url=EXCEL_AGENT_API_BASE, api_key=EXCEL_AGENT_API_KEY)
     resp = client.chat.completions.create(
         model=EXCEL_AGENT_MODEL,
@@ -106,10 +115,12 @@ def _rank_tables(tables: dict[str, list[str]], question: str) -> list[str]:
 
     def score(tname: str) -> tuple[int, int, str]:
         """Score a table by how many query tokens overlap its column names."""
+        # Count question-token overlap with the table's column names.
         col_tokens: set[str] = set()
         for col in tables.get(tname, []):
             col_tokens.update(re.findall(r"[a-z][a-z0-9]{2,}", col.lower()))
         col_score = len(q_tokens & col_tokens)
+        # Tie-break on overlap with the table name itself.
         name_tokens = set(re.findall(r"[a-z][a-z0-9]{2,}", tname.lower()))
         name_score = len(q_tokens & name_tokens)
         return (-col_score, -name_score, tname)
@@ -120,6 +131,63 @@ def _rank_tables(tables: dict[str, list[str]], question: str) -> list[str]:
 def _format_samples(samples: list[dict]) -> str:
     """Render sample rows as one JSON object per line."""
     return "\n".join(json.dumps(row, ensure_ascii=False, default=str) for row in samples)
+
+
+def _split_where_predicates(sql: str) -> tuple[str, list[str], str] | None:
+    """Split a flat WHERE clause into its top-level AND predicates (quote-aware).
+
+    Returns (text_up_to_and_including_WHERE, [predicate, ...], trailing_clause) or
+    None when there is no WHERE clause or fewer than two predicates. The ` AND `
+    split respects single-quoted literals, so a value containing " AND " is intact.
+    """
+    m = re.search(r"\bWHERE\b", sql, re.IGNORECASE)
+    if not m:
+        return None
+    head, rest = sql[: m.end()], sql[m.end():]
+    # The WHERE body ends at the first GROUP BY / ORDER BY / LIMIT / HAVING, if any.
+    tail_m = re.search(r"\b(GROUP\s+BY|ORDER\s+BY|LIMIT|HAVING)\b", rest, re.IGNORECASE)
+    where_body, tail = (rest[: tail_m.start()], rest[tail_m.start():]) if tail_m else (rest, "")
+
+    # Walk the body splitting on top-level ` AND `, ignoring quoted string contents.
+    preds, buf, i, in_str = [], "", 0, False
+    while i < len(where_body):
+        ch = where_body[i]
+        if ch == "'":
+            in_str = not in_str
+        if not in_str and where_body[i : i + 5].upper() == " AND ":
+            preds.append(buf.strip())
+            buf, i = "", i + 5
+            continue
+        buf += ch
+        i += 1
+    if buf.strip():
+        preds.append(buf.strip())
+    return (head + " ", preds, tail) if len(preds) >= 2 else None
+
+
+def _relax_by_dropping_predicate(store: DuckDBStore, sql: str) -> Any:
+    """Retry an over-constrained 0-row query by dropping one AND-predicate at a time.
+
+    A query returns nothing when one filter value is assigned to the wrong column
+    or is otherwise too strict. Dropping each predicate in turn and keeping the
+    most-specific variant that still returns rows recovers the row without knowing
+    anything about the schema. Returns the chosen DataFrame, or None if none helps.
+    """
+    parts = _split_where_predicates(sql)
+    if not parts:
+        return None
+    head, preds, tail = parts
+    best = None
+    for drop in range(len(preds)):
+        variant = head + " AND ".join(p for j, p in enumerate(preds) if j != drop) + tail
+        try:
+            vdf = store.execute(variant)
+        except Exception:
+            continue
+        # Prefer the variant returning the fewest (non-zero) rows — the most specific.
+        if not vdf.empty and (best is None or len(vdf) < len(best)):
+            best = vdf
+    return best
 
 
 def _execute_sql(store: DuckDBStore, sql: str) -> tuple[bool, str, str | None]:
@@ -134,12 +202,14 @@ def _execute_sql(store: DuckDBStore, sql: str) -> tuple[bool, str, str | None]:
     Auto-retries 0-row ILIKE queries with progressively-truncated string filters
     to handle truncated supplier/beneficiary names common in the source data.
     """
+    # Rewrite date literals, then run the SQL.
     sql = _normalize_sql(sql)
     try:
         df = store.execute(sql)
     except Exception as exc:
         return False, f"SQL error: {exc}", None
 
+    # On 0 rows, retry with progressively-truncated ILIKE values.
     if df.empty:
         for trim in (1, 2, 3):
             relaxed = _truncate_ilike(sql, trim)
@@ -153,6 +223,13 @@ def _execute_sql(store: DuckDBStore, sql: str) -> tuple[bool, str, str | None]:
                 sql = relaxed
                 break
 
+    # Still empty: the query is likely over-constrained (a value filtered on the
+    # wrong column). Drop one predicate at a time and keep the most-specific match.
+    if df.empty:
+        relaxed_df = _relax_by_dropping_predicate(store, sql)
+        if relaxed_df is not None:
+            df = relaxed_df
+
     if df.empty:
         return True, "Query returned 0 rows.", None
     # Aggregate queries (SUM/COUNT/etc.) on a missing key collapse to all-NaN —
@@ -161,12 +238,14 @@ def _execute_sql(store: DuckDBStore, sql: str) -> tuple[bool, str, str | None]:
     if df.shape == (1, 1) and df.iloc[0, 0] != df.iloc[0, 0]:  # NaN check
         return True, "Query returned 0 rows.", None
 
+    # Capture the lone cell value for single-column results (deterministic fallback).
     single_col_first = None
     if df.shape[1] == 1:
         first = df.iloc[0, 0]
         if first is not None and first == first:  # not NaN
             single_col_first = str(first)
 
+    # Render the result table, capping the number of rows shown.
     truncated = len(df) > _ROW_LIMIT
     out = df.head(_ROW_LIMIT).to_string(index=False, max_colwidth=80)
     if truncated:
@@ -181,6 +260,7 @@ def _execute_sql(store: DuckDBStore, sql: str) -> tuple[bool, str, str | None]:
 def _decompose(question: str) -> list[str]:
     """Return [question] if single-target, else 2+ focused subquestions."""
     try:
+        # Ask the LLM for a JSON list of subquestions, stripping any code fences.
         raw = _llm_chat(
             messages=[
                 {"role": "system", "content": DECOMPOSE_PROMPT},
@@ -189,11 +269,13 @@ def _decompose(question: str) -> list[str]:
             max_tokens=300,
         )
         raw = re.sub(r"^```[a-z]*\n?|```$", "", raw, flags=re.MULTILINE).strip()
+        # Parse and accept only a non-empty list of strings.
         parts = json.loads(raw)
         if isinstance(parts, list) and parts and all(isinstance(p, str) for p in parts):
             return [p.strip() for p in parts if p.strip()]
     except Exception:
         pass
+    # Any failure falls back to treating the question as a single target.
     return [question]
 
 
@@ -242,13 +324,14 @@ def _build_inner_graph(store: DuckDBStore) -> Any:
         tname = state["selected_table"]
         try:
             schema = store.describe(tname)
-            samples = store.sample(tname, n=3)
+            samples = store.sample(tname, n=8)
         except Exception:
             return {"schema": [], "samples": []}
         return {"schema": schema, "samples": samples}
 
     def write_sql(state: _SQLState) -> dict:
         """Prompt the LLM to write the next SQL query from schema, samples and history."""
+        # Summarise the last few SQL attempts and their results for the retry hint.
         history_text = ""
         if state.get("sql_history"):
             blocks = []
@@ -257,6 +340,7 @@ def _build_inner_graph(store: DuckDBStore) -> Any:
                 blocks.append(f"SQL:\n```sql\n{prev_sql}\n```\nResult:\n{snippet}")
             history_text = "\n---\n".join(blocks)
 
+        # Build the SQL-writing prompt from the table schema and sample rows.
         schema_text = "\n".join(f'  "{c}" ({t})' for c, t in state["schema"])
         samples_text = _format_samples(state["samples"]) or "(no rows in sample)"
         prompt = SQL_PROMPT_HEADER.format(
@@ -267,6 +351,7 @@ def _build_inner_graph(store: DuckDBStore) -> Any:
         if history_text:
             prompt += SQL_RETRY_HINT.format(history=history_text)
 
+        # Call the LLM; on failure record the error as a history entry.
         try:
             raw = _llm_chat(
                 messages=[
@@ -283,6 +368,7 @@ def _build_inner_graph(store: DuckDBStore) -> Any:
                 "attempts": state.get("attempts", 0) + 1,
             }
 
+        # Extract the SQL from the model output and append it pending execution.
         sql = _extract_sql(raw) or ""
         return {
             "sql_history": state.get("sql_history", []) + [(sql, "")],
@@ -308,6 +394,7 @@ def _build_inner_graph(store: DuckDBStore) -> Any:
 
     def evaluate(state: _SQLState) -> dict:
         """Judge the last SQL result and decide retry, next table, or final answer."""
+        # Classify the most recent result as empty, errored, or usable.
         history = state.get("sql_history") or []
         last_result = history[-1][1] if history else ""
         last_sql = history[-1][0] if history else ""
@@ -319,6 +406,7 @@ def _build_inner_graph(store: DuckDBStore) -> Any:
             or last_result.startswith("No SQL extracted")
         )
 
+        # Usable result: ask the LLM to format it into a natural-language answer.
         if not is_empty and not is_error and last_result.strip():
             try:
                 answer = _llm_chat(
@@ -340,10 +428,11 @@ def _build_inner_graph(store: DuckDBStore) -> Any:
             return {"answer": answer or "Unsupported", "final_sql": last_sql}
 
         # Routing rules:
-        #  - SQL/column error on this table: retry SAME table once (let the model fix the column).
-        #  - 0 rows: this table doesn't hold the answer — move to the next candidate table.
+        #  - SQL/column error OR 0 rows on this table: retry the SAME table (let the
+        #    model fix the column or relax a too-strict filter) until attempts run out.
+        #  - Out of attempts: move to the next candidate table.
         #  - Out of attempts and out of tables: Unsupported.
-        if is_error and state.get("attempts", 0) < _MAX_SQL_ATTEMPTS:
+        if (is_error or is_empty) and state.get("attempts", 0) < _MAX_SQL_ATTEMPTS:
             return {}
 
         next_idx = state.get("table_index", 0) + 1
@@ -372,6 +461,7 @@ def _build_inner_graph(store: DuckDBStore) -> Any:
             return "select_table"
         return END
 
+    # Wire the inner graph: select_table → inspect → write_sql → run_sql → evaluate.
     builder: StateGraph = StateGraph(_SQLState)
     builder.add_node("select_table", select_table)
     builder.add_node("inspect", inspect)
@@ -411,6 +501,7 @@ class _OuterState(TypedDict):
 def _candidate_tables_for(store: DuckDBStore, question: str) -> list[str]:
     """Return ranked candidate tables for a subquestion (doc-prefixed only)."""
     tables = _doc_tables(store)
+    # If the question names explicit doc ids, restrict candidates to those docs.
     explicit = re.findall(r"\bdoc_\d+\b", question.lower())
     if explicit:
         scoped = {t: c for t, c in tables.items() if any(d in t.lower() for d in explicit)}
@@ -453,10 +544,12 @@ def _build_outer_graph(store: DuckDBStore) -> Any:
 
     def sql_agent_node(state: _SQLState) -> dict:
         """Run the inner SQL graph for one sub-question; abstain on error."""
+        # Invoke the compiled inner graph; any failure abstains with "Unsupported".
         try:
             result = inner.invoke(state, config={"recursion_limit": 60})
         except Exception:
             return {"answers": ["Unsupported"], "sql_trace": []}
+        # Collect the answer and the generated SQL for the UI trace.
         sql = (result.get("final_sql") or "").strip()
         return {
             "answers": [result.get("answer") or "Unsupported"],
@@ -465,6 +558,7 @@ def _build_outer_graph(store: DuckDBStore) -> Any:
 
     def synthesize_node(state: _OuterState) -> dict:
         """Merge the per-sub-question answers into one final answer."""
+        # Trivial cases: no answers, a single answer, or all-unsupported.
         answers = state.get("answers") or []
         subqs = state.get("subquestions") or []
         if not answers:
@@ -482,6 +576,7 @@ def _build_outer_graph(store: DuckDBStore) -> Any:
         )
         return {"final_answer": joined}
 
+    # Wire the outer graph: decompose → fan-out to sql_agent branches → synthesize.
     builder: StateGraph = StateGraph(_OuterState)
     builder.add_node("decompose", decompose_node)
     builder.add_node("sql_agent", sql_agent_node)
@@ -494,7 +589,7 @@ def _build_outer_graph(store: DuckDBStore) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Public tool factory
+# Public tool factory: wrap the graph as a LangChain query_excel tool
 # ---------------------------------------------------------------------------
 
 def build_excel_agent_tools(store: DuckDBStore) -> list[StructuredTool]:
@@ -503,6 +598,7 @@ def build_excel_agent_tools(store: DuckDBStore) -> list[StructuredTool]:
     Args:
         store: Connected DuckDBStore instance.
     """
+    # No API key: return a stub tool that always reports the agent is disabled.
     if not EXCEL_AGENT_API_KEY:
         def _disabled(question: str) -> str:
             """Excel agent is disabled because EXCEL_AGENT_API_KEY is not configured."""
@@ -518,6 +614,7 @@ def build_excel_agent_tools(store: DuckDBStore) -> list[StructuredTool]:
             args_schema=_Input,
         )]
 
+    # Compile the decompose → fan-out → synthesize graph once at tool-build time.
     graph = _build_outer_graph(store)
 
     class _Input(BaseModel):
@@ -530,6 +627,7 @@ def build_excel_agent_tools(store: DuckDBStore) -> list[StructuredTool]:
         subquestions for the UI trace panel; it rides on the ToolMessage and is
         not shown to the LLM, so the tool's content stays clean.
         """
+        # Run the full graph from a fresh empty state.
         try:
             result = graph.invoke({
                 "question": question,
@@ -541,6 +639,7 @@ def build_excel_agent_tools(store: DuckDBStore) -> list[StructuredTool]:
             })
         except Exception as exc:
             return f"Excel agent error: {exc}", {}
+        # Package the generated SQL and subquestions as the UI-only artifact.
         artifact = {
             "sql": list(result.get("sql_trace") or []),
             "subquestions": list(result.get("subquestions") or []),

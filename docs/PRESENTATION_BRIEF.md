@@ -217,8 +217,12 @@ Present these two diagrams *before* the detail slides so the audience has the ma
   blobs, missing last column). These are repaired *structurally* — no LLM — to avoid
   hallucinated table data.
 - **Contextual chunking.** Each chunk is enriched with a one-line LLM-written context
-  ("this is about Company X's 2023 results") and embedded as *context + content*, so a
-  chunk stays findable even when it lacks self-contained context.
+  and embedded as *context + content*, so a chunk stays findable even when it lacks
+  self-contained context ("the payment term in the Services Contract"). The background
+  the enrichment LLM sees adapts to document size — the whole document when it is small
+  enough (Anthropic Contextual Retrieval), or the document summary plus a window of
+  neighbouring chunks when it is too large to send whole — so the per-chunk cost stays
+  bounded even on a 150-page report.
 - **Dual embedding.** Every chunk is stored with a dense vector (meaning) and a sparse
   vector (exact keywords) — this is what makes hybrid search possible later.
 - **Idempotent ingestion.** Each vector gets a deterministic ID derived from

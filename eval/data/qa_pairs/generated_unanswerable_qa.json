@@ -1,0 +1,158 @@
+[
+ {
+  "question": "What is the home address of the authorizing manager named in the procurement policy?",
+  "gold_answer": "Unsupported",
+  "answer_type": "unanswerable",
+  "question_type": "unanswerable",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_001"
+  ],
+  "gold_evidence": [],
+  "qa_id": "genu_1"
+ },
+ {
+  "question": "What is the personal mobile phone number of the authorizing manager in the procurement policy?",
+  "gold_answer": "Unsupported",
+  "answer_type": "unanswerable",
+  "question_type": "unanswerable",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_001"
+  ],
+  "gold_evidence": [],
+  "qa_id": "genu_2"
+ },
+ {
+  "question": "What is the email address of the supplier Cash Converters in the purchase card transactions?",
+  "gold_answer": "Unsupported",
+  "answer_type": "unanswerable",
+  "question_type": "unanswerable",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_006"
+  ],
+  "gold_evidence": [],
+  "qa_id": "genu_3"
+ },
+ {
+  "question": "What is the phone number of the supplier Screwfix Direct in the purchase card transactions?",
+  "gold_answer": "Unsupported",
+  "answer_type": "unanswerable",
+  "question_type": "unanswerable",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_006"
+  ],
+  "gold_evidence": [],
+  "qa_id": "genu_4"
+ },
+ {
+  "question": "What is the bank sort code for transaction 6110140 in the published spend report?",
+  "gold_answer": "Unsupported",
+  "answer_type": "unanswerable",
+  "question_type": "unanswerable",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [],
+  "qa_id": "genu_5"
+ },
+ {
+  "question": "What is the date of birth of the beneficiary for transaction 6110140 in the published spend report?",
+  "gold_answer": "Unsupported",
+  "answer_type": "unanswerable",
+  "question_type": "unanswerable",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [],
+  "qa_id": "genu_6"
+ },
+ {
+  "question": "What is the National Insurance number of any beneficiary in the published spend report?",
+  "gold_answer": "Unsupported",
+  "answer_type": "unanswerable",
+  "question_type": "unanswerable",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [],
+  "qa_id": "genu_7"
+ },
+ {
+  "question": "What is the email address of any supplier in the Bristol supplier spend?",
+  "gold_answer": "Unsupported",
+  "answer_type": "unanswerable",
+  "question_type": "unanswerable",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [],
+  "qa_id": "genu_8"
+ },
+ {
+  "question": "What is the driver's name recorded in the NTSB fueling records invoice?",
+  "gold_answer": "Unsupported",
+  "answer_type": "unanswerable",
+  "question_type": "unanswerable",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_005"
+  ],
+  "gold_evidence": [],
+  "qa_id": "genu_9"
+ },
+ {
+  "question": "What is the home address of the Federal Reserve chair in the annual report?",
+  "gold_answer": "Unsupported",
+  "answer_type": "unanswerable",
+  "question_type": "unanswerable",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_003"
+  ],
+  "gold_evidence": [],
+  "qa_id": "genu_10"
+ },
+ {
+  "question": "What is the personal email of any employee in the Rosemont employee handbook?",
+  "gold_answer": "Unsupported",
+  "answer_type": "unanswerable",
+  "question_type": "unanswerable",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_010"
+  ],
+  "gold_evidence": [],
+  "qa_id": "genu_11"
+ },
+ {
+  "question": "What is the credit card number used for the Google Ads transaction in the purchase card report?",
+  "gold_answer": "Unsupported",
+  "answer_type": "unanswerable",
+  "question_type": "unanswerable",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_006"
+  ],
+  "gold_evidence": [],
+  "qa_id": "genu_12"
+ }
+]

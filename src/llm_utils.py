@@ -3,8 +3,31 @@ from __future__ import annotations
 
 import os
 import re
+from typing import Callable
 
-from src.config import LITELLM_MASTER_KEY
+from src.config import GROQ_API_KEY, LITELLM_MASTER_KEY
+
+
+def _make_groq_llm_fn() -> Callable[[str], str]:
+    """Return a Groq LLM callable for excel_cleaner.process_file."""
+    import openai
+
+    # Build the Groq OpenAI-compatible client once and close over it.
+    client = openai.OpenAI(
+        base_url="https://api.groq.com/openai/v1",
+        api_key=GROQ_API_KEY,
+    )
+
+    def _call(prompt: str) -> str:
+        """Send one prompt to the Groq model and return the text completion."""
+        resp = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.0,
+        )
+        return resp.choices[0].message.content
+
+    return _call
 
 
 def _is_thinking_model(model_name: str) -> bool:

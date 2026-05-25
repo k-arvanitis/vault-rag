@@ -508,11 +508,15 @@ def evaluate_answer(question: dict[str, Any], answer: str, retrieved_contexts: l
     # Short-circuit for exact match — avoids DeepEval non-determinism on trivial cases
     # (e.g. normalized_answer == gold_answer == "Unsupported" scoring 0.0).
     is_unanswerable = question.get("question_type") == "unanswerable"
+    # Faithfulness (groundedness in retrieved TEXT) is undefined for text-to-SQL
+    # Excel answers — there is no retrieved context, the value comes from DuckDB.
+    # Score them None (excluded from the average), same as unanswerable questions.
+    no_faithfulness = is_unanswerable or _is_excel_question(question)
 
     if normalized_answer.strip().lower() == gold_answer.strip().lower():
         return {
             "correctness": 1.0,
-            "faithfulness": None if is_unanswerable else 1.0,
+            "faithfulness": None if no_faithfulness else 1.0,
             "answer_relevancy": 1.0,
             "judge_used": "exact_match_shortcircuit",
             "clean_answer": normalized_answer,
@@ -521,7 +525,7 @@ def evaluate_answer(question: dict[str, Any], answer: str, retrieved_contexts: l
     if os.getenv("EVAL_JUDGE_MODE", "custom").lower() != "deepeval":
         try:
             judged = _custom_judge_answer(question, normalized_answer, gold_answer, retrieved_contexts)
-            if is_unanswerable:
+            if no_faithfulness:
                 judged["faithfulness"] = None
             judged["clean_answer"] = normalized_answer
             return judged
@@ -681,7 +685,7 @@ def run(
         retrieved_contexts: list[str] = []
         if is_multihop:
             try:
-                answer = ask_with_decomposition(decomposition_pipeline, query)
+                answer = ask_with_decomposition(decomposition_pipeline, query, collected_chunks=retrieved_contexts)
             except Exception as exc:
                 print(f"  [WARN] decomposition pipeline failed: {exc}")
                 answer = "Unsupported"

@@ -21,7 +21,7 @@ flowchart TD
     FIG -->|No| CH
     VLM --> CH
     OCR --> CH
-    CH["Chunker<br/>page split → section split →<br/>re-split large → merge small →<br/>contextual enrichment →<br/>+ document summary"]
+    CH["Chunker<br/>page split → section split →<br/>re-split large → merge small →<br/>doc summary → contextual enrichment<br/>(doc-aware) → + summary chunk"]
 
     %% ---- Excel / CSV branch ----
     R -->|Excel / CSV| SCH["LLM schema extraction<br/>column names, data-start row,<br/>footnote rows"]

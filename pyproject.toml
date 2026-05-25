@@ -26,6 +26,7 @@ dependencies = [
   # Local reranker
   "transformers>=4.40.0",
   "torch>=2.2.0",
+  "torchvision>=0.26.0",
   "accelerate>=0.30.0",
   # Observability
   "langfuse>=2.0.0,<3.0.0",
@@ -65,3 +66,4 @@ explicit = true
 
 [tool.uv.sources]
 torch = { index = "pytorch-cu126" }
+torchvision = { index = "pytorch-cu126" }

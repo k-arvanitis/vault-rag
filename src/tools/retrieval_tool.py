@@ -1,7 +1,20 @@
 """Document-search tool (search_knowledge_base) for the RAG agent.
 
 Extracted from rag_agent.py: the unified retrieval tool plus its exclusive
-helpers (HyDE, snippet selection, table formatting, neighbour expansion)."""
+helpers (HyDE, snippet selection, table formatting, neighbour expansion).
+
+_make_unified_tool builds the LangChain StructuredTool the agent invokes. Per
+call it: resolves scope (which doc(s) to search, filter token, stage-1 boosts),
+runs first-stage retrieval, reranks, expands neighbour chunks and formats the
+numbered result block the LLM consumes.
+
+Called by: src/rag_agent.py (build_agent calls _make_unified_tool to register
+search_knowledge_base; ask_agent mutates the returned _limits dict on retry).
+Calls into: src/retriever.py (retrieve, infer_query_chunk_types,
+_extract_table_filter_token), src/reranker.py (QwenReranker), src/file_resolver.py
+(resolve_original_name), src/llm_utils.py (LLM helpers for HyDE) and Qdrant's
+scroll API directly for neighbour-chunk fetching.
+"""
 from __future__ import annotations
 
 import json
@@ -25,6 +38,10 @@ from src.config import DOC_MIN_SCORE, MAX_CHUNK_CHARS, MAX_TABLE_CHARS, MAX_TOOL
 from src.llm_utils import _is_thinking_model, _llm_call, _to_openai_base
 
 
+# ---------------------------------------------------------------------------
+# Scope plan — the routing decision passed from _resolve_scope to _fetch_docs
+# ---------------------------------------------------------------------------
+
 @dataclass
 class _ScopePlan:
     """Routing decision from _resolve_scope: where to search and how."""
@@ -40,10 +57,16 @@ class _ScopePlan:
     stem_match_doc_ids: set[str]
 
 
+# ---------------------------------------------------------------------------
+# HyDE — generate a hypothetical answer to embed instead of the raw query
+# ---------------------------------------------------------------------------
+
 @traceable(name="hyde-expansion")
 def _hyde(query: str, api_base: str, model_name: str) -> str:
     """Generate a hypothetical answer to embed instead of the raw query (HyDE)."""
+    # Suppress chain-of-thought for thinking models so only the passage returns.
     no_think = "/no_think " if _is_thinking_model(model_name) else ""
+    # Ask the LLM for a short passage that would answer the question.
     return _llm_call(
         f"{no_think}Write a short passage (2-3 sentences) that would directly answer "
         f"this question. Use the same language and terminology as the likely source document."
@@ -52,8 +75,13 @@ def _hyde(query: str, api_base: str, model_name: str) -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# Snippet selection — keep the most query-relevant window of a long chunk
+# ---------------------------------------------------------------------------
+
 def _query_terms(query: str) -> list[str]:
     """Extract useful lexical anchors for snippet selection."""
+    # Strip stop-words and keep distinct content tokens of length >= 3.
     stop_words = {
         "about", "according", "after", "also", "and", "are", "before", "between", "does",
         "document", "during", "from", "have", "into", "issued", "must", "that", "the",
@@ -70,13 +98,16 @@ def _query_terms(query: str) -> list[str]:
 
 def _best_snippet(content: str, query: str, max_chars: int) -> str:
     """Keep the most query-relevant window from a long text chunk."""
+    # Short chunks fit whole — return unchanged.
     if len(content) <= max_chars:
         return content
+    # Find every position where a query term occurs in the chunk.
     terms = _query_terms(query)
     lower = content.lower()
     positions: list[int] = []
     for term in terms:
         positions.extend(match.start() for match in re.finditer(re.escape(term), lower))
+    # No term matched anywhere — just take the head of the chunk.
     if not positions:
         return content[:max_chars] + "…"
 
@@ -89,12 +120,14 @@ def _best_snippet(content: str, query: str, max_chars: int) -> str:
     best_position = 0
     best_score = -1
     best_distance = len(content)
+    # Score a max_chars window centred on each term occurrence.
     for position in positions:
         start = max(0, position - max_chars // 2)
         end = min(len(content), start + max_chars)
         start = max(0, end - max_chars)
         window = lower[start:end]
         score = 0
+        # Reward windows that contain (and repeat) more weighted query terms.
         for term, weight in weighted_terms.items():
             occurrences = len(re.findall(re.escape(term), window))
             if occurrences:
@@ -110,6 +143,7 @@ def _best_snippet(content: str, query: str, max_chars: int) -> str:
                 score += 8
             if re.search(r"\d.{0,40}\b(months?|years?|percent|transactions?|districts?|areas?|recommendations?)\b", window):
                 score += 8
+        # Keep the highest-scoring window; tie-break toward better-centred ones.
         distance = abs(position - (start + max_chars // 2))
         if score > best_score or (score == best_score and distance < best_distance):
             best_start = start
@@ -117,6 +151,7 @@ def _best_snippet(content: str, query: str, max_chars: int) -> str:
             best_score = score
             best_distance = distance
 
+    # Re-derive the final window bounds from the winning start offset.
     start = best_start
     end = min(len(content), start + max_chars)
     start = max(0, end - max_chars)
@@ -126,11 +161,15 @@ def _best_snippet(content: str, query: str, max_chars: int) -> str:
         line_start = content.find("\n", start)
         if 0 <= line_start < min(end, start + 300) and line_start < best_position:
             start = line_start + 1
+    # Add ellipsis markers when the window is not at the start/end of the chunk.
     prefix = "…\n" if start else ""
     suffix = "\n…" if end < len(content) else ""
     return prefix + content[start:end].strip() + suffix
 
 
+# ---------------------------------------------------------------------------
+# Table formatting — render retrieved table text as explicit key/value rows
+# ---------------------------------------------------------------------------
 
 def _split_markdown_row(line: str) -> list[str]:
     """Split a simple markdown table row into cells."""
@@ -169,6 +208,7 @@ def _table_match_terms(query: str) -> list[str]:
 
 def _format_key_value_rows(headers: list[str], rows: list[list[str]], query: str, max_rows: int = 4) -> str:
     """Render table rows as explicit field/value lines for reliable cell extraction."""
+    # Score each row by how many query terms its cells contain.
     terms = _table_match_terms(query)
     scored: list[tuple[int, int, list[str]]] = []
     for idx, row in enumerate(rows):
@@ -176,11 +216,13 @@ def _format_key_value_rows(headers: list[str], rows: list[list[str]], query: str
         score = sum(1 for term in terms if term in row_text)
         scored.append((score, -idx, row))
 
+    # Keep the best-matching rows; fall back to the first rows if none matched.
     scored.sort(reverse=True)
     selected = [row for score, _, row in scored if score > 0][:max_rows]
     if not selected:
         selected = rows[:max_rows]
 
+    # Emit each selected row as "Row N:" followed by header: value lines.
     blocks = ["Relevant table rows:"]
     for row_idx, row in enumerate(selected, start=1):
         blocks.append(f"Row {row_idx}:")
@@ -197,6 +239,8 @@ def _table_context_as_key_values(content: str, query: str) -> str | None:
     """Convert retrieved markdown or pipe-delimited table text to key/value rows."""
     lines = [line for line in content.splitlines() if line.strip()]
 
+    # Case 1: a real markdown table — parse rows, drop the separator line and
+    # any short/ragged rows, then render header + matching data rows.
     table_lines = [line for line in lines if line.strip().startswith("|")]
     if table_lines:
         parsed = [_split_markdown_row(line) for line in table_lines]
@@ -211,6 +255,7 @@ def _table_context_as_key_values(content: str, query: str) -> str | None:
             if rows:
                 return _format_key_value_rows(headers, rows, query)
 
+    # Case 2: a single "label: value | label: value" line — split it into rows.
     pipe_pair_lines = [
         line for line in lines
         if ": " in line and " | " in line and not line.lstrip().startswith("[")
@@ -229,10 +274,15 @@ def _table_context_as_key_values(content: str, query: str) -> str | None:
 
 
 
+# ---------------------------------------------------------------------------
+# Hit merging & neighbour-chunk expansion
+# ---------------------------------------------------------------------------
+
 def _merge_hits(primary: list[dict[str, Any]], secondary: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Merge retrieval hits while preserving order and removing duplicate chunks."""
     merged: list[dict[str, Any]] = []
     seen: set[tuple[Any, ...]] = set()
+    # Walk primary then secondary; a composite identity key dedupes chunks.
     for hit in primary + secondary:
         meta = hit.get("metadata", {}) or {}
         key = (
@@ -264,8 +314,10 @@ def _fetch_neighbor_chunks(
     boundary misses where the answer ends up split across consecutive chunks
     (e.g. section header in chunk N, table of values in chunk N+1).
     """
+    # Nothing to fetch without both a file and at least one index.
     if not indices or not source_file:
         return {}
+    # Scroll-filter Qdrant for the requested chunk indices within one file.
     from urllib.request import Request, urlopen
     base = qdrant_url.rstrip("/")
     url = f"{base}/collections/{collection}/points/scroll"
@@ -280,12 +332,14 @@ def _fetch_neighbor_chunks(
             ]
         },
     }).encode("utf-8")
+    # Any failure is non-fatal — neighbour expansion is best-effort.
     req = Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
     try:
         with urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except Exception:
         return {}
+    # Map each returned point's chunk_index to its content text.
     out: dict[int, str] = {}
     for point in data.get("result", {}).get("points", []) or []:
         payload = point.get("payload") or {}
@@ -296,6 +350,10 @@ def _fetch_neighbor_chunks(
     return out
 
 
+
+# ---------------------------------------------------------------------------
+# Tool factory — assembles the search_knowledge_base StructuredTool
+# ---------------------------------------------------------------------------
 
 def _make_unified_tool(
     qdrant_url: str,
@@ -332,6 +390,7 @@ def _make_unified_tool(
     def _resolve_scope(query: str, doc_id: str) -> _ScopePlan:
         """Resolve retrieval scope, parallel fan-out, filter token and the
         stage-1 doc-routing boosts from the query."""
+        # Accept the passed doc_id only if it matches the doc_XXX id pattern.
         doc_id = (doc_id or "").strip()
         valid_doc_scope = doc_id if _DOC_ID_RE.fullmatch(doc_id) else ""
 
@@ -343,6 +402,8 @@ def _make_unified_tool(
                     valid_doc_scope = mapped_id
                     break
 
+        # If a non-id doc title was passed, fold it into the search text so the
+        # embedding picks up the title; a valid id is handled via scope instead.
         search_query = query if not doc_id or valid_doc_scope else f"{query} {doc_id}"
 
         # Routing and filter token are derived from the original question, not HyDE,
@@ -450,6 +511,7 @@ def _make_unified_tool(
                 second_score = sorted_pairs[1][1] if len(sorted_pairs) > 1 else 0
                 if top_score >= 3 and (top_score - second_score) >= 2:
                     effective_scope = top_id
+        # Bundle every routing decision into the immutable plan _fetch_docs reads.
         return _ScopePlan(
             search_query=search_query,
             retrieval_query=retrieval_query,
@@ -502,6 +564,7 @@ def _make_unified_tool(
             if needed:
                 neighbors_by_file[src] = _fetch_neighbor_chunks(qdrant_url, collection, src, needed)
 
+        # Render each surviving hit into one numbered [N] block.
         parts: list[str] = []
         for i, h in enumerate(top_hits, start=1):
             meta = h.get("metadata", {}) or {}
@@ -510,6 +573,7 @@ def _make_unified_tool(
             # Reranker returns raw logits (can be negative) — top_n already limits relevance.
             if not filter_token and not reranked_used and score < DOC_MIN_SCORE:
                 continue
+            # Resolve display name, location label and chunk-type flags.
             file_name = meta.get("file_name") or meta.get("source_file", "unknown")
             file_name = resolve_original_name(file_name)
             chunk_type = meta.get("chunk_type", "")
@@ -519,6 +583,8 @@ def _make_unified_tool(
             is_pdf_table = "[TABLE_START]" in content
             is_sheet_table = chunk_type == "sheet_table"
             is_sheet_row = chunk_type == "sheet_row"
+            # Trim content per type: matching table rows only, table truncation,
+            # or query-focused snippet for long prose chunks.
             # When filter_token matched an ID, extract only header + matching rows
             if filter_token and is_sheet_table:
                 lines = content.splitlines()
@@ -534,6 +600,8 @@ def _make_unified_tool(
                 content = content[:max_table_chars] + "\n… (truncated)"
             elif not is_pdf_table and not is_sheet_table and not is_sheet_row and len(content) > max_chunk_chars:
                 content = _best_snippet(content, retrieval_query, max_chunk_chars)
+            # For sheet tables/rows, prepend an explicit key/value rendering so
+            # the LLM can read cell values reliably.
             if is_sheet_table or is_sheet_row:
                 table_context = _table_context_as_key_values(content, search_query)
                 if table_context:
@@ -562,8 +630,10 @@ def _make_unified_tool(
 
             parts.append(f"[{i}] file={file_name} {location} score={score:.4f}\n{content}")
 
+        # Nothing survived the score/format filters.
         if not parts:
             return None
+        # Append a usage instruction and join all blocks into one string.
         parts.append(
             "Instruction: Use the retrieved results above to answer the user's question. "
             "Do not repeat the same search unless a different missing fact is required."
@@ -573,11 +643,13 @@ def _make_unified_tool(
     @traceable(name="fetch-docs", metadata={"top_k": retrieval_top_k, "rerank_top_n": rerank_top_n})
     def _fetch_docs(query: str, doc_id: str = "") -> str | None:
         """Retrieve, rerank and format knowledge-base chunks for one query; return the formatted block, or None when nothing relevant is found."""
+        # Read the current (mutable) size limits and the LLM endpoint.
         max_table_chars = _limits["max_table_chars"]
         max_chunk_chars = _limits["max_chunk_chars"]
         _rerank_top_n = _limits["rerank_top_n"]
         api_base = _to_openai_base(generation_api_base)
 
+        # Resolve routing (scope, filter token, stage-1 boosts) and unpack it.
         scope = _resolve_scope(query, doc_id)
         search_query = scope.search_query
         retrieval_query = scope.retrieval_query
@@ -660,6 +732,8 @@ def _make_unified_tool(
                 scope_doc_id=effective_scope,
             )
 
+        # HyDE: embed a hypothetical answer as a second query and retrieve with
+        # it too — catches answer-phrased chunks the literal question misses.
         hyde_hits: list[dict[str, Any]] = []
         if use_hyde:
             try:
@@ -679,6 +753,7 @@ def _make_unified_tool(
             except Exception:
                 hyde_hits = []
 
+        # Combine literal and HyDE hits, dedupe and cap the candidate pool.
         hits = _merge_hits(raw_hits, hyde_hits)[: max(retrieval_top_k, _rerank_top_n)]
 
         # Inject chunks from stage1-boosted docs that the dense+sparse search missed.
@@ -697,6 +772,7 @@ def _make_unified_tool(
                 m = _DOC_ID_RE.search(src)
                 return m.group(0) if m else ""
 
+            # Force-fetch a few chunks for each boosted doc absent from the pool.
             present_doc_ids = {_hit_doc_id(h) for h in hits}
             missing_doc_ids = [d for d in stage1_doc_ids if d and d not in present_doc_ids]
             for missing_id in missing_doc_ids:
@@ -737,6 +813,7 @@ def _make_unified_tool(
             )
             hits = sheet_summary_hits + hits
 
+        # Nothing retrieved at all — let the caller report "not found".
         if not hits:
             return None
 
@@ -754,6 +831,7 @@ def _make_unified_tool(
             "have", "has", "had", "as", "it", "its", "into", "any", "all",
             "summary", "data", "table", "sheet", "report", "row", "column", "value",
         }
+        # Distinct content terms of the query, used for sheet column matching.
         q_terms = {
             t for t in re.sub(r"[^a-z0-9 ]", " ", retrieval_query.lower()).split()
             if t not in _COL_STOPWORDS and len(t) >= 3
@@ -778,6 +856,7 @@ def _make_unified_tool(
 
         ranked_sheet_hits = sorted(sheet_hits, key=_sheet_sort_key, reverse=True)
 
+        # Rerank the non-sheet hits with the cross-encoder when a ranker exists.
         reranked_used = False
         if ranker is not None and other_hits:
             docs = [h.get("content", "") for h in other_hits]
@@ -824,6 +903,7 @@ def _make_unified_tool(
         top_sheet = [h for h in ranked_sheet_hits if _col_overlap(h) >= 2][:2]
         top_hits = (top_sheet + top_other)[:_rerank_top_n]
 
+        # Expand neighbours and render the final numbered block for the agent.
         return _format_hits(
             top_hits, filter_token, reranked_used,
             retrieval_query, search_query, max_table_chars, max_chunk_chars,
@@ -831,9 +911,11 @@ def _make_unified_tool(
 
     def search_knowledge_base(query: str, doc_id: str = "") -> str:
         """Search the knowledge base for relevant documents and tables."""
+        # Run the full retrieve/rerank/format pipeline; map None → not-found text.
         result = _fetch_docs(query, doc_id=doc_id)
         return result if result else "No relevant information found."
 
+    # Wrap the function as a LangChain tool and return it with its limits dict.
     tool = StructuredTool.from_function(
         func=search_knowledge_base,
         name="search_knowledge_base",

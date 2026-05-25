@@ -36,7 +36,7 @@ Finding the right spreadsheet sheet is a two-step problem. Step one is *discover
 
 Discovery fails when the query contains entity names — supplier names, beneficiary names, project codes — that do not appear in the sheet's column headers. A user asks *"what did WATES PROPERTY SERVICES LTD receive in April?"* but the doc_007 sheet_summary only contains column names like `Beneficiary, Total, Transaction Number`. The embedding of the query is semantically close to any spend-report-shaped sheet, not specifically to the one that contains WATES rows.
 
-The fix mirrors the logic behind HyDE, but applied at ingest time instead of query time: each `sheet_summary` chunk is enriched with up to 5 real sample values per column, drawn directly from the data:
+The fix mirrors the logic behind HyDE, but applied at ingest time instead of query time: each `sheet_summary` chunk is enriched with up to 20 real sample values per column, drawn directly from the data:
 
 ```
 [File: doc_007_published_spend_report_april_25.csv | Sheet: ...]
@@ -80,7 +80,7 @@ When the LLM returns a `400 Bad Request` due to token overflow, the agent retrie
 
 ## Contextual Retrieval (chunking)
 
-For each chunk a fast LLM writes one sentence describing the topic, entities, and purpose; that sentence is prepended before embedding. Each vector therefore captures both what the chunk is *about* and what it *says*, improving recall for short or indirect queries. Implementation of [Anthropic Contextual Retrieval (2024)](https://www.anthropic.com/news/contextual-retrieval). Full chunking pipeline: [chunking.md](chunking.md).
+For each chunk a fast LLM writes one sentence describing the topic, entities, and purpose; that sentence is prepended before embedding. The background shown to the LLM adapts to document length: a document small enough to fit the token budget is enriched against its full text — exactly [Anthropic Contextual Retrieval (2024)](https://www.anthropic.com/news/contextual-retrieval) — while a larger document falls back to its summary plus a bounded window of neighbouring chunks, so the per-chunk token cost stays bounded even on a 150-page report. The sentence is kept specific to the chunk, not a restatement of the background. Each vector therefore captures both what the chunk is *about* and what it *says*, improving recall for short or indirect queries. Full chunking pipeline: [chunking.md](chunking.md).
 
 ## Retrieval-quality refinements
 

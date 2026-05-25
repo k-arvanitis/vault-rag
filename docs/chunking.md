@@ -12,7 +12,7 @@ The chunker (`src/chunker.py`) runs in five passes plus a sixth pass that produc
 
 4. **Merge tiny chunks** — adjacent chunks under `CHUNK_MIN_TOKENS=256` are merged within the same `(page, section)` group only. This avoids the common failure mode where a one-line paragraph below a heading becomes its own meaningless chunk. Named section headers (`## …`) are never merged across — `_has_section_header()` guards the merge step.
 
-5. **Contextual enrichment** — for each chunk, a fast LLM (`CHUNK_LLM_API_BASE`, default OpenRouter / Gemma) writes one sentence describing the topic, entities, and purpose of that chunk. The sentence is prepended before embedding:
+5. **Contextual enrichment** — the per-document summary (pass 6) is generated *first*, then for each chunk a fast LLM (`CHUNK_LLM_API_BASE`, default OpenRouter / Gemma) writes one sentence describing the topic, entities, and purpose of that chunk. The background shown to the LLM adapts to document length: if the whole document fits the token budget (`CONTEXT_ENRICH_DOC_BUDGET_TOKENS`, default 8000) the model sees the entire document — exactly Anthropic Contextual Retrieval; otherwise it sees the document summary plus a window of `CONTEXT_ENRICH_WINDOW_CHUNKS` (default 2) neighbouring chunks on each side, so the input stays bounded on a 150-page report. Either way the LLM is instructed to keep the sentence specific to that chunk, not to restate the background. The sentence is prepended before embedding:
 
     ```
     CONTEXT: This chunk describes payment terms under Section 4.2 of the supplier agreement.
@@ -23,7 +23,7 @@ The chunker (`src/chunker.py`) runs in five passes plus a sixth pass that produc
 
     Each vector therefore captures both what the chunk is *about* and what it *says*, improving recall for short or indirect queries. Implementation of [Anthropic Contextual Retrieval (2024)](https://www.anthropic.com/news/contextual-retrieval). The context sentence is also stored as `metadata.context` so the inspector can show the generated note next to the original text — the enrichment is auditable, not a black box.
 
-6. **Document summary chunk** — once all data chunks are built, one extra `chunk_type="document_summary"` chunk is produced per file, of the form:
+6. **Document summary chunk** — the per-document summary (generated up front, before pass 5, so the enrichment step can use it) is also stored as one extra `chunk_type="document_summary"` chunk per file, of the form:
 
     ```
     Document ID: doc_017
@@ -48,6 +48,8 @@ The chunker (`src/chunker.py`) runs in five passes plus a sixth pass that produc
 | `CHUNK_MIN_TOKENS` | `256` | Pass 4 merges anything below this within the same section |
 | `CHUNK_LLM_API_BASE` | `https://openrouter.ai/api/v1` | Endpoint for contextual summaries; point at a local vLLM for fully air-gapped ingest |
 | `CHUNK_LLM_MODEL` | `google/gemma-4-31b-it:free` | Cheap, fast model — only one sentence per chunk is needed |
+| `CONTEXT_ENRICH_DOC_BUDGET_TOKENS` | `8000` | Pass 5: documents at or below this size are enriched against their full text; larger ones use the summary + neighbour window |
+| `CONTEXT_ENRICH_WINDOW_CHUNKS` | `2` | Pass 5: neighbour chunks included on each side when the document exceeds the budget |
 
 ## Excel / CSV path
 
@@ -56,4 +58,4 @@ Excel and CSV files do not flow through this pipeline. They take a separate path
 - Cleaned data lands in **DuckDB** (one table per sheet); the agent queries it via SQL.
 - Only one `sheet_summary` chunk per sheet — and one `document_summary` chunk per file — go to Qdrant for discovery. Row data never enters Qdrant.
 
-`sheet_summary` chunks are enriched with up to 5 real sample values per text column drawn directly from the data, so a query like `"WATES PROPERTY SERVICES"` lands on the right sheet because the entity is literally in the embedding, not because the model inferred a relationship from column names alone.
+`sheet_summary` chunks are built deterministically — no LLM — from the column list plus up to 20 real sample values per text column (for up to 8 columns), drawn directly from the data. A query like `"WATES PROPERTY SERVICES"` lands on the right sheet because the entity is literally in the embedding, not because a model inferred a relationship from column names alone.

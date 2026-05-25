@@ -46,3 +46,7 @@ run_spot_check.py
 main.py
 .duckdb/
 docs/CODEBASE_GUIDE.md
+
+# scratch eval run dumps & logs
+eval/runs/
+*.log

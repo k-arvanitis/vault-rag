@@ -1,3 +1,16 @@
+"""First-stage chunk retrieval — embed a query and search Qdrant.
+
+Embeds the query via Ollama, then runs dense / hybrid (dense + sparse RRF)
+vector search against a Qdrant collection, with optional payload filters for
+chunk-type routing, single-document scoping and content text matching. Also
+supports an offline mode that scores a local embeddings JSON file directly.
+
+Called by: src/tools/retrieval_tool.py (_fetch_docs / _resolve_scope call
+retrieve() for the agent's search_knowledge_base tool) and the CLI main().
+Calls into: Ollama embed API, Qdrant HTTP API, src/sparse_embedder.py
+(get_sparse_embedder) for hybrid search, and src/config.py for defaults.
+"""
+
 import argparse
 import json
 import math
@@ -13,11 +26,17 @@ from dotenv import load_dotenv
 from src.config import OLLAMA_EMBED_MODEL
 
 
+# ---------------------------------------------------------------------------
+# Embedding & similarity helpers
+# ---------------------------------------------------------------------------
+
 def _ollama_embed_query(api_base: str, model_name: str, query: str) -> list[float]:
     """Embed a single query string via the Ollama /api/embed endpoint."""
+    # Build the POST request to Ollama's embed endpoint (num_gpu=0 keeps it CPU).
     url = f"{api_base.rstrip('/')}/api/embed"
     payload = json.dumps({"model": model_name, "input": [query], "options": {"num_gpu": 0}}).encode("utf-8")
     req = Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+    # Send the request, turning HTTP/connection errors into clear RuntimeErrors.
     try:
         with urlopen(req, timeout=300) as resp:
             body = json.loads(resp.read().decode("utf-8"))
@@ -29,6 +48,7 @@ def _ollama_embed_query(api_base: str, model_name: str, query: str) -> list[floa
             f"Could not connect to Ollama at {api_base}. Ensure `ollama serve` is running."
         ) from exc
 
+    # Validate the response shape and return the single query's embedding vector.
     embeddings = body.get("embeddings")
     if not isinstance(embeddings, list) or not embeddings:
         raise RuntimeError(f"Unexpected Ollama response: {body}")
@@ -37,8 +57,10 @@ def _ollama_embed_query(api_base: str, model_name: str, query: str) -> list[floa
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
     """Compute cosine similarity between two equal-length embedding vectors."""
+    # Reject mismatched dimensions early — usually a wrong-model bug.
     if len(a) != len(b):
         raise ValueError(f"Embedding dimension mismatch: query={len(a)} doc={len(b)}")
+    # Dot product over magnitudes; guard against zero-vector division.
     dot = sum(x * y for x, y in zip(a, b))
     norm_a = math.sqrt(sum(x * x for x in a))
     norm_b = math.sqrt(sum(y * y for y in b))
@@ -46,6 +68,10 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
         return 0.0
     return dot / (norm_a * norm_b)
 
+
+# ---------------------------------------------------------------------------
+# Qdrant payload filters — chunk-type routing, doc scoping, text matching
+# ---------------------------------------------------------------------------
 
 def _text_filter(token: str) -> dict:
     """Build a Qdrant payload filter that requires token to appear in the content field."""
@@ -71,12 +97,15 @@ def _metadata_filter(
     both old ingestions (source_file only) and new ones (doc_id set).
     scope_doc_key is kept for backward compat but is no longer used.
     """
+    # Accumulate positive (must) and negative (must_not) filter conditions.
     must: list[dict] = []
     must_not: list[dict] = []
+    # Restrict to / exclude specific chunk types (document_summary, sheet_summary, …).
     if chunk_types:
         must.append({"key": "metadata.chunk_type", "match": {"any": chunk_types}})
     if exclude_chunk_types:
         must_not.append({"key": "metadata.chunk_type", "match": {"any": exclude_chunk_types}})
+    # Require a literal token to appear in the chunk's content text.
     if filter_token:
         must.append({"key": "content", "match": {"text": filter_token}})
     if scope_doc_id:
@@ -89,8 +118,10 @@ def _metadata_filter(
                 {"key": "metadata.file_name", "match": {"text": scope_doc_id}},
             ]
         })
+    # No conditions means "no filter" — Qdrant should search everything.
     if not must and not must_not:
         return None
+    # Assemble the filter dict, omitting empty must / must_not keys.
     result: dict = {}
     if must:
         result["must"] = must
@@ -98,6 +129,10 @@ def _metadata_filter(
         result["must_not"] = must_not
     return result
 
+
+# ---------------------------------------------------------------------------
+# Table query analysis — pick distinctive value tokens for table lookups
+# ---------------------------------------------------------------------------
 
 _TABLE_STOP_WORDS = frozenset({
     # Question structure words
@@ -132,6 +167,7 @@ def _extract_table_filter_token(query: str) -> str | None:
     if not candidates:
         return None
     # Prefer tokens that look like proper values: contain digits or start with uppercase
+    # Pick the longest such token (most distinctive) as the filter token.
     proper = [w for w in candidates if any(c.isdigit() for c in w) or w[0].isupper()]
     pool = proper if proper else candidates
     return max(pool, key=len)
@@ -145,6 +181,7 @@ def _extract_table_filter_terms(query: str) -> list[str]:
     retrieval, which helps cases where a supplier/beneficiary name has multiple
     words or punctuation variants.
     """
+    # Drop generic words and corpus-specific noise; keep distinct content terms.
     extra_stops = {"doncaster", "council", "q1", "april", "2025", "2026"}
     terms: list[str] = []
     for token in re.findall(r"[A-Za-z0-9]+", query):
@@ -158,6 +195,10 @@ def _extract_table_filter_terms(query: str) -> list[str]:
     return terms
 
 
+# ---------------------------------------------------------------------------
+# Chunk-type routing
+# ---------------------------------------------------------------------------
+
 def infer_query_chunk_types(query: str) -> tuple[list[str] | None, list[str] | None]:
     """Infer chunk type routing for a query.
 
@@ -167,6 +208,10 @@ def infer_query_chunk_types(query: str) -> tuple[list[str] | None, list[str] | N
     """
     return None, None
 
+
+# ---------------------------------------------------------------------------
+# Qdrant transport — dense, hybrid and scroll-filter search calls
+# ---------------------------------------------------------------------------
 
 def _qdrant_search(
     qdrant_url: str,
@@ -180,9 +225,11 @@ def _qdrant_search(
     scope_doc_key: str = "metadata.doc_id",
 ) -> list[dict[str, Any]]:
     """Run a dense vector search against Qdrant, with optional payload filters."""
+    # Build the /points/search request body with the dense query vector.
     base = qdrant_url.rstrip("/")
     url = f"{base}/collections/{collection}/points/search"
     body: dict[str, Any] = {"vector": query_vec, "limit": top_k, "with_payload": True}
+    # Attach the payload filter (chunk-type / doc-scope / token) if any.
     payload_filter = _metadata_filter(
         chunk_types=chunk_types,
         exclude_chunk_types=exclude_chunk_types,
@@ -192,6 +239,7 @@ def _qdrant_search(
     )
     if payload_filter:
         body["filter"] = payload_filter
+    # Send the request, converting HTTP/connection errors into RuntimeErrors.
     payload = json.dumps(body).encode("utf-8")
     req = Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
     try:
@@ -205,6 +253,7 @@ def _qdrant_search(
             f"Could not connect to Qdrant at {qdrant_url}. Ensure the service is running."
         ) from exc
 
+    # Validate and return the list of scored points.
     result = body.get("result")
     if not isinstance(result, list):
         raise RuntimeError(f"Unexpected Qdrant response: {body}")
@@ -213,6 +262,8 @@ def _qdrant_search(
 
 def _collection_has_sparse(qdrant_url: str, collection: str) -> bool:
     """Return True if the collection has sparse_vectors configured."""
+    # GET the collection config and inspect whether sparse_vectors is defined.
+    # Any error (collection missing, service down) is treated as "no sparse".
     base = qdrant_url.rstrip("/")
     try:
         req = Request(f"{base}/collections/{collection}", method="GET")
@@ -238,6 +289,8 @@ def _qdrant_hybrid_search(
     scope_doc_key: str = "metadata.doc_id",
 ) -> list[dict[str, Any]]:
     """Hybrid search using dense prefetch + sparse prefetch + RRF fusion."""
+    # Build the /points/query body: two prefetch branches (dense + sparse,
+    # each over-fetching 3x) fused by reciprocal-rank fusion into top_k.
     base = qdrant_url.rstrip("/")
     url = f"{base}/collections/{collection}/points/query"
     body: dict[str, Any] = {
@@ -249,6 +302,7 @@ def _qdrant_hybrid_search(
         "limit": top_k,
         "with_payload": True,
     }
+    # Attach the payload filter (chunk-type / doc-scope / token) if any.
     payload_filter = _metadata_filter(
         chunk_types=chunk_types,
         exclude_chunk_types=exclude_chunk_types,
@@ -258,6 +312,7 @@ def _qdrant_hybrid_search(
     )
     if payload_filter:
         body["filter"] = payload_filter
+    # Send the request, converting HTTP/connection errors into RuntimeErrors.
     payload = json.dumps(body).encode("utf-8")
     req = Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
     try:
@@ -269,6 +324,7 @@ def _qdrant_hybrid_search(
     except URLError as exc:
         raise RuntimeError(f"Could not connect to Qdrant at {qdrant_url}.") from exc
 
+    # /query nests the hits under result.points — validate and return them.
     result = body.get("result", {})
     # /query returns {"result": {"points": [...]}}
     points = result.get("points", []) if isinstance(result, dict) else []
@@ -288,6 +344,7 @@ def _qdrant_scroll_filter(
     scope_doc_key: str = "metadata.doc_id",
 ) -> list[dict[str, Any]]:
     """Fetch exact payload-filter matches without vector ranking."""
+    # Build the /points/scroll request — pure filter match, no vector ranking.
     base = qdrant_url.rstrip("/")
     url = f"{base}/collections/{collection}/points/scroll"
     payload_filter = _metadata_filter(
@@ -304,6 +361,7 @@ def _qdrant_scroll_filter(
     }
     if payload_filter:
         body["filter"] = payload_filter
+    # Send the request, converting HTTP/connection errors into RuntimeErrors.
     payload = json.dumps(body).encode("utf-8")
     req = Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
     try:
@@ -315,11 +373,16 @@ def _qdrant_scroll_filter(
     except URLError as exc:
         raise RuntimeError(f"Could not connect to Qdrant at {qdrant_url}.") from exc
 
+    # Validate, then return matches with a uniform score=1.0 (no ranking here).
     points = body.get("result", {}).get("points", [])
     if not isinstance(points, list):
         raise RuntimeError(f"Unexpected Qdrant scroll response: {body}")
     return [{**point, "score": 1.0} for point in points]
 
+
+# ---------------------------------------------------------------------------
+# Public entry point — embed the query and return ranked chunks
+# ---------------------------------------------------------------------------
 
 def retrieve(
     query: str,
@@ -344,18 +407,26 @@ def retrieve(
     scope_doc_id restricts results to a single document (e.g. "doc_001") via Qdrant
     source_file text filter — guarantees small docs appear even if globally outranked.
     """
+    # Embed the query once — the same vector is reused for every search below.
     query_vec = _ollama_embed_query(api_base=api_base, model_name=model_name, query=query)
 
     if use_qdrant:
+        # Decide chunk-type routing: explicit force_* overrides win, otherwise
+        # infer from the query (currently always None — search all types).
         if force_chunk_types is not None or force_exclude_chunk_types is not None:
             chunk_types = force_chunk_types
             exclude_chunk_types = force_exclude_chunk_types
         else:
             chunk_types, exclude_chunk_types = infer_query_chunk_types(query)
+        # When the query has table value terms, over-fetch (>=100) so the soft
+        # term-match reordering at the end has enough candidates to work with.
         filter_terms = _extract_table_filter_terms(query)
         qdrant_top_k = max(top_k, 100) if filter_terms else top_k
 
         def _search_with_scope(scope_doc_key: str) -> list[dict[str, Any]]:
+            """Run hybrid (or dense) search for the given doc-scope key field."""
+            # Use hybrid search when the collection supports sparse vectors;
+            # fall back to plain dense search on any sparse-path failure.
             if _collection_has_sparse(qdrant_url=qdrant_url, collection=collection):
                 try:
                     from src.sparse_embedder import get_sparse_embedder
@@ -400,6 +471,8 @@ def retrieve(
                 scope_doc_key=scope_doc_key,
             )
 
+        # Primary search: hybrid when sparse vectors exist (dense fallback on
+        # error), otherwise plain dense search.
         if _collection_has_sparse(qdrant_url=qdrant_url, collection=collection):
             try:
                 from src.sparse_embedder import get_sparse_embedder
@@ -438,6 +511,9 @@ def retrieve(
                 exclude_chunk_types=exclude_chunk_types,
                 scope_doc_id=scope_doc_id,
             )
+        # Single-doc scoping: retry across doc_id → source_file → file_name so a
+        # small doc is found regardless of which id field its chunks carry. If
+        # all fail and a filter_token is set, drop the token and retry once more.
         if scope_doc_id:
             points = _search_with_scope("metadata.doc_id")
             if not points:
@@ -454,6 +530,8 @@ def retrieve(
                 if not points:
                     points = _search_with_scope("metadata.file_name")
                 filter_token = original_filter_token
+        # Exact-match boost: scroll the filter_token (and alternate terms) to
+        # surface verbatim hits, then prepend them ahead of the vector results.
         if filter_token:
             try:
                 scroll_chunk_types = chunk_types
@@ -478,6 +556,8 @@ def retrieve(
                         scope_doc_id=scope_doc_id,
                         scope_doc_key="metadata.source_file",
                     )
+                # No exact hit for the primary token — try up to 4 longest
+                # alternate query terms (handles multi-word/punctuated names).
                 if not exact_points:
                     alternate_terms = [
                         term for term in sorted(filter_terms, key=len, reverse=True)
@@ -506,10 +586,12 @@ def retrieve(
                                 scope_doc_key="metadata.source_file",
                             )
                         exact_points.extend(term_points)
+                # Prepend exact matches, then append vector hits not already seen.
                 seen_ids = {point.get("id") for point in exact_points}
                 points = exact_points + [point for point in points if point.get("id") not in seen_ids]
             except Exception:
                 pass
+        # Normalize raw Qdrant points into the flat hit dicts callers expect.
         scored_from_qdrant: list[dict[str, Any]] = []
         for point in points:
             payload = point.get("payload", {}) or {}
@@ -524,8 +606,11 @@ def retrieve(
                     "metadata": payload.get("metadata", {}),
                 }
             )
+        # Table queries: soft-reorder hits by how many value terms they contain
+        # (primary key), breaking ties with the vector score, then cut to top_k.
         if filter_terms:
             def _table_term_score(hit: dict[str, Any]) -> int:
+                """Count how many table value terms appear in a hit's content."""
                 content = (hit.get("content") or "").lower()
                 return sum(1 for term in filter_terms if term in content)
 
@@ -533,15 +618,18 @@ def retrieve(
             return scored_from_qdrant[:top_k]
         return scored_from_qdrant
 
+    # --- Offline mode: no Qdrant — score a local embeddings JSON file directly.
     if embeddings_path is None:
         raise ValueError("`embeddings_path` is required when `use_qdrant=False`.")
 
+    # Load and validate the embeddings file.
     rows = json.loads(embeddings_path.read_text(encoding="utf-8"))
     if not isinstance(rows, list):
         raise ValueError(f"Expected a list in {embeddings_path}, got {type(rows).__name__}")
     if not rows:
         return []
 
+    # Cosine-score every stored chunk against the query embedding.
     scored: list[dict[str, Any]] = []
     for row in rows:
         emb = row.get("embedding")
@@ -558,13 +646,21 @@ def retrieve(
             }
         )
 
+    # Rank by similarity and return the top_k chunks.
     scored.sort(key=lambda x: x["score"], reverse=True)
     return scored[:top_k]
 
 
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
+
 def main() -> None:
+    """Parse CLI args, run a single retrieve() call and print the JSON results."""
+    # Load .env so OLLAMA_API_BASE etc. are picked up before arg parsing.
     load_dotenv()
 
+    # Define the CLI arguments (query, embeddings path, Qdrant settings, …).
     parser = argparse.ArgumentParser(description="Retrieve top-k relevant chunks from embeddings JSON.")
     parser.add_argument("--query", required=True, help="Search query text")
     parser.add_argument(
@@ -594,6 +690,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # Run retrieval with the parsed arguments.
     results = retrieve(
         query=args.query,
         embeddings_path=args.embeddings,
@@ -605,6 +702,7 @@ def main() -> None:
         model_name=args.model_name,
     )
 
+    # Emit the ranked hits as pretty-printed JSON.
     print(json.dumps(results, ensure_ascii=False, indent=2))
 
 

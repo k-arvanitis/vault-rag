@@ -1,0 +1,2422 @@
+[
+ {
+  "question": "In the NTSB fueling records invoice, what is the Total for Tran # 2620?",
+  "gold_answer": "94.44",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_005"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_005",
+    "evidence_type": "sheet_row",
+    "sheet_name": "table_1",
+    "quote": "Tran #: 2620; Total: 94.44"
+   }
+  ],
+  "qa_id": "gen_1"
+ },
+ {
+  "question": "In the NTSB fueling records invoice, what is the Unit Cost for Tran # 2626?",
+  "gold_answer": "4.65",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_005"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_005",
+    "evidence_type": "sheet_row",
+    "sheet_name": "table_1",
+    "quote": "Tran #: 2626; Unit Cost: 4.65"
+   }
+  ],
+  "qa_id": "gen_2"
+ },
+ {
+  "question": "In the NTSB fueling records invoice, what is the Quantity for Tran # 2612?",
+  "gold_answer": "46.43",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_005"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_005",
+    "evidence_type": "sheet_row",
+    "sheet_name": "table_1",
+    "quote": "Tran #: 2612; Quantity: 46.43"
+   }
+  ],
+  "qa_id": "gen_3"
+ },
+ {
+  "question": "In the NTSB fueling records invoice, what is the Unit Cost for Tran # 2629?",
+  "gold_answer": "4.65",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_005"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_005",
+    "evidence_type": "sheet_row",
+    "sheet_name": "table_1",
+    "quote": "Tran #: 2629; Unit Cost: 4.65"
+   }
+  ],
+  "qa_id": "gen_4"
+ },
+ {
+  "question": "In the NTSB fueling records invoice, what is the Unit Cost for Tran # 2630?",
+  "gold_answer": "4.65",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_005"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_005",
+    "evidence_type": "sheet_row",
+    "sheet_name": "table_1",
+    "quote": "Tran #: 2630; Unit Cost: 4.65"
+   }
+  ],
+  "qa_id": "gen_5"
+ },
+ {
+  "question": "In the NTSB fueling records invoice, what is the Grade for Tran # 2623?",
+  "gold_answer": "1",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_005"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_005",
+    "evidence_type": "sheet_row",
+    "sheet_name": "table_1",
+    "quote": "Tran #: 2623; Grade: 1"
+   }
+  ],
+  "qa_id": "gen_6"
+ },
+ {
+  "question": "In the NTSB fueling records invoice, what is the Quantity for Tran # 2614?",
+  "gold_answer": "8.27",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_005"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_005",
+    "evidence_type": "sheet_row",
+    "sheet_name": "table_1",
+    "quote": "Tran #: 2614; Quantity: 8.27"
+   }
+  ],
+  "qa_id": "gen_7"
+ },
+ {
+  "question": "In the NTSB fueling records invoice, what is the Total for Tran # 2631?",
+  "gold_answer": "69.84",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_005"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_005",
+    "evidence_type": "sheet_row",
+    "sheet_name": "table_1",
+    "quote": "Tran #: 2631; Total: 69.84"
+   }
+  ],
+  "qa_id": "gen_8"
+ },
+ {
+  "question": "In the NTSB fueling records invoice, what is the Quantity for Tran # 2616?",
+  "gold_answer": "51.2",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_005"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_005",
+    "evidence_type": "sheet_row",
+    "sheet_name": "table_1",
+    "quote": "Tran #: 2616; Quantity: 51.2"
+   }
+  ],
+  "qa_id": "gen_9"
+ },
+ {
+  "question": "In the NTSB fueling records invoice, what is the Unit Cost for Tran # 2613?",
+  "gold_answer": "4.65",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_005"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_005",
+    "evidence_type": "sheet_row",
+    "sheet_name": "table_1",
+    "quote": "Tran #: 2613; Unit Cost: 4.65"
+   }
+  ],
+  "qa_id": "gen_10"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Merchant Category for Transaction Number 6092972?",
+  "gold_answer": "SCHOOLCHILDREN AND STUDENTS",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6092972; Merchant Category: SCHOOLCHILDREN AND STUDENTS"
+   }
+  ],
+  "qa_id": "gen_11"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Local Authority Dept for Transaction Number 6100926?",
+  "gold_answer": "CiC AND FOSTERING",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6100926; Local Authority Dept: CiC AND FOSTERING"
+   }
+  ],
+  "qa_id": "gen_12"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Beneficiary for Transaction Number 6096604?",
+  "gold_answer": "REDACTED PERSONAL DATA",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6096604; Beneficiary: REDACTED PERSONAL DATA"
+   }
+  ],
+  "qa_id": "gen_13"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Merchant Category for Transaction Number 6122666?",
+  "gold_answer": "ADULT SOCIAL SERVICES CLIENTS",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6122666; Merchant Category: ADULT SOCIAL SERVICES CLIENTS"
+   }
+  ],
+  "qa_id": "gen_14"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Directorate for Transaction Number 6106204?",
+  "gold_answer": "ADULTS, WELLBEING AND CULTURE",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6106204; Directorate: ADULTS, WELLBEING AND CULTURE"
+   }
+  ],
+  "qa_id": "gen_15"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Directorate for Transaction Number 6090049?",
+  "gold_answer": "ADULTS, WELLBEING AND CULTURE",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6090049; Directorate: ADULTS, WELLBEING AND CULTURE"
+   }
+  ],
+  "qa_id": "gen_16"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Total for Transaction Number 6093438?",
+  "gold_answer": "374",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6093438; Total: 374"
+   }
+  ],
+  "qa_id": "gen_17"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Directorate for Transaction Number 6099348?",
+  "gold_answer": "ADULTS, WELLBEING AND CULTURE",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6099348; Directorate: ADULTS, WELLBEING AND CULTURE"
+   }
+  ],
+  "qa_id": "gen_18"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Beneficiary for Transaction Number 6107067?",
+  "gold_answer": "THE LAURELS NURSING HOME",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6107067; Beneficiary: THE LAURELS NURSING HOME"
+   }
+  ],
+  "qa_id": "gen_19"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Total for Transaction Number 6087735?",
+  "gold_answer": "1448",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6087735; Total: 1448"
+   }
+  ],
+  "qa_id": "gen_20"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Directorate for Transaction Number 6112065?",
+  "gold_answer": "CHILDREN,YOUNG PEOPLE&FAMILIES",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6112065; Directorate: CHILDREN,YOUNG PEOPLE&FAMILIES"
+   }
+  ],
+  "qa_id": "gen_21"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Local Authority Dept for Transaction Number 6103262?",
+  "gold_answer": "ADULT SOCIAL CARE-CARE&SUPPORT",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6103262; Local Authority Dept: ADULT SOCIAL CARE-CARE&SUPPORT"
+   }
+  ],
+  "qa_id": "gen_22"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Local Authority Dept for Transaction Number 6105925?",
+  "gold_answer": "ADULT SOCIAL CARE-CARE&SUPPORT",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6105925; Local Authority Dept: ADULT SOCIAL CARE-CARE&SUPPORT"
+   }
+  ],
+  "qa_id": "gen_23"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Merchant Category for Transaction Number 6105192?",
+  "gold_answer": "ADULT SOCIAL SERVICES CLIENTS",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6105192; Merchant Category: ADULT SOCIAL SERVICES CLIENTS"
+   }
+  ],
+  "qa_id": "gen_24"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Local Authority Dept for Transaction Number 6113815?",
+  "gold_answer": "FUTURE OPTIONS",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6113815; Local Authority Dept: FUTURE OPTIONS"
+   }
+  ],
+  "qa_id": "gen_25"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Merchant Category for Transaction Number 6113578?",
+  "gold_answer": "ADULT SOCIAL SERVICES CLIENTS",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6113578; Merchant Category: ADULT SOCIAL SERVICES CLIENTS"
+   }
+  ],
+  "qa_id": "gen_26"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Beneficiary for Transaction Number 6084977?",
+  "gold_answer": "FOCUS MENTAL HEALTH SOLUTIONS LTD",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6084977; Beneficiary: FOCUS MENTAL HEALTH SOLUTIONS LTD"
+   }
+  ],
+  "qa_id": "gen_27"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Beneficiary for Transaction Number 6118236?",
+  "gold_answer": "AVALON",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6118236; Beneficiary: AVALON"
+   }
+  ],
+  "qa_id": "gen_28"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Merchant Category for Transaction Number 6100966?",
+  "gold_answer": "OTHER ESTABLISHMENTS",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6100966; Merchant Category: OTHER ESTABLISHMENTS"
+   }
+  ],
+  "qa_id": "gen_29"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Beneficiary for Transaction Number 6095977?",
+  "gold_answer": "REDACTED PERSONAL DATA",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6095977; Beneficiary: REDACTED PERSONAL DATA"
+   }
+  ],
+  "qa_id": "gen_30"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Total for Transaction Number 6106402?",
+  "gold_answer": "3488.42",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6106402; Total: 3488.42"
+   }
+  ],
+  "qa_id": "gen_31"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Merchant Category for Transaction Number 6113652?",
+  "gold_answer": "ADULT SOCIAL SERVICES CLIENTS",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6113652; Merchant Category: ADULT SOCIAL SERVICES CLIENTS"
+   }
+  ],
+  "qa_id": "gen_32"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Total for Transaction Number 6110798?",
+  "gold_answer": "672.72",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6110798; Total: 672.72"
+   }
+  ],
+  "qa_id": "gen_33"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Local Authority Dept for Transaction Number 6089937?",
+  "gold_answer": "ADULT SOCIAL CARE-CARE&SUPPORT",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6089937; Local Authority Dept: ADULT SOCIAL CARE-CARE&SUPPORT"
+   }
+  ],
+  "qa_id": "gen_34"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Beneficiary for Transaction Number 6090734?",
+  "gold_answer": "NEWDON CARE SERVICES LIMITED",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6090734; Beneficiary: NEWDON CARE SERVICES LIMITED"
+   }
+  ],
+  "qa_id": "gen_35"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Merchant Category for Transaction Number 6088708?",
+  "gold_answer": "HOUSING BENEFITS",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6088708; Merchant Category: HOUSING BENEFITS"
+   }
+  ],
+  "qa_id": "gen_36"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Total for Transaction Number 6122963?",
+  "gold_answer": "565.32",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6122963; Total: 565.32"
+   }
+  ],
+  "qa_id": "gen_37"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Beneficiary for Transaction Number 6100079?",
+  "gold_answer": "REDACTED PERSONAL DATA",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6100079; Beneficiary: REDACTED PERSONAL DATA"
+   }
+  ],
+  "qa_id": "gen_38"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Merchant Category for Transaction Number 6105922?",
+  "gold_answer": "OTHER ESTABLISHMENTS",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6105922; Merchant Category: OTHER ESTABLISHMENTS"
+   }
+  ],
+  "qa_id": "gen_39"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Local Authority Dept for Transaction Number 6104851?",
+  "gold_answer": "FUTURE OPTIONS",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6104851; Local Authority Dept: FUTURE OPTIONS"
+   }
+  ],
+  "qa_id": "gen_40"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Merchant Category for Transaction Number 6096974?",
+  "gold_answer": "EQUIPMENT/FURNITURE/MATERIALS",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6096974; Merchant Category: EQUIPMENT/FURNITURE/MATERIALS"
+   }
+  ],
+  "qa_id": "gen_41"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Directorate for Transaction Number 6118372?",
+  "gold_answer": "CORPORATE RESOURCES",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6118372; Directorate: CORPORATE RESOURCES"
+   }
+  ],
+  "qa_id": "gen_42"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Directorate for Transaction Number 6121883?",
+  "gold_answer": "CHIEF EXECUTIVE",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6121883; Directorate: CHIEF EXECUTIVE"
+   }
+  ],
+  "qa_id": "gen_43"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Local Authority Dept for Transaction Number 6107078?",
+  "gold_answer": "ADULT SOCIAL CARE-CARE&SUPPORT",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6107078; Local Authority Dept: ADULT SOCIAL CARE-CARE&SUPPORT"
+   }
+  ],
+  "qa_id": "gen_44"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Local Authority Dept for Transaction Number 6106651?",
+  "gold_answer": "ADULT SOCIAL CARE-CARE&SUPPORT",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6106651; Local Authority Dept: ADULT SOCIAL CARE-CARE&SUPPORT"
+   }
+  ],
+  "qa_id": "gen_45"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Directorate for Transaction Number 6114678?",
+  "gold_answer": "ADULTS, WELLBEING AND CULTURE",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6114678; Directorate: ADULTS, WELLBEING AND CULTURE"
+   }
+  ],
+  "qa_id": "gen_46"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Beneficiary for Transaction Number 6120494?",
+  "gold_answer": "NEWDON CARE SERVICES LIMITED",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6120494; Beneficiary: NEWDON CARE SERVICES LIMITED"
+   }
+  ],
+  "qa_id": "gen_47"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Merchant Category for Transaction Number 6100058?",
+  "gold_answer": "HOUSING BENEFITS",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6100058; Merchant Category: HOUSING BENEFITS"
+   }
+  ],
+  "qa_id": "gen_48"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Directorate for Transaction Number 6117373?",
+  "gold_answer": "CORPORATE RESOURCES",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6117373; Directorate: CORPORATE RESOURCES"
+   }
+  ],
+  "qa_id": "gen_49"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Local Authority Dept for Transaction Number 6099394?",
+  "gold_answer": "REVENUES AND BENEFITS",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6099394; Local Authority Dept: REVENUES AND BENEFITS"
+   }
+  ],
+  "qa_id": "gen_50"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Merchant Category for Transaction Number 6117432?",
+  "gold_answer": "SCHOOLCHILDREN AND STUDENTS",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6117432; Merchant Category: SCHOOLCHILDREN AND STUDENTS"
+   }
+  ],
+  "qa_id": "gen_51"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Total for Transaction Number 6105255?",
+  "gold_answer": "250",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6105255; Total: 250"
+   }
+  ],
+  "qa_id": "gen_52"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Local Authority Dept for Transaction Number 6118733?",
+  "gold_answer": "HIGHWAYS",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6118733; Local Authority Dept: HIGHWAYS"
+   }
+  ],
+  "qa_id": "gen_53"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Local Authority Dept for Transaction Number 6120851?",
+  "gold_answer": "PARTNERSHIPS & FAMILIES",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6120851; Local Authority Dept: PARTNERSHIPS & FAMILIES"
+   }
+  ],
+  "qa_id": "gen_54"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Beneficiary for Transaction Number 6122610?",
+  "gold_answer": "REDACTED PERSONAL DATA",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6122610; Beneficiary: REDACTED PERSONAL DATA"
+   }
+  ],
+  "qa_id": "gen_55"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Total for Transaction Number 6112103?",
+  "gold_answer": "408",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6112103; Total: 408"
+   }
+  ],
+  "qa_id": "gen_56"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Beneficiary for Transaction Number 6113260?",
+  "gold_answer": "AVALON",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6113260; Beneficiary: AVALON"
+   }
+  ],
+  "qa_id": "gen_57"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Directorate for Transaction Number 6106821?",
+  "gold_answer": "ADULTS, WELLBEING AND CULTURE",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6106821; Directorate: ADULTS, WELLBEING AND CULTURE"
+   }
+  ],
+  "qa_id": "gen_58"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Beneficiary for Transaction Number 6098015?",
+  "gold_answer": "GEARBOX UK (DONCASTER) LTD",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6098015; Beneficiary: GEARBOX UK (DONCASTER) LTD"
+   }
+  ],
+  "qa_id": "gen_59"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Total for Transaction Number 6092744?",
+  "gold_answer": "387",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6092744; Total: 387"
+   }
+  ],
+  "qa_id": "gen_60"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Merchant Category for Transaction Number 6123164?",
+  "gold_answer": "ADULT SOCIAL SERVICES CLIENTS",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6123164; Merchant Category: ADULT SOCIAL SERVICES CLIENTS"
+   }
+  ],
+  "qa_id": "gen_61"
+ },
+ {
+  "question": "In the Doncaster Council published spend report for April 2025, what is the Total for Transaction Number 6107149?",
+  "gold_answer": "3488.42",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_007"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_007",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_007_published_spend_report_april_25",
+    "quote": "Transaction Number: 6107149; Total: 3488.42"
+   }
+  ],
+  "qa_id": "gen_62"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the Name for Transaction Number 31128600?",
+  "gold_answer": "Guidant Global UK Limited",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 31128600; Name: Guidant Global UK Limited"
+   }
+  ],
+  "qa_id": "gen_63"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the Pay Date for Transaction Number 93258129?",
+  "gold_answer": "2024-04-22",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 93258129; Pay Date: 2024-04-22"
+   }
+  ],
+  "qa_id": "gen_64"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the amount for Transaction Number 31140844?",
+  "gold_answer": "945",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 31140844; amount: 945"
+   }
+  ],
+  "qa_id": "gen_65"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the Pay Date for Transaction Number 31129771?",
+  "gold_answer": "2024-04-04",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 31129771; Pay Date: 2024-04-04"
+   }
+  ],
+  "qa_id": "gen_66"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the Name for Transaction Number 31140606?",
+  "gold_answer": "Mollitiam Housing Ltd",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 31140606; Name: Mollitiam Housing Ltd"
+   }
+  ],
+  "qa_id": "gen_67"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the Name for Transaction Number 31133428?",
+  "gold_answer": "First Greater Western Ltd",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 31133428; Name: First Greater Western Ltd"
+   }
+  ],
+  "qa_id": "gen_68"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the amount for Transaction Number 93251075?",
+  "gold_answer": "51879.56",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 93251075; amount: 51879.56"
+   }
+  ],
+  "qa_id": "gen_69"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the amount for Transaction Number 31136025?",
+  "gold_answer": "17895.63",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 31136025; amount: 17895.63"
+   }
+  ],
+  "qa_id": "gen_70"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the Pay Date for Transaction Number 31137081?",
+  "gold_answer": "2024-04-04",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 31137081; Pay Date: 2024-04-04"
+   }
+  ],
+  "qa_id": "gen_71"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the amount for Transaction Number 93256662?",
+  "gold_answer": "474.48",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 93256662; amount: 474.48"
+   }
+  ],
+  "qa_id": "gen_72"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the Pay Date for Transaction Number 31133551?",
+  "gold_answer": "2024-04-18",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 31133551; Pay Date: 2024-04-18"
+   }
+  ],
+  "qa_id": "gen_73"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the Name for Transaction Number 31135569?",
+  "gold_answer": "Bristol Horn Youth Concern CIC",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 31135569; Name: Bristol Horn Youth Concern CIC"
+   }
+  ],
+  "qa_id": "gen_74"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the amount for Transaction Number 31130436?",
+  "gold_answer": "921.5",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 31130436; amount: 921.5"
+   }
+  ],
+  "qa_id": "gen_75"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the Pay Date for Transaction Number 31138428?",
+  "gold_answer": "2024-04-26",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 31138428; Pay Date: 2024-04-26"
+   }
+  ],
+  "qa_id": "gen_76"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the Pay Date for Transaction Number 31135354?",
+  "gold_answer": "2024-04-19",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 31135354; Pay Date: 2024-04-19"
+   }
+  ],
+  "qa_id": "gen_77"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the amount for Transaction Number 31135071?",
+  "gold_answer": "2027.23",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 31135071; amount: 2027.23"
+   }
+  ],
+  "qa_id": "gen_78"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the amount for Transaction Number 31135118?",
+  "gold_answer": "895",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 31135118; amount: 895"
+   }
+  ],
+  "qa_id": "gen_79"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the Pay Date for Transaction Number 31129644?",
+  "gold_answer": "2024-04-09",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 31129644; Pay Date: 2024-04-09"
+   }
+  ],
+  "qa_id": "gen_80"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the amount for Transaction Number 93252916?",
+  "gold_answer": "1714.63",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 93252916; amount: 1714.63"
+   }
+  ],
+  "qa_id": "gen_81"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the amount for Transaction Number 93242052?",
+  "gold_answer": "1088",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 93242052; amount: 1088"
+   }
+  ],
+  "qa_id": "gen_82"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the Name for Transaction Number 31131750?",
+  "gold_answer": "Constellia Public Limited",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 31131750; Name: Constellia Public Limited"
+   }
+  ],
+  "qa_id": "gen_83"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the Pay Date for Transaction Number 31137892?",
+  "gold_answer": "2024-04-30",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 31137892; Pay Date: 2024-04-30"
+   }
+  ],
+  "qa_id": "gen_84"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the Pay Date for Transaction Number 31136426?",
+  "gold_answer": "2024-04-26",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 31136426; Pay Date: 2024-04-26"
+   }
+  ],
+  "qa_id": "gen_85"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the Name for Transaction Number 93242028?",
+  "gold_answer": "Nks Contracts Ltd",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 93242028; Name: Nks Contracts Ltd"
+   }
+  ],
+  "qa_id": "gen_86"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the Name for Transaction Number 93258592?",
+  "gold_answer": "The Olympus Academy Trust",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 93258592; Name: The Olympus Academy Trust"
+   }
+  ],
+  "qa_id": "gen_87"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the Pay Date for Transaction Number 31138610?",
+  "gold_answer": "2024-04-24",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 31138610; Pay Date: 2024-04-24"
+   }
+  ],
+  "qa_id": "gen_88"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the Name for Transaction Number 31135511?",
+  "gold_answer": "G2V Recruitment Group Limited T/A Vivid Resourcing",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 31135511; Name: G2V Recruitment Group Limited T/A Vivid Resourcing"
+   }
+  ],
+  "qa_id": "gen_89"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the Name for Transaction Number 31128742?",
+  "gold_answer": "Guidant Global UK Limited",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 31128742; Name: Guidant Global UK Limited"
+   }
+  ],
+  "qa_id": "gen_90"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the Name for Transaction Number 31134299?",
+  "gold_answer": "Guidant Global UK Limited",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 31134299; Name: Guidant Global UK Limited"
+   }
+  ],
+  "qa_id": "gen_91"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the Pay Date for Transaction Number 93252695?",
+  "gold_answer": "2024-04-16",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 93252695; Pay Date: 2024-04-16"
+   }
+  ],
+  "qa_id": "gen_92"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the amount for Transaction Number 31132743?",
+  "gold_answer": "9571.56",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 31132743; amount: 9571.56"
+   }
+  ],
+  "qa_id": "gen_93"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the Name for Transaction Number 31136698?",
+  "gold_answer": "Guidant Global UK Limited",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 31136698; Name: Guidant Global UK Limited"
+   }
+  ],
+  "qa_id": "gen_94"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the Name for Transaction Number 93251755?",
+  "gold_answer": "Southmead Saplings Day Nursery",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 93251755; Name: Southmead Saplings Day Nursery"
+   }
+  ],
+  "qa_id": "gen_95"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the Name for Transaction Number 31131888?",
+  "gold_answer": "Benjamin UK",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 31131888; Name: Benjamin UK"
+   }
+  ],
+  "qa_id": "gen_96"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the amount for Transaction Number 93258476?",
+  "gold_answer": "2514",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 93258476; amount: 2514"
+   }
+  ],
+  "qa_id": "gen_97"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the Name for Transaction Number 93250812?",
+  "gold_answer": "Masters Pipeline Services Ltd",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 93250812; Name: Masters Pipeline Services Ltd"
+   }
+  ],
+  "qa_id": "gen_98"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the Pay Date for Transaction Number 93249701?",
+  "gold_answer": "2024-04-05",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 93249701; Pay Date: 2024-04-05"
+   }
+  ],
+  "qa_id": "gen_99"
+ },
+ {
+  "question": "In the Bristol supplier spend for April 2024, what is the amount for Transaction Number 93252674?",
+  "gold_answer": "816",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_014"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_014",
+    "evidence_type": "sheet_row",
+    "sheet_name": "doc_014_bristol_supplier_spend_april_2024",
+    "quote": "Transaction Number: 93252674; amount: 816"
+   }
+  ],
+  "qa_id": "gen_100"
+ },
+ {
+  "question": "In the Spain open data maturity questionnaire (Portal section), what is the Answer from 2024 for ID PT42?",
+  "gold_answer": "yes",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_011"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_011",
+    "evidence_type": "sheet_row",
+    "sheet_name": "Portal",
+    "quote": "ID: PT42; Answer from 2024: yes"
+   }
+  ],
+  "qa_id": "gen_101"
+ },
+ {
+  "question": "In the Spain open data maturity questionnaire (Portal section), what is the Answer from 2024 for ID PT22?",
+  "gold_answer": "yes",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_011"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_011",
+    "evidence_type": "sheet_row",
+    "sheet_name": "Portal",
+    "quote": "ID: PT22; Answer from 2024: yes"
+   }
+  ],
+  "qa_id": "gen_102"
+ },
+ {
+  "question": "In the Spain open data maturity questionnaire (Portal section), what is the Answer from 2024 for ID PT10?",
+  "gold_answer": "yes",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_011"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_011",
+    "evidence_type": "sheet_row",
+    "sheet_name": "Portal",
+    "quote": "ID: PT10; Answer from 2024: yes"
+   }
+  ],
+  "qa_id": "gen_103"
+ },
+ {
+  "question": "In the Spain open data maturity questionnaire (Portal section), what is the Answer from 2024 for ID PT7?",
+  "gold_answer": "yes",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_011"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_011",
+    "evidence_type": "sheet_row",
+    "sheet_name": "Portal",
+    "quote": "ID: PT7; Answer from 2024: yes"
+   }
+  ],
+  "qa_id": "gen_104"
+ },
+ {
+  "question": "In the Spain open data maturity questionnaire (Portal section), what is the Answer from 2024 for ID PT25?",
+  "gold_answer": "yes",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_011"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_011",
+    "evidence_type": "sheet_row",
+    "sheet_name": "Portal",
+    "quote": "ID: PT25; Answer from 2024: yes"
+   }
+  ],
+  "qa_id": "gen_105"
+ },
+ {
+  "question": "In the Spain open data maturity questionnaire (Portal section), what is the Answer from 2024 for ID PT1?",
+  "gold_answer": "yes",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_011"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_011",
+    "evidence_type": "sheet_row",
+    "sheet_name": "Portal",
+    "quote": "ID: PT1; Answer from 2024: yes"
+   }
+  ],
+  "qa_id": "gen_106"
+ },
+ {
+  "question": "In the Spain open data maturity questionnaire (Portal section), what is the Answer from 2024 for ID PT36?",
+  "gold_answer": "yes",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_011"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_011",
+    "evidence_type": "sheet_row",
+    "sheet_name": "Portal",
+    "quote": "ID: PT36; Answer from 2024: yes"
+   }
+  ],
+  "qa_id": "gen_107"
+ },
+ {
+  "question": "In the Spain open data maturity questionnaire (Portal section), what is the Answer from 2024 for ID PT34?",
+  "gold_answer": "yes, or all public sector data providers already publish data",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_011"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_011",
+    "evidence_type": "sheet_row",
+    "sheet_name": "Portal",
+    "quote": "ID: PT34; Answer from 2024: yes, or all public sector data providers already publish data"
+   }
+  ],
+  "qa_id": "gen_108"
+ },
+ {
+  "question": "In the Spain open data maturity questionnaire (Portal section), what is the Answer from 2024 for ID PT26?",
+  "gold_answer": "yes",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_011"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_011",
+    "evidence_type": "sheet_row",
+    "sheet_name": "Portal",
+    "quote": "ID: PT26; Answer from 2024: yes"
+   }
+  ],
+  "qa_id": "gen_109"
+ },
+ {
+  "question": "In the Spain open data maturity questionnaire (Portal section), what is the Answer from 2024 for ID PT24?",
+  "gold_answer": "yes",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_011"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_011",
+    "evidence_type": "sheet_row",
+    "sheet_name": "Portal",
+    "quote": "ID: PT24; Answer from 2024: yes"
+   }
+  ],
+  "qa_id": "gen_110"
+ },
+ {
+  "question": "In the Spain open data maturity questionnaire (Portal section), what is the Answer from 2024 for ID PT21?",
+  "gold_answer": "no",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_011"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_011",
+    "evidence_type": "sheet_row",
+    "sheet_name": "Portal",
+    "quote": "ID: PT21; Answer from 2024: no"
+   }
+  ],
+  "qa_id": "gen_111"
+ },
+ {
+  "question": "In the Spain open data maturity questionnaire (Portal section), what is the Answer from 2024 for ID PT37?",
+  "gold_answer": "the majority of datasets",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_011"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_011",
+    "evidence_type": "sheet_row",
+    "sheet_name": "Portal",
+    "quote": "ID: PT37; Answer from 2024: the majority of datasets"
+   }
+  ],
+  "qa_id": "gen_112"
+ },
+ {
+  "question": "In the Spain open data maturity questionnaire (Portal section), what is the Answer from 2024 for ID PT11?",
+  "gold_answer": "yes",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_011"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_011",
+    "evidence_type": "sheet_row",
+    "sheet_name": "Portal",
+    "quote": "ID: PT11; Answer from 2024: yes"
+   }
+  ],
+  "qa_id": "gen_113"
+ },
+ {
+  "question": "In the Spain open data maturity questionnaire (Portal section), what is the Answer from 2024 for ID PT17?",
+  "gold_answer": "yes",
+  "answer_type": "short_text",
+  "question_type": "table_lookup",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_011"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_011",
+    "evidence_type": "sheet_row",
+    "sheet_name": "Portal",
+    "quote": "ID: PT17; Answer from 2024: yes"
+   }
+  ],
+  "qa_id": "gen_114"
+ },
+ {
+  "question": "In the NTSB fueling records invoice, what is the total Quantity across all transactions?",
+  "gold_answer": "711.62",
+  "answer_type": "number",
+  "question_type": "numeric_reasoning",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_005"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_005",
+    "evidence_type": "sheet_table",
+    "sheet_name": "table_1",
+    "quote": "computed: SELECT ROUND(SUM(\"Quantity\"),2) FROM \"doc_005_fueling_records_invoice__table_1\""
+   }
+  ],
+  "qa_id": "gen_115"
+ },
+ {
+  "question": "In the NTSB fueling records invoice, what is the total Total amount across all transactions?",
+  "gold_answer": "3309.07",
+  "answer_type": "number",
+  "question_type": "numeric_reasoning",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_005"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_005",
+    "evidence_type": "sheet_table",
+    "sheet_name": "table_1",
+    "quote": "computed: SELECT ROUND(SUM(\"Total\"),2) FROM \"doc_005_fueling_records_invoice__table_1\""
+   }
+  ],
+  "qa_id": "gen_116"
+ },
+ {
+  "question": "How many transactions are in the NTSB fueling records invoice?",
+  "gold_answer": "25",
+  "answer_type": "number",
+  "question_type": "numeric_reasoning",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_005"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_005",
+    "evidence_type": "sheet_table",
+    "sheet_name": "table_1",
+    "quote": "computed: SELECT COUNT(*) FROM \"doc_005_fueling_records_invoice__table_1\""
+   }
+  ],
+  "qa_id": "gen_117"
+ },
+ {
+  "question": "In the NTSB fueling records invoice, what is the largest single Total amount?",
+  "gold_answer": "566.79",
+  "answer_type": "number",
+  "question_type": "numeric_reasoning",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_005"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_005",
+    "evidence_type": "sheet_table",
+    "sheet_name": "table_1",
+    "quote": "computed: SELECT ROUND(MAX(\"Total\"),2) FROM \"doc_005_fueling_records_invoice__table_1\""
+   }
+  ],
+  "qa_id": "gen_118"
+ },
+ {
+  "question": "In the NTSB fueling records invoice, what is the average Quantity per transaction?",
+  "gold_answer": "28.46",
+  "answer_type": "number",
+  "question_type": "numeric_reasoning",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_005"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_005",
+    "evidence_type": "sheet_table",
+    "sheet_name": "table_1",
+    "quote": "computed: SELECT ROUND(AVG(\"Quantity\"),2) FROM \"doc_005_fueling_records_invoice__table_1\""
+   }
+  ],
+  "qa_id": "gen_119"
+ },
+ {
+  "question": "How many transactions are recorded in the Doncaster Council purchase card transactions for Q1 2025/26?",
+  "gold_answer": "6701",
+  "answer_type": "number",
+  "question_type": "numeric_reasoning",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_006"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_006",
+    "evidence_type": "sheet_table",
+    "sheet_name": "DataAnalysis",
+    "quote": "computed: SELECT COUNT(*) FROM \"doc_006_purchase_card_transactions_q1_2025_26__DataAnalysis\""
+   }
+  ],
+  "qa_id": "gen_120"
+ },
+ {
+  "question": "How many distinct Directorates appear in the Doncaster Council purchase card transactions for Q1 2025/26?",
+  "gold_answer": "5",
+  "answer_type": "number",
+  "question_type": "numeric_reasoning",
+  "requires_cross_document": false,
+  "document_count": 1,
+  "source_document_ids": [
+   "doc_006"
+  ],
+  "gold_evidence": [
+   {
+    "doc_id": "doc_006",
+    "evidence_type": "sheet_table",
+    "sheet_name": "DataAnalysis",
+    "quote": "computed: SELECT COUNT(DISTINCT \"Directorate\") FROM \"doc_006_purchase_card_transactions_q1_2025_26__DataAnalysis\""
+   }
+  ],
+  "qa_id": "gen_121"
+ }
+]

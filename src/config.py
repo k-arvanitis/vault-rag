@@ -51,6 +51,7 @@ PDF_PARSER: str = os.getenv("PDF_PARSER", "auto").lower()
 
 RERANKER_MODEL: str = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
 RERANKER_DEVICE: str = os.getenv("RERANKER_DEVICE", "cpu")
+RERANKER_ENABLED: bool = os.getenv("RERANKER_ENABLED", "true").lower() == "true"
 EMBED_DEVICE: str = os.getenv("EMBED_DEVICE", "cpu")
 
 # ---------------------------------------------------------------------------

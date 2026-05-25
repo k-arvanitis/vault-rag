@@ -132,6 +132,7 @@ class _DecomposeState(TypedDict):
     sub_questions: list[str]
     formatted_question: str
     answer: str
+    contexts: list[str]
 
 
 def build_decomposition_pipeline(
@@ -209,8 +210,9 @@ def build_decomposition_pipeline(
 
     def _run_node(state: _DecomposeState) -> dict:
         """Run the ReAct agent on the (possibly plan-formatted) question."""
-        answer = ask_agent(agent, state["formatted_question"])
-        return {"answer": answer}
+        chunks: list[str] = []
+        answer = ask_agent(agent, state["formatted_question"], retrieved_contexts=chunks)
+        return {"answer": answer, "contexts": chunks}
 
     builder: StateGraph = StateGraph(_DecomposeState)
     builder.add_node("decompose", _decompose_node)
@@ -221,12 +223,22 @@ def build_decomposition_pipeline(
     return builder.compile()
 
 
-def ask_with_decomposition(pipeline: Any, question: str) -> str:
-    """Invoke a decomposition pipeline and return the final answer string."""
+def ask_with_decomposition(
+    pipeline: Any, question: str, collected_chunks: list[str] | None = None
+) -> str:
+    """Invoke a decomposition pipeline and return the final answer string.
+
+    If collected_chunks is provided, the tool-result chunks the agent retrieved
+    while answering are appended to it (same contract as stream_agent/ask_agent),
+    so callers like the eval harness can ground a faithfulness judge.
+    """
     result = pipeline.invoke({
         "question": question,
         "sub_questions": [],
         "formatted_question": "",
         "answer": "",
+        "contexts": [],
     })
+    if collected_chunks is not None:
+        collected_chunks.extend(result.get("contexts") or [])
     return result["answer"]

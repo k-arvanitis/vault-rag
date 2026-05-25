@@ -2,7 +2,12 @@
 multi-part query splitting, coverage-driven repair, and the non-agentic
 fallback retrieval paths.
 
-Extracted from rag_agent.py; imported back by ask_agent / stream_agent.
+Extracted from rag_agent.py; imported back by ask_agent / stream_agent
+(and their helpers _context_fallback_answer / _retrieval_only_answer /
+_normalize_final) which run these functions as the answer-finalization pipeline.
+
+Calls into: src/retriever.py (retrieve), src/llm_utils.py (_llm_call,
+_is_thinking_model), src/file_resolver.py (resolve_original_name), src/config.py.
 """
 from __future__ import annotations
 
@@ -14,6 +19,11 @@ from src.config import MAX_TOOL_RESULTS, QDRANT_COLLECTION, QDRANT_URL
 from src.file_resolver import resolve_original_name
 from src.llm_utils import _is_thinking_model, _llm_call
 from src.retriever import retrieve
+
+
+# ---------------------------------------------------------------------------
+# Text / JSON parsing utilities — clean model output before inspecting it
+# ---------------------------------------------------------------------------
 
 
 def _strip_think(text: str) -> str:
@@ -42,6 +52,11 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
+# ---------------------------------------------------------------------------
+# Bad-answer detection — classify answers worth retrying or rejecting
+# ---------------------------------------------------------------------------
+
+
 def _looks_like_bad_final_answer(text: str) -> bool:
     """Return True for transport/tool artifacts or empty abstentions worth retrying."""
     cleaned = _strip_think(text).strip()
@@ -57,6 +72,11 @@ def _looks_like_bad_final_answer(text: str) -> bool:
     )
 
 
+# ---------------------------------------------------------------------------
+# Abstention normalization — collapse verbose 'not found' replies to 'Unsupported'
+# ---------------------------------------------------------------------------
+
+# Hedging phrases that indicate the model failed to find the requested value.
 _NOT_PROVIDED_PHRASES = (
     "not provided", "not available", "not included", "not contained",
     "not answerable", "not found in", "not in this dataset", "not in the dataset",
@@ -70,6 +90,7 @@ _NOT_PROVIDED_PHRASES = (
 )
 
 
+# Stronger phrases that warrant abstention even mid-sentence.
 _STRONG_NOT_FOUND_PHRASES = (
     "none of the provided documents", "none of the documents", "no document in",
     "not present in any", "not found in any",
@@ -92,6 +113,7 @@ def _normalize_unsupported(answer: str) -> str:
             if is_hedging and not has_real_value:
                 return "Unsupported"
         return answer
+    # No literal "Unsupported" token — abstain if the whole answer is hedging.
     lowered = answer.lower()
     if any(phrase in lowered for phrase in _STRONG_NOT_FOUND_PHRASES):
         return "Unsupported"
@@ -100,12 +122,18 @@ def _normalize_unsupported(answer: str) -> str:
     return answer
 
 
+# ---------------------------------------------------------------------------
+# Bare-filename detection — reject answers that name a file but extract no value
+# ---------------------------------------------------------------------------
+
+# Matches an ingested document filename (doc_NNN...ext) inside an answer.
 _BARE_FILENAME_RE = re.compile(
     r"\bdoc_\d+[_a-z0-9-]*\.(?:pdf|csv|xlsx|xls|md|json|txt|tsv)\b",
     re.IGNORECASE,
 )
 
 
+# Framing/question-echo words removed before checking for substantive content.
 _BARE_FN_STOP = frozenset({
     "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "am",
     "in", "on", "of", "for", "to", "from", "with", "by", "at", "as", "into",
@@ -163,10 +191,17 @@ def _is_bare_filename_answer(query: str, answer: str) -> bool:
     nums = [n for n in re.findall(r"\d[\d,.$%/-]*", stripped) if n not in query_nums]
     if nums:
         return False
+    # No new numbers — bad answer only if fewer than 2 substantive (non-framing,
+    # non-question-echo) word tokens remain after stripping filenames.
     query_terms = set(re.findall(r"\b[a-z][a-z]{2,}\b", query.lower()))
     tokens = re.findall(r"\b[A-Za-z][A-Za-z'/-]{1,}\b", stripped.lower())
     substantive = [t for t in tokens if t not in _BARE_FN_STOP and t not in query_terms]
     return len(substantive) < 2
+
+
+# ---------------------------------------------------------------------------
+# Query analysis — detect unanswerable, multi-part, and decomposable questions
+# ---------------------------------------------------------------------------
 
 
 def _has_empty_reference_placeholder(query: str) -> bool:
@@ -218,6 +253,8 @@ def _split_multi_part_query(query: str) -> list[str]:
     q = query.strip()
     parts: list[str] = []
 
+    # Try three split patterns in priority order: a "?" boundary before a new
+    # question, an "and what" conjunction, or a trailing "respectively".
     question_boundary = re.search(r"\?\s+(?=(According to|In the|In |What|Which)\b)", q)
     if question_boundary:
         first = q[: question_boundary.start() + 1].strip()
@@ -238,6 +275,7 @@ def _split_multi_part_query(query: str) -> list[str]:
         # Keep the original wording; retrieval can still use both named entities.
         parts.append(q)
 
+    # Keep only non-trivial, unique parts; fall back to the whole query if <2.
     cleaned: list[str] = []
     for part in parts:
         part = re.sub(r"\s+", " ", part).strip()
@@ -246,16 +284,23 @@ def _split_multi_part_query(query: str) -> list[str]:
     return cleaned if len(cleaned) >= 2 else [q]
 
 
+# ---------------------------------------------------------------------------
+# Non-agentic fallback answer paths — re-answer from context or fresh retrieval
+# ---------------------------------------------------------------------------
+
+
 def _direct_answer_from_context(query: str, contexts: list[str], api_base: str, model_name: str) -> str:
     """Fallback answer pass over retrieved text, without another tool-planning loop."""
     usable_contexts = [ctx.strip() for ctx in contexts if ctx and ctx.strip()]
     if not usable_contexts:
         return "Unsupported"
 
+    # Cheap path first: pull a "Field: Value" match straight from the text.
     extracted = _extract_key_value_answer(query, usable_contexts)
     if extracted:
         return extracted
 
+    # Pack contexts into a character budget before sending them to the LLM.
     packed_contexts: list[str] = []
     used_chars = 0
     max_context_chars = 16000
@@ -271,6 +316,7 @@ def _direct_answer_from_context(query: str, contexts: list[str], api_base: str, 
         used_chars += len(piece)
     context = "\n\n".join(packed_contexts)
 
+    # Single grounded-answer LLM call over the packed context.
     no_think = "/no_think " if _is_thinking_model(model_name) else ""
     prompt = (
         f"{no_think}Answer the question using only the retrieved context below.\n"
@@ -306,6 +352,8 @@ def _llm_split_subqueries(query: str, api_base: str, model_name: str) -> list[st
         f"Question: {query}\n\n"
         "JSON array:"
     )
+    # Ask the LLM for a JSON array of sub-queries; on any failure fall back to
+    # the deterministic regex-based splitter.
     try:
         raw = _llm_call(prompt, api_base, model_name, max_tokens=200, temperature=0)
         raw = _strip_think(raw)
@@ -321,6 +369,7 @@ def _llm_split_subqueries(query: str, api_base: str, model_name: str) -> list[st
 
 def _direct_retrieval_answer(query: str, api_base: str, model_name: str) -> str:
     """Last-resort non-agentic RAG path for malformed or skipped tool calls."""
+    # Decompose the query, then retrieve a share of the token budget per sub-query.
     contexts = []
     context_index = 1
     subqueries = _llm_split_subqueries(query, api_base, model_name)
@@ -341,6 +390,11 @@ def _direct_retrieval_answer(query: str, api_base: str, model_name: str) -> str:
             contexts.append(f"[{context_index}] subquery={subquery}\nfile={file_name}\n{content}")
             context_index += 1
     return _direct_answer_from_context(query, contexts, api_base, model_name)
+
+
+# ---------------------------------------------------------------------------
+# Coverage-driven repair — detect and refill missing parts of multi-part answers
+# ---------------------------------------------------------------------------
 
 
 def _coverage_check(
@@ -484,6 +538,7 @@ def _repair_incomplete_answer(
             deduped_queries.append(missing_query)
     missing_queries = deduped_queries
 
+    # Retrieve extra chunks for each missing query and append them to the context.
     repaired_contexts = list(contexts)
     context_index = len(repaired_contexts) + 1
     for missing_query in missing_queries[:2]:
@@ -507,9 +562,11 @@ def _repair_incomplete_answer(
                 repaired_contexts.append(f"[{context_index}] repair_query={missing_query}\nfile={file_name}\n{content}")
                 context_index += 1
 
+    # No new chunks were found — nothing to repair with.
     if len(repaired_contexts) == len(contexts):
         return answer
 
+    # Re-answer over the enlarged context; keep the original answer on failure.
     try:
         repaired = _direct_answer_from_context(query, repaired_contexts, api_base, model_name)
     except Exception as exc:
@@ -529,11 +586,17 @@ def _repair_incomplete_answer(
         if _context_source_count(repaired_contexts) <= source_count:
             return answer
 
+    # Accept the repair only when it is genuinely better than the original.
     if source_count < 2 and _is_better_multi_answer(repaired, answer):
         return repaired
     if _unsupported_count(repaired) < _unsupported_count(answer):
         return repaired
     return answer
+
+
+# ---------------------------------------------------------------------------
+# Key-value extraction — pull 'Field: Value' answers straight from context text
+# ---------------------------------------------------------------------------
 
 
 def _label_candidates_from_query(query: str) -> list[str]:
@@ -551,6 +614,7 @@ def _label_candidates_from_query(query: str) -> list[str]:
         " in ", " for ", " from ", " within ", " according ", " on ", " dated ",
         " with ", " of the ",
     )
+    # For each phrasing pattern, extract the label phrase and trim trailing scope.
     for pattern in patterns:
         match = re.search(pattern, q)
         if not match:
@@ -572,6 +636,8 @@ def _extract_key_value_answer(query: str, contexts: list[str]) -> str | None:
     if not labels:
         return None
 
+    # Scan each context for the label as a "Label: value" line or a markdown
+    # table cell, returning the first cleaned value found.
     for ctx in contexts:
         text = re.sub(r"[*_`#]+", "", ctx)
         for label in labels:
