@@ -3,6 +3,7 @@
 Runs after OCR + translation, before chunking. Saves the result to
 data/output/processed/ so the inspector can show exactly what gets ingested.
 """
+
 from __future__ import annotations
 
 import os
@@ -46,7 +47,7 @@ def _table_to_sentences(table_text: str, title: str) -> str:
     blocks: list[str] = []
 
     for part_idx, start in enumerate(range(0, len(rows), ROWS_PER_BLOCK), start=1):
-        batch = rows[start: start + ROWS_PER_BLOCK]
+        batch = rows[start : start + ROWS_PER_BLOCK]
         sentences = []
         for row in batch:
             pairs = [f"{h}: {v}" for h, v in zip(headers, row) if v]
@@ -61,6 +62,7 @@ def _table_to_sentences(table_text: str, title: str) -> str:
 
 def process_markdown(markdown: str) -> str:
     """Replace all ASCII grid tables in markdown with row-sentence blocks."""
+
     # Match contiguous blocks of lines starting with + or |
     def replace_table(match: re.Match) -> str:
         table_text = match.group(0)

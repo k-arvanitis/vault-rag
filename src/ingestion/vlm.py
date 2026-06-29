@@ -1,4 +1,5 @@
 """VLM caller for figure descriptions in text-layer PDF pages."""
+
 from __future__ import annotations
 
 import base64

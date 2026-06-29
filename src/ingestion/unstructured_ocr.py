@@ -4,6 +4,7 @@ Used when PDF_PARSER=cpu so the demo can run on CPU-only infrastructure
 (e.g. Render) without the LightOn OCR vLLM server. Roughly 10x slower per
 page than the GPU path.
 """
+
 from __future__ import annotations
 
 import logging
@@ -30,7 +31,9 @@ def call_unstructured_ocr(pix) -> str:
     try:
         from unstructured.partition.pdf import partition_pdf
     except ImportError:
-        logger.error("unstructured is not installed; install with `uv add unstructured[pdf]`")
+        logger.error(
+            "unstructured is not installed; install with `uv add unstructured[pdf]`"
+        )
         return ""
 
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
@@ -41,6 +44,7 @@ def call_unstructured_ocr(pix) -> str:
     except Exception:
         try:
             import fitz
+
             single = fitz.open()
             single.new_page(width=pix.width, height=pix.height).insert_image(
                 fitz.Rect(0, 0, pix.width, pix.height), pixmap=pix
@@ -65,7 +69,9 @@ def call_unstructured_ocr(pix) -> str:
     for el in elements:
         category = getattr(el, "category", "") or ""
         if category == "Table":
-            html = (getattr(el, "metadata", None) and el.metadata.text_as_html) or str(el)
+            html = (getattr(el, "metadata", None) and el.metadata.text_as_html) or str(
+                el
+            )
             parts.append(html)
         else:
             text = str(el).strip()

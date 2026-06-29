@@ -15,6 +15,8 @@ the pure compose_system_prompt() helper.
 
 from __future__ import annotations
 
+PROMPT_VERSION = "2026-06-29"
+
 # ---------------------------------------------------------------------------
 # RAG ReAct agent — system prompt (src/rag_agent.py)
 # ---------------------------------------------------------------------------

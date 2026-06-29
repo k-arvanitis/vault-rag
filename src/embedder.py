@@ -60,16 +60,22 @@ def _batched(items: list[Any], batch_size: int) -> list[list[Any]]:
     return [items[i : i + batch_size] for i in range(0, len(items), batch_size)]
 
 
-def _ollama_embed_batch(api_base: str, model_name: str, texts: list[str]) -> list[list[float]]:
+def _ollama_embed_batch(
+    api_base: str, model_name: str, texts: list[str]
+) -> list[list[float]]:
     url = f"{api_base.rstrip('/')}/api/embed"
     payload = json.dumps({"model": model_name, "input": texts}).encode("utf-8")
-    req = Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+    req = Request(
+        url, data=payload, headers={"Content-Type": "application/json"}, method="POST"
+    )
     try:
         with urlopen(req, timeout=300) as resp:
             body = json.loads(resp.read().decode("utf-8"))
     except HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Ollama embed request failed ({exc.code}): {detail}") from exc
+        raise RuntimeError(
+            f"Ollama embed request failed ({exc.code}): {detail}"
+        ) from exc
     except URLError as exc:
         raise RuntimeError(
             f"Could not connect to Ollama at {api_base}. Ensure `ollama serve` is running."
@@ -93,7 +99,9 @@ def embed_chunks(
 
     def _embed_with_fallback(batch: list[str]) -> list[list[float]]:
         try:
-            return _ollama_embed_batch(api_base=api_base, model_name=model_name, texts=batch)
+            return _ollama_embed_batch(
+                api_base=api_base, model_name=model_name, texts=batch
+            )
         except RuntimeError:
             if len(batch) == 1:
                 raise
@@ -109,7 +117,12 @@ def embed_chunks(
             source_chunk = chunks[base_idx + idx]
             payload.append(
                 {
-                    "id": str(source_chunk.get("id") or source_chunk.get("metadata", {}).get("chunk_index", len(payload))),
+                    "id": str(
+                        source_chunk.get("id")
+                        or source_chunk.get("metadata", {}).get(
+                            "chunk_index", len(payload)
+                        )
+                    ),
                     "embedding": embedding,
                     "content": source_chunk.get("content", ""),
                     "vector_text": batch[idx],
@@ -138,7 +151,9 @@ def embed_chunks_file(
     )
 
     if output_path is None:
-        output_path = REPO_ROOT / "data/output/embeddings" / f"{input_path.stem}_embeddings.json"
+        output_path = (
+            REPO_ROOT / "data/output/embeddings" / f"{input_path.stem}_embeddings.json"
+        )
     elif not output_path.is_absolute():
         output_path = REPO_ROOT / output_path
 
@@ -152,7 +167,9 @@ def embed_chunks_file(
 def main() -> None:
     load_dotenv()
 
-    parser = argparse.ArgumentParser(description="Embed chunk JSON with an Ollama embedding model.")
+    parser = argparse.ArgumentParser(
+        description="Embed chunk JSON with an Ollama embedding model."
+    )
     parser.add_argument(
         "--input",
         type=Path,

@@ -8,7 +8,7 @@ See also `TODO_LITELLM.md` for the three open LiteLLM semantic-cache + Langfuse 
   ```bash
   git diff                          # inspect changes
   git add .github/workflows/ci.yml README.md
-  git rm Dockerfile app.py          # if intentionally deleted
+  git rm Dockerfile                  # if intentionally deleted (app.py already removed)
   git commit -m "chore: clean up legacy files, update CI and README"
   # Do NOT commit CLAUDE.md — it is gitignored
   ```
@@ -30,7 +30,7 @@ See also `TODO_LITELLM.md` for the three open LiteLLM semantic-cache + Langfuse 
 ## Demo assets
 - [ ] Create `assets/` if not already present
 - [ ] Screenshot: a question answered with `[Source N]` citations and sources panel visible
-- [ ] Screenshot: the Streamlit chunk inspector showing retrieved/dropped chunks
+- [ ] Screenshot: the Next.js document inspector showing retrieved chunks and parsed markdown
 - [ ] Short screen recording: ingest a PDF → ask a factual question → cited answer
 - [ ] Replace any `_pending_` placeholder in the README Demo section
 

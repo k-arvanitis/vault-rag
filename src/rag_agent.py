@@ -18,6 +18,7 @@ for the answer-finalization pipeline.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from typing import Any, Generator
@@ -26,12 +27,16 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, Too
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 
-from src.duckdb_store import DuckDBStore
-from src.tools.excel import build_excel_agent_tools
-from src.prompts import compose_system_prompt
-from src.reranker import BGEReranker, QwenReranker
-from src.retriever import (
-    retrieve,
+from src.answer_quality import (
+    _direct_answer_from_context,
+    _direct_retrieval_answer,
+    _has_empty_reference_placeholder,
+    _is_bare_filename_answer,
+    _is_multi_part_query,
+    _looks_like_bad_final_answer,
+    _normalize_unsupported,
+    _repair_incomplete_answer,
+    _strip_think,
 )
 from src.config import (
     GENERATION_API_BASE,
@@ -46,19 +51,17 @@ from src.config import (
     RERANKER_MODEL,
     RETRIEVAL_TOP_K,
 )
+from src.duckdb_store import DuckDBStore
 from src.llm_utils import _is_thinking_model, _to_openai_base
-from src.tools.retrieval_tool import _make_unified_tool
-from src.answer_quality import (
-    _direct_answer_from_context,
-    _direct_retrieval_answer,
-    _has_empty_reference_placeholder,
-    _is_bare_filename_answer,
-    _is_multi_part_query,
-    _looks_like_bad_final_answer,
-    _normalize_unsupported,
-    _repair_incomplete_answer,
-    _strip_think,
+from src.prompts import PROMPT_VERSION, compose_system_prompt
+from src.reranker import BGEReranker, QwenReranker
+from src.retriever import (
+    retrieve,
 )
+from src.tools.excel import build_excel_agent_tools
+from src.tools.retrieval_tool import _make_unified_tool
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # System prompt — templates live in src/prompts.py; this is the model-specific wiring
@@ -194,13 +197,27 @@ def _build_doc_registry(qdrant_url: str, collection: str) -> dict[str, str]:
     # Scroll the Qdrant collection for document_summary points (one per document).
     base = qdrant_url.rstrip("/")
     url = f"{base}/collections/{collection}/points/scroll"
-    body_bytes = json.dumps({
-        "limit": 250,
-        "with_payload": True,
-        "with_vector": False,
-        "filter": {"must": [{"key": "metadata.chunk_type", "match": {"value": "document_summary"}}]},
-    }).encode()
-    req = Request(url, data=body_bytes, headers={"Content-Type": "application/json"}, method="POST")
+    body_bytes = json.dumps(
+        {
+            "limit": 250,
+            "with_payload": True,
+            "with_vector": False,
+            "filter": {
+                "must": [
+                    {
+                        "key": "metadata.chunk_type",
+                        "match": {"value": "document_summary"},
+                    }
+                ]
+            },
+        }
+    ).encode()
+    req = Request(
+        url,
+        data=body_bytes,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
     try:
         with urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode())
@@ -243,15 +260,24 @@ def build_rag_agent(
     ranker: BGEReranker | QwenReranker | None = None
     if RERANKER_ENABLED and reranker_model_name:
         try:
-            if "bge" in reranker_model_name.lower() or "mxbai" in reranker_model_name.lower():
-                ranker = BGEReranker(model_name=reranker_model_name, device=RERANKER_DEVICE)
+            if (
+                "bge" in reranker_model_name.lower()
+                or "mxbai" in reranker_model_name.lower()
+            ):
+                ranker = BGEReranker(
+                    model_name=reranker_model_name, device=RERANKER_DEVICE
+                )
             else:
-                ranker = QwenReranker(model_name=reranker_model_name, device=RERANKER_DEVICE)
+                ranker = QwenReranker(
+                    model_name=reranker_model_name, device=RERANKER_DEVICE
+                )
             # Warm up: force model init so first real query has no latency spike
             ranker.rerank("warmup", ["warmup text"], top_n=1)
             print(f"[INFO] Reranker '{reranker_model_name}' loaded and warmed up.")
         except Exception as e:
-            print(f"[WARNING] Reranker failed to load: {e}. Falling back to no reranker.")
+            print(
+                f"[WARNING] Reranker failed to load: {e}. Falling back to no reranker."
+            )
             ranker = None
 
     # API key resolution: LiteLLM master key → Groq → OpenAI → dummy
@@ -264,13 +290,14 @@ def build_rag_agent(
         or "EMPTY"
     )
     # Generation LLM, deterministic (temperature 0) and capped at 2048 output tokens.
+    logger.info("Building agent prompt_version=%s model=%s", PROMPT_VERSION, model_name)
     llm = ChatOpenAI(
         model=model_name,
         base_url=_to_openai_base(generation_api_base),
         api_key=_api_key,
         temperature=0,
         max_tokens=2048,
-    )
+    ).with_retry(stop_after_attempt=3)
 
     # Filename -> doc_id lookup used to resolve titles the LLM passes instead of ids.
     doc_registry = _build_doc_registry(qdrant_url, collection)
@@ -297,7 +324,9 @@ def build_rag_agent(
     # Assemble the ReAct agent and stash metadata ask_agent/stream_agent read back
     # off the agent object (the _rag_limits dict is mutated on context overflow).
     system_prompt = _build_system_prompt(model_name)
-    agent = create_react_agent(model=llm, tools=tools, prompt=system_prompt, name="vault-rag")
+    agent = create_react_agent(
+        model=llm, tools=tools, prompt=system_prompt, name="vault-rag"
+    )
     agent._rag_limits = _rag_limits  # type: ignore[attr-defined]
     agent._system_prompt = system_prompt  # type: ignore[attr-defined]
     agent._generation_api_base = _to_openai_base(generation_api_base)  # type: ignore[attr-defined]
@@ -321,7 +350,9 @@ def _extract_refs(tool_content: str) -> str:
         stripped = line.strip()
         if re.match(r"^\[\d+\] file=", stripped):
             lines.append(stripped)
-        elif stripped.startswith("Sources (sheets):") or stripped.startswith("Summary:"):
+        elif stripped.startswith("Sources (sheets):") or stripped.startswith(
+            "Summary:"
+        ):
             lines.append(stripped)
     if lines:
         return "\n".join(lines)
@@ -339,6 +370,7 @@ def _get_langfuse():
         return None
     try:
         from langfuse import Langfuse
+
         return Langfuse(host=host, public_key=pk, secret_key=sk)
     except ImportError:
         return None
@@ -390,7 +422,9 @@ def _context_fallback_answer(
             if not _looks_like_bad_final_answer(direct) or answer != "Unsupported":
                 answer = direct
     except Exception as exc:
-        print(f"[WARN] Direct context answer fallback failed ({type(exc).__name__}): {exc}")
+        print(
+            f"[WARN] Direct context answer fallback failed ({type(exc).__name__}): {exc}"
+        )
     return answer
 
 
@@ -406,7 +440,9 @@ def _retrieval_only_answer(
         try:
             return _direct_retrieval_answer(query, api_base, model_name)
         except Exception as exc:
-            print(f"[WARN] Direct retrieval answer fallback failed ({type(exc).__name__}): {exc}")
+            print(
+                f"[WARN] Direct retrieval answer fallback failed ({type(exc).__name__}): {exc}"
+            )
     return "Unsupported" if "search_knowledge_base" in answer else answer
 
 
@@ -435,7 +471,7 @@ def ask_agent(
 
     # Replay prior turns as LangChain messages, then append the current question.
     messages: list = []
-    for turn in (history or []):
+    for turn in history or []:
         if turn["role"] == "user":
             messages.append(HumanMessage(content=turn["content"]))
         else:
@@ -456,15 +492,23 @@ def ask_agent(
         # The actual answer text is in the 'failed_generation' field — extract it directly.
         if "failed to call a function" in err_str or "tool_use_failed" in err_str:
             body = getattr(exc, "body", {}) or {}
-            failed_gen = body.get("failed_generation", "") if isinstance(body, dict) else ""
+            failed_gen = (
+                body.get("failed_generation", "") if isinstance(body, dict) else ""
+            )
             # Only use failed_generation if it looks like a final answer, not a
             # reasoning preamble that never reached a conclusion.
             if failed_gen and not _REASONING_PREFIX_RE.match(failed_gen.strip()):
                 failed_gen = failed_gen.strip()
-                return "Unsupported" if _looks_like_bad_final_answer(failed_gen) else failed_gen
+                return (
+                    "Unsupported"
+                    if _looks_like_bad_final_answer(failed_gen)
+                    else failed_gen
+                )
         if _is_context_overflow(err_str):
             print("[WARN] Context overflow — retrying with fewer chunks.")
-            _limits["rerank_top_n"] = max(3, _limits.get("rerank_top_n", RERANK_TOP_N) // 2)
+            _limits["rerank_top_n"] = max(
+                3, _limits.get("rerank_top_n", RERANK_TOP_N) // 2
+            )
             try:
                 result = agent.invoke(_invoke_input, config=_invoke_config)
             finally:
@@ -494,7 +538,9 @@ def ask_agent(
         if isinstance(msg, AIMessage) and msg.tool_calls:
             for tc in msg.tool_calls:
                 if show_tool_uses:
-                    print(f"[TOOL_CALL] {tc['name']} args={json.dumps(tc['args'], ensure_ascii=False)}")
+                    print(
+                        f"[TOOL_CALL] {tc['name']} args={json.dumps(tc['args'], ensure_ascii=False)}"
+                    )
                 if trace is not None:
                     result_content = tool_results.get(tc["id"], "")
                     trace.span(
@@ -517,13 +563,25 @@ def ask_agent(
     # context/retrieval fallbacks for bad answers, then canonical normalization.
     api_base = getattr(agent, "_generation_api_base", None)
     model_name = getattr(agent, "_generation_model", None)
-    if api_base and model_name and tool_contexts and (
-        not _looks_like_bad_final_answer(answer) or _is_multi_part_query(query)
+    if (
+        api_base
+        and model_name
+        and tool_contexts
+        and (not _looks_like_bad_final_answer(answer) or _is_multi_part_query(query))
     ):
-        answer = _repair_incomplete_answer(query, answer, tool_contexts, api_base, model_name)
+        answer = _repair_incomplete_answer(
+            query, answer, tool_contexts, api_base, model_name
+        )
 
-    if _looks_like_bad_final_answer(answer) and tool_contexts and api_base and model_name:
-        answer = _context_fallback_answer(query, answer, tool_contexts, api_base, model_name)
+    if (
+        _looks_like_bad_final_answer(answer)
+        and tool_contexts
+        and api_base
+        and model_name
+    ):
+        answer = _context_fallback_answer(
+            query, answer, tool_contexts, api_base, model_name
+        )
     elif _looks_like_bad_final_answer(answer) and not tool_contexts:
         answer = _retrieval_only_answer(query, answer, api_base, model_name)
 
@@ -550,7 +608,9 @@ def _overflow_fallback_answer(
         model_name = getattr(agent, "_generation_model", None)
         if api_base and model_name:
             return _direct_retrieval_answer(query, api_base, model_name)
-        return ask_agent(agent, query, history=history, retrieved_contexts=collected_chunks)
+        return ask_agent(
+            agent, query, history=history, retrieved_contexts=collected_chunks
+        )
     finally:
         limits["rerank_top_n"] = min(RERANK_TOP_N, MAX_TOOL_RESULTS)
 
@@ -584,7 +644,7 @@ def stream_agent(
 
     # Replay prior turns as LangChain messages, then append the current question.
     messages: list = []
-    for turn in (history or []):
+    for turn in history or []:
         if turn["role"] == "user":
             messages.append(HumanMessage(content=turn["content"]))
         else:
@@ -608,7 +668,7 @@ def stream_agent(
                 end = _think_buf.find("</think>")
                 if end == -1:
                     return out
-                _think_buf = _think_buf[end + len("</think>"):]
+                _think_buf = _think_buf[end + len("</think>") :]
                 _in_think = False
             else:
                 start = _think_buf.find("<think>")
@@ -617,7 +677,7 @@ def stream_agent(
                     _think_buf = ""
                     return out
                 out += _think_buf[:start]
-                _think_buf = _think_buf[start + len("<think>"):]
+                _think_buf = _think_buf[start + len("<think>") :]
                 _in_think = True
 
     from openai import APIError, BadRequestError
@@ -634,7 +694,9 @@ def stream_agent(
     # the first tool result arrives, then to the final buffer; tool-call argument
     # chunks are skipped entirely.
     try:
-        for chunk, metadata in agent.stream(_invoke_input, config=_invoke_config, stream_mode="messages"):
+        for chunk, metadata in agent.stream(
+            _invoke_input, config=_invoke_config, stream_mode="messages"
+        ):
             if isinstance(chunk, AIMessageChunk):
                 if chunk.tool_call_chunks:
                     continue
@@ -669,13 +731,17 @@ def stream_agent(
                         collected_chunks.append("---CALL_BOUNDARY---")
                         collected_chunks.extend(cleaned)
                 if show_tool_uses:
-                    print(f"\n[TOOL_RESULT] {chunk.name} ->\n{_extract_refs(chunk.content)}\n")
+                    print(
+                        f"\n[TOOL_RESULT] {chunk.name} ->\n{_extract_refs(chunk.content)}\n"
+                    )
     except (BadRequestError, APIError) as exc:
         # Provider errors: context overflow retries with fewer chunks; a malformed
         # final-answer tool call has its real text recovered below.
         err_str = str(exc).lower()
         if _is_context_overflow(err_str):
-            yield _overflow_fallback_answer(agent, query, history, collected_chunks, _limits)
+            yield _overflow_fallback_answer(
+                agent, query, history, collected_chunks, _limits
+            )
             return
         if "failed to call a function" in err_str or "tool_use_failed" in err_str:
             if _tool_used:
@@ -684,23 +750,38 @@ def stream_agent(
                 answer = "".join(_final_buf).strip()
                 api_base = getattr(agent, "_generation_api_base", None)
                 model_name = getattr(agent, "_generation_model", None)
-                if _looks_like_bad_final_answer(answer) and _tool_contexts and api_base and model_name:
-                    answer = _context_fallback_answer(query, answer, _tool_contexts, api_base, model_name)
+                if (
+                    _looks_like_bad_final_answer(answer)
+                    and _tool_contexts
+                    and api_base
+                    and model_name
+                ):
+                    answer = _context_fallback_answer(
+                        query, answer, _tool_contexts, api_base, model_name
+                    )
                 if answer:
                     yield answer
                 return
             # Error happened before any tool call; try to extract answer from failed_generation body.
             body = getattr(exc, "body", {}) or {}
-            failed_gen = body.get("failed_generation", "") if isinstance(body, dict) else ""
+            failed_gen = (
+                body.get("failed_generation", "") if isinstance(body, dict) else ""
+            )
             if failed_gen and not _REASONING_PREFIX_RE.match(failed_gen.strip()):
                 failed_gen = failed_gen.strip()
-                yield "Unsupported" if _looks_like_bad_final_answer(failed_gen) else failed_gen
+                yield (
+                    "Unsupported"
+                    if _looks_like_bad_final_answer(failed_gen)
+                    else failed_gen
+                )
                 return
         raise
     except Exception as exc:
         err_str = str(exc).lower()
         if _is_context_overflow(err_str):
-            yield _overflow_fallback_answer(agent, query, history, collected_chunks, _limits)
+            yield _overflow_fallback_answer(
+                agent, query, history, collected_chunks, _limits
+            )
             return
         raise
 
@@ -726,17 +807,28 @@ def stream_agent(
     answer = "".join(_final_buf).strip()
     api_base = getattr(agent, "_generation_api_base", None)
     model_name = getattr(agent, "_generation_model", None)
-    if api_base and model_name and _tool_contexts and (
-        not _looks_like_bad_final_answer(answer) or _is_multi_part_query(query)
+    if (
+        api_base
+        and model_name
+        and _tool_contexts
+        and (not _looks_like_bad_final_answer(answer) or _is_multi_part_query(query))
     ):
-        answer = _repair_incomplete_answer(query, answer, _tool_contexts, api_base, model_name)
+        answer = _repair_incomplete_answer(
+            query, answer, _tool_contexts, api_base, model_name
+        )
 
-    if _looks_like_bad_final_answer(answer) and _tool_contexts and api_base and model_name:
-        answer = _context_fallback_answer(query, answer, _tool_contexts, api_base, model_name)
+    if (
+        _looks_like_bad_final_answer(answer)
+        and _tool_contexts
+        and api_base
+        and model_name
+    ):
+        answer = _context_fallback_answer(
+            query, answer, _tool_contexts, api_base, model_name
+        )
 
     if answer:
         yield _normalize_final(query, answer)
 
 
 # The command-line runner lives in rag_cli.py — this module is import-only.
-

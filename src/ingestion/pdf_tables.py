@@ -13,6 +13,7 @@ never on a specific file or column name.
 Calls: pandas (table parsing), duckdb (load), src.duckdb_store (_table_name,
 _normalize_dates), src.ingest_table_rows (sheet/document summary upserts).
 """
+
 from __future__ import annotations
 
 import re
@@ -106,7 +107,9 @@ def load_tables_to_duckdb(
             tname = _table_name(doc_name, sheet)
             try:
                 con.register("_tmp_df", _normalize_dates(df))
-                con.execute(f'CREATE OR REPLACE TABLE "{tname}" AS SELECT * FROM _tmp_df')
+                con.execute(
+                    f'CREATE OR REPLACE TABLE "{tname}" AS SELECT * FROM _tmp_df'
+                )
                 con.unregister("_tmp_df")
                 loaded.append((sheet, df))
                 if verbose:
@@ -120,7 +123,10 @@ def load_tables_to_duckdb(
 
 
 def ingest_pdf_tables(
-    doc_name: str, markdown: str, collection: str = "documents_chunks", verbose: bool = True
+    doc_name: str,
+    markdown: str,
+    collection: str = "documents_chunks",
+    verbose: bool = True,
 ) -> int:
     """Load a document's embedded tables into DuckDB and upsert Qdrant summaries.
 

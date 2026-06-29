@@ -9,6 +9,7 @@ _normalize_final) which run these functions as the answer-finalization pipeline.
 Calls into: src/retriever.py (retrieve), src/llm_utils.py (_llm_call,
 _is_thinking_model), src/file_resolver.py (resolve_original_name), src/config.py.
 """
+
 from __future__ import annotations
 
 import json
@@ -19,7 +20,6 @@ from src.config import MAX_TOOL_RESULTS, QDRANT_COLLECTION, QDRANT_URL
 from src.file_resolver import resolve_original_name
 from src.llm_utils import _is_thinking_model, _llm_call
 from src.retriever import retrieve
-
 
 # ---------------------------------------------------------------------------
 # Text / JSON parsing utilities — clean model output before inspecting it
@@ -34,7 +34,9 @@ def _strip_think(text: str) -> str:
 def _extract_json_object(text: str) -> dict[str, Any] | None:
     """Parse the first JSON object from model output."""
     cleaned = _strip_think(text).strip()
-    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=re.IGNORECASE | re.MULTILINE).strip()
+    cleaned = re.sub(
+        r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=re.IGNORECASE | re.MULTILINE
+    ).strip()
     try:
         parsed = json.loads(cleaned)
         return parsed if isinstance(parsed, dict) else None
@@ -68,7 +70,8 @@ def _looks_like_bad_final_answer(text: str) -> bool:
         or lowered.startswith("sorry, need more steps")
         or lowered.startswith("<function=")
         or lowered.startswith("function=")
-        or "search_knowledge_base" in lowered and ("<function" in lowered or "</function>" in lowered)
+        or "search_knowledge_base" in lowered
+        and ("<function" in lowered or "</function>" in lowered)
     )
 
 
@@ -78,22 +81,45 @@ def _looks_like_bad_final_answer(text: str) -> bool:
 
 # Hedging phrases that indicate the model failed to find the requested value.
 _NOT_PROVIDED_PHRASES = (
-    "not provided", "not available", "not included", "not contained",
-    "not answerable", "not found in", "not in this dataset", "not in the dataset",
-    "does not contain", "not present in", "cannot be determined",
-    "cannot be found", "no information", "not specified", "not stated",
-    "none of the", "none of these", "no document", "not in any",
-    "not listed in", "not given", "no such information",
-    "does not specify", "does not mention", "does not explicitly",
-    "is not explicitly", "not explicitly stated", "not explicitly mentioned",
+    "not provided",
+    "not available",
+    "not included",
+    "not contained",
+    "not answerable",
+    "not found in",
+    "not in this dataset",
+    "not in the dataset",
+    "does not contain",
+    "not present in",
+    "cannot be determined",
+    "cannot be found",
+    "no information",
+    "not specified",
+    "not stated",
+    "none of the",
+    "none of these",
+    "no document",
+    "not in any",
+    "not listed in",
+    "not given",
+    "no such information",
+    "does not specify",
+    "does not mention",
+    "does not explicitly",
+    "is not explicitly",
+    "not explicitly stated",
+    "not explicitly mentioned",
     "does not exist",
 )
 
 
 # Stronger phrases that warrant abstention even mid-sentence.
 _STRONG_NOT_FOUND_PHRASES = (
-    "none of the provided documents", "none of the documents", "no document in",
-    "not present in any", "not found in any",
+    "none of the provided documents",
+    "none of the documents",
+    "no document in",
+    "not present in any",
+    "not found in any",
 )
 
 
@@ -105,10 +131,12 @@ def _normalize_unsupported(answer: str) -> str:
         # Preserve multi-part answers that have real values (Label: value pattern).
         idx = answer.index("Unsupported")
         before = answer[:idx].strip()
-        after = answer[idx + len("Unsupported"):].strip().lstrip(".")
+        after = answer[idx + len("Unsupported") :].strip().lstrip(".")
         if before and not after:
             lowered_before = before.lower()
-            is_hedging = any(phrase in lowered_before for phrase in _NOT_PROVIDED_PHRASES)
+            is_hedging = any(
+                phrase in lowered_before for phrase in _NOT_PROVIDED_PHRASES
+            )
             has_real_value = bool(re.search(r"\w[\w\s]{1,30}:\s+\S", before))
             if is_hedging and not has_real_value:
                 return "Unsupported"
@@ -134,32 +162,144 @@ _BARE_FILENAME_RE = re.compile(
 
 
 # Framing/question-echo words removed before checking for substantive content.
-_BARE_FN_STOP = frozenset({
-    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "am",
-    "in", "on", "of", "for", "to", "from", "with", "by", "at", "as", "into",
-    "that", "which", "this", "these", "those", "it", "its", "they", "them",
-    "what", "who", "whom", "where", "when", "how", "why", "whose",
-    "and", "or", "but", "not", "no", "nor", "so", "if", "then",
-    "provides", "provide", "providing", "provided", "provider",
-    "gives", "give", "given", "giving", "gave",
-    "shows", "show", "showing", "shown", "showed",
-    "contains", "contain", "containing", "contained",
-    "has", "have", "had", "having",
-    "states", "state", "stating", "stated",
-    "mentions", "mention", "mentioning", "mentioned",
-    "specifies", "specify", "specifying", "specified",
-    "outlines", "outline", "outlining", "outlined",
-    "details", "detail", "detailing", "detailed",
-    "lists", "list", "listing", "listed",
-    "refers", "refer", "referring", "referred", "reference", "references",
-    "document", "documents", "doc", "docs",
-    "file", "files", "filename",
-    "report", "reports", "policy", "policies",
-    "page", "section", "chapter", "row", "table",
-    "csv", "pdf", "xlsx", "xls", "md", "json", "txt",
-    "source", "sources", "based", "according", "answer", "answers",
-    "above", "below", "found", "find",
-})
+_BARE_FN_STOP = frozenset(
+    {
+        "the",
+        "a",
+        "an",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "am",
+        "in",
+        "on",
+        "of",
+        "for",
+        "to",
+        "from",
+        "with",
+        "by",
+        "at",
+        "as",
+        "into",
+        "that",
+        "which",
+        "this",
+        "these",
+        "those",
+        "it",
+        "its",
+        "they",
+        "them",
+        "what",
+        "who",
+        "whom",
+        "where",
+        "when",
+        "how",
+        "why",
+        "whose",
+        "and",
+        "or",
+        "but",
+        "not",
+        "no",
+        "nor",
+        "so",
+        "if",
+        "then",
+        "provides",
+        "provide",
+        "providing",
+        "provided",
+        "provider",
+        "gives",
+        "give",
+        "given",
+        "giving",
+        "gave",
+        "shows",
+        "show",
+        "showing",
+        "shown",
+        "showed",
+        "contains",
+        "contain",
+        "containing",
+        "contained",
+        "has",
+        "have",
+        "had",
+        "having",
+        "states",
+        "state",
+        "stating",
+        "stated",
+        "mentions",
+        "mention",
+        "mentioning",
+        "mentioned",
+        "specifies",
+        "specify",
+        "specifying",
+        "specified",
+        "outlines",
+        "outline",
+        "outlining",
+        "outlined",
+        "details",
+        "detail",
+        "detailing",
+        "detailed",
+        "lists",
+        "list",
+        "listing",
+        "listed",
+        "refers",
+        "refer",
+        "referring",
+        "referred",
+        "reference",
+        "references",
+        "document",
+        "documents",
+        "doc",
+        "docs",
+        "file",
+        "files",
+        "filename",
+        "report",
+        "reports",
+        "policy",
+        "policies",
+        "page",
+        "section",
+        "chapter",
+        "row",
+        "table",
+        "csv",
+        "pdf",
+        "xlsx",
+        "xls",
+        "md",
+        "json",
+        "txt",
+        "source",
+        "sources",
+        "based",
+        "according",
+        "answer",
+        "answers",
+        "above",
+        "below",
+        "found",
+        "find",
+    }
+)
 
 
 def _is_bare_filename_answer(query: str, answer: str) -> bool:
@@ -258,7 +398,7 @@ def _split_multi_part_query(query: str) -> list[str]:
     question_boundary = re.search(r"\?\s+(?=(According to|In the|In |What|Which)\b)", q)
     if question_boundary:
         first = q[: question_boundary.start() + 1].strip()
-        second = q[question_boundary.end():].strip()
+        second = q[question_boundary.end() :].strip()
         if first:
             parts.append(first)
         if second:
@@ -289,7 +429,9 @@ def _split_multi_part_query(query: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def _direct_answer_from_context(query: str, contexts: list[str], api_base: str, model_name: str) -> str:
+def _direct_answer_from_context(
+    query: str, contexts: list[str], api_base: str, model_name: str
+) -> str:
     """Fallback answer pass over retrieved text, without another tool-planning loop."""
     usable_contexts = [ctx.strip() for ctx in contexts if ctx and ctx.strip()]
     if not usable_contexts:
@@ -373,7 +515,9 @@ def _direct_retrieval_answer(query: str, api_base: str, model_name: str) -> str:
     contexts = []
     context_index = 1
     subqueries = _llm_split_subqueries(query, api_base, model_name)
-    per_query_top_k = min(MAX_TOOL_RESULTS, max(4, MAX_TOOL_RESULTS // max(1, len(subqueries))))
+    per_query_top_k = min(
+        MAX_TOOL_RESULTS, max(4, MAX_TOOL_RESULTS // max(1, len(subqueries)))
+    )
     for subquery in subqueries:
         hits = retrieve(
             query=subquery,
@@ -387,7 +531,9 @@ def _direct_retrieval_answer(query: str, api_base: str, model_name: str) -> str:
             file_name = meta.get("file_name") or meta.get("source_file", "unknown")
             file_name = resolve_original_name(file_name)
             content = (hit.get("content") or "").strip()
-            contexts.append(f"[{context_index}] subquery={subquery}\nfile={file_name}\n{content}")
+            contexts.append(
+                f"[{context_index}] subquery={subquery}\nfile={file_name}\n{content}"
+            )
             context_index += 1
     return _direct_answer_from_context(query, contexts, api_base, model_name)
 
@@ -435,12 +581,16 @@ def _context_source_count(contexts: list[str]) -> int:
     """Count the distinct source files referenced across retrieved contexts."""
     sources: set[str] = set()
     for ctx in contexts:
-        for match in re.finditer(r"(?:^|\n)(?:\[\d+\]\s*)?(?:repair_query=.*\n)?file=([^\s\n]+)", ctx):
+        for match in re.finditer(
+            r"(?:^|\n)(?:\[\d+\]\s*)?(?:repair_query=.*\n)?file=([^\s\n]+)", ctx
+        ):
             sources.add(match.group(1))
     return len(sources)
 
 
-def _missing_source_queries(query: str, answer: str, contexts: list[str], api_base: str, model_name: str) -> list[str]:
+def _missing_source_queries(
+    query: str, answer: str, contexts: list[str], api_base: str, model_name: str
+) -> list[str]:
     """Generate follow-up searches when a multi-part answer used too few sources."""
     context_refs = "\n".join(ctx.splitlines()[0] for ctx in contexts[:8] if ctx.strip())
     no_think = "/no_think " if _is_thinking_model(model_name) else ""
@@ -449,7 +599,7 @@ def _missing_source_queries(query: str, answer: str, contexts: list[str], api_ba
         "but the current answer used too few retrieved sources.\n"
         "Write up to 2 focused vector-store search queries for the missing independent facts or sources.\n"
         "Do not repeat facts already answered from the retrieved source.\n"
-        "Return ONLY JSON: {\"missing_queries\": [\"query\", ...]}\n\n"
+        'Return ONLY JSON: {"missing_queries": ["query", ...]}\n\n'
         f"Question:\n{query}\n\n"
         f"Current answer:\n{answer}\n\n"
         f"Retrieved source refs:\n{context_refs}\n"
@@ -510,9 +660,13 @@ def _repair_incomplete_answer(
         missing_queries = _llm_split_subqueries(query, api_base, model_name)
         if len(missing_queries) < 2:
             try:
-                missing_queries = _missing_source_queries(query, answer, contexts, api_base, model_name)
+                missing_queries = _missing_source_queries(
+                    query, answer, contexts, api_base, model_name
+                )
             except Exception as exc:
-                print(f"[WARN] Missing-source query generation failed ({type(exc).__name__}): {exc}")
+                print(
+                    f"[WARN] Missing-source query generation failed ({type(exc).__name__}): {exc}"
+                )
                 missing_queries = []
         if not missing_queries:
             missing_queries = [query]
@@ -534,7 +688,9 @@ def _repair_incomplete_answer(
     deduped_queries: list[str] = []
     for missing_query in missing_queries:
         normalized = re.sub(r"\s+", " ", missing_query).strip().lower()
-        if normalized and normalized not in {re.sub(r"\s+", " ", q).strip().lower() for q in deduped_queries}:
+        if normalized and normalized not in {
+            re.sub(r"\s+", " ", q).strip().lower() for q in deduped_queries
+        }:
             deduped_queries.append(missing_query)
     missing_queries = deduped_queries
 
@@ -551,7 +707,9 @@ def _repair_incomplete_answer(
                 use_qdrant=True,
             )
         except Exception as exc:
-            print(f"[WARN] Coverage repair retrieval failed ({type(exc).__name__}): {exc}")
+            print(
+                f"[WARN] Coverage repair retrieval failed ({type(exc).__name__}): {exc}"
+            )
             continue
         for hit in hits[:4]:
             meta = hit.get("metadata", {}) or {}
@@ -559,7 +717,9 @@ def _repair_incomplete_answer(
             file_name = resolve_original_name(file_name)
             content = (hit.get("content") or "").strip()
             if content:
-                repaired_contexts.append(f"[{context_index}] repair_query={missing_query}\nfile={file_name}\n{content}")
+                repaired_contexts.append(
+                    f"[{context_index}] repair_query={missing_query}\nfile={file_name}\n{content}"
+                )
                 context_index += 1
 
     # No new chunks were found — nothing to repair with.
@@ -568,7 +728,9 @@ def _repair_incomplete_answer(
 
     # Re-answer over the enlarged context; keep the original answer on failure.
     try:
-        repaired = _direct_answer_from_context(query, repaired_contexts, api_base, model_name)
+        repaired = _direct_answer_from_context(
+            query, repaired_contexts, api_base, model_name
+        )
     except Exception as exc:
         print(f"[WARN] Coverage repair answer failed ({type(exc).__name__}): {exc}")
         return answer
@@ -611,8 +773,15 @@ def _label_candidates_from_query(query: str) -> list[str]:
     ]
     candidates: list[str] = []
     cut_words = (
-        " in ", " for ", " from ", " within ", " according ", " on ", " dated ",
-        " with ", " of the ",
+        " in ",
+        " for ",
+        " from ",
+        " within ",
+        " according ",
+        " on ",
+        " dated ",
+        " with ",
+        " of the ",
     )
     # For each phrasing pattern, extract the label phrase and trim trailing scope.
     for pattern in patterns:
@@ -623,7 +792,11 @@ def _label_candidates_from_query(query: str) -> list[str]:
         for cut in cut_words:
             if cut in label:
                 label = label.split(cut, 1)[0]
-        label = re.sub(r"\b(listed|shown|given|provided|document|policy|report|table|row)\b", " ", label)
+        label = re.sub(
+            r"\b(listed|shown|given|provided|document|policy|report|table|row)\b",
+            " ",
+            label,
+        )
         label = re.sub(r"\s+", " ", label).strip(" :.-")
         if len(label) >= 3 and label not in candidates:
             candidates.append(label)
@@ -650,7 +823,9 @@ def _extract_key_value_answer(query: str, contexts: list[str]) -> str | None:
                 match = re.search(pattern, text)
                 if not match:
                     continue
-                value = re.sub(r"<br\s*/?>", " ", match.group("value"), flags=re.IGNORECASE)
+                value = re.sub(
+                    r"<br\s*/?>", " ", match.group("value"), flags=re.IGNORECASE
+                )
                 value = re.sub(r"\s+", " ", value).strip(" :-")
                 if value:
                     return value

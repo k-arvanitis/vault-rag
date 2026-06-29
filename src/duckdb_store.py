@@ -24,10 +24,10 @@ import duckdb
 
 from src.config import DUCKDB_PATH
 
-
 # ---------------------------------------------------------------------------
 # Ingest-time helpers: table naming + date normalisation
 # ---------------------------------------------------------------------------
+
 
 def _table_name(file: str, sheet: str) -> str:
     """Derive a valid DuckDB table name from file basename + sheet name."""
@@ -91,7 +91,9 @@ def _normalize_sql(sql: str) -> str:
 
     - DD/MM/YYYY → YYYY-MM-DD (dates stored as ISO strings in all ingested tables)
     """
-    return _DATE_DMY.sub(lambda m: f"'{m.group(3)}-{m.group(2).zfill(2)}-{m.group(1).zfill(2)}'", sql)
+    return _DATE_DMY.sub(
+        lambda m: f"'{m.group(3)}-{m.group(2).zfill(2)}-{m.group(1).zfill(2)}'", sql
+    )
 
 
 def _truncate_ilike(sql: str, chars: int = 1) -> str:
@@ -101,18 +103,21 @@ def _truncate_ilike(sql: str, chars: int = 1) -> str:
     auto-completed a truncated supplier/beneficiary name (e.g. "Yorkshir" → "Yorkshire").
     Only shortens values that end with a letter (not space or digit).
     """
+
     def _shorten(m: re.Match) -> str:
         """Trim trailing chars off one ILIKE value if it is long and letter-ending."""
         prefix, text, suffix = m.group(1), m.group(2), m.group(3)
         if len(text) > chars + 3 and text[-1].isalpha():
             return f"{prefix}{text[:-chars]}{suffix}"
         return m.group(0)
+
     return _ILIKE_VAL.sub(_shorten, sql)
 
 
 # ---------------------------------------------------------------------------
 # DuckDBStore: thread-safe query wrapper over the persistent database
 # ---------------------------------------------------------------------------
+
 
 class DuckDBStore:
     """Connect to the persistent DuckDB populated by ingest_table_rows."""

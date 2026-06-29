@@ -105,13 +105,32 @@ def _select_judge_context(
     max_total: int | None = None,
 ) -> str:
     """Pack the most relevant retrieved snippets for a compact judge prompt."""
-    max_total = max_total or int(os.getenv("EVAL_CUSTOM_JUDGE_CONTEXT_MAX_CHARS", "12000"))
+    max_total = max_total or int(
+        os.getenv("EVAL_CUSTOM_JUDGE_CONTEXT_MAX_CHARS", "12000")
+    )
     anchors = {
         token.lower()
-        for token in re.findall(r"[A-Za-z0-9$£€.,¼½¾/-]{2,}", f"{question} {answer} {gold_answer}")
-        if token.lower() not in {
-            "the", "and", "for", "with", "from", "that", "what", "which", "according",
-            "document", "documents", "report", "policy", "terms", "does", "about",
+        for token in re.findall(
+            r"[A-Za-z0-9$£€.,¼½¾/-]{2,}", f"{question} {answer} {gold_answer}"
+        )
+        if token.lower()
+        not in {
+            "the",
+            "and",
+            "for",
+            "with",
+            "from",
+            "that",
+            "what",
+            "which",
+            "according",
+            "document",
+            "documents",
+            "report",
+            "policy",
+            "terms",
+            "does",
+            "about",
         }
     }
     scored: list[tuple[int, int, str]] = []
@@ -120,7 +139,13 @@ def _select_judge_context(
         lower = text.lower()
         score = sum(1 for anchor in anchors if anchor in lower)
         # Numeric and currency overlap is especially important for these evals.
-        score += 3 * sum(1 for token in re.findall(r"[$£€]?\d[\d,./]*|[¼½¾]", f"{answer} {gold_answer}") if token in text)
+        score += 3 * sum(
+            1
+            for token in re.findall(
+                r"[$£€]?\d[\d,./]*|[¼½¾]", f"{answer} {gold_answer}"
+            )
+            if token in text
+        )
         scored.append((score, -idx, text))
 
     selected = [text for score, _, text in sorted(scored, reverse=True) if text][:8]
@@ -140,7 +165,12 @@ def _select_judge_context(
 
 
 def _extract_json_scores(text: str) -> dict[str, Any] | None:
-    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.IGNORECASE | re.MULTILINE).strip()
+    cleaned = re.sub(
+        r"^```(?:json)?\s*|\s*```$",
+        "",
+        text.strip(),
+        flags=re.IGNORECASE | re.MULTILINE,
+    ).strip()
     try:
         parsed = json.loads(cleaned)
     except json.JSONDecodeError:
@@ -209,7 +239,10 @@ def _custom_judge_answer(
     response = client.chat.completions.create(
         model=judge_model_name,
         messages=[
-            {"role": "system", "content": "You are a strict but fair evaluation judge. Output valid JSON only."},
+            {
+                "role": "system",
+                "content": "You are a strict but fair evaluation judge. Output valid JSON only.",
+            },
             {"role": "user", "content": prompt},
         ],
         temperature=0,
@@ -233,6 +266,8 @@ def _custom_judge_answer(
         "answer_relevancy": _clamp_score(parsed.get("answer_relevancy"), None),
         "judge_used": "custom_llm_judge",
     }
+
+
 # from src.reranker import BGEReranker, QwenReranker
 # from src.rag_agent import _hyde
 
@@ -257,7 +292,9 @@ def _strip_doc_ids(question: str) -> str:
     return re.sub(r"\s{2,}", " ", q).strip()
 
 
-def _normalise_question(item: dict[str, Any], file_stem: str, idx: int) -> dict[str, Any]:
+def _normalise_question(
+    item: dict[str, Any], file_stem: str, idx: int
+) -> dict[str, Any]:
     """Normalise a qa_pairs JSON item to the format expected by the eval runner.
 
     Handles:
@@ -338,7 +375,9 @@ def _exact_match_score(predicted: str, gold: str) -> float:
         return 1.0
     gold_tokens = set(re.findall(r"\w+", g))
     pred_tokens = set(re.findall(r"\w+", p))
-    overlap_ratio = len(gold_tokens & pred_tokens) / len(gold_tokens) if gold_tokens else 0.0
+    overlap_ratio = (
+        len(gold_tokens & pred_tokens) / len(gold_tokens) if gold_tokens else 0.0
+    )
     # Key-fact check: numeric/dollar tokens from gold that appear in predicted.
     key_tokens = set(re.findall(r"\d[\d,./]*", g))
     pred_numeric = set(re.findall(r"\d[\d,./]*", p))
@@ -384,7 +423,9 @@ def _evidence_matches_hit(evidence_quote: str, hit_content: str) -> bool:
     quote_tokens = [t for t in re.findall(r"[a-z0-9$.,¼½'-]+", quote) if len(t) > 1]
     if not quote_tokens:
         return False
-    overlap = sum(1 for token in quote_tokens if any(v in content for v in _token_variants(token)))
+    overlap = sum(
+        1 for token in quote_tokens if any(v in content for v in _token_variants(token))
+    )
     return overlap / len(quote_tokens) >= 0.75
 
 
@@ -416,7 +457,9 @@ _EXCEL_EVIDENCE_TYPES = {"sheet_row", "sheet_table"}
 def _is_excel_question(question: dict[str, Any]) -> bool:
     """True when all gold evidence comes from structured Excel/CSV sources."""
     evidence = question.get("evidence") or []
-    return bool(evidence) and all(ev.get("evidence_type", "") in _EXCEL_EVIDENCE_TYPES for ev in evidence)
+    return bool(evidence) and all(
+        ev.get("evidence_type", "") in _EXCEL_EVIDENCE_TYPES for ev in evidence
+    )
 
 
 def evaluate_retrieval(question: dict[str, Any], top_k: int = 20) -> dict[str, Any]:
@@ -468,7 +511,9 @@ def evaluate_retrieval(question: dict[str, Any], top_k: int = 20) -> dict[str, A
                 break
         ranks.append(rank)
         if rank is not None:
-            matched_evidence.append({"evidence_index": ev_idx, "doc_id": doc_id, "rank": rank})
+            matched_evidence.append(
+                {"evidence_index": ev_idx, "doc_id": doc_id, "rank": rank}
+            )
 
     matched = [rank for rank in ranks if rank is not None]
     return {
@@ -477,16 +522,24 @@ def evaluate_retrieval(question: dict[str, Any], top_k: int = 20) -> dict[str, A
         "evidence_count": len(evidence),
         "retrieval_method": "vector",
         "hits": [_summarize_hit(hit) for hit in all_hits[:top_k]],
-        "hit_at_5": 1.0 if any(rank is not None and rank <= 5 for rank in ranks) else 0.0,
-        "hit_at_10": 1.0 if any(rank is not None and rank <= 10 for rank in ranks) else 0.0,
+        "hit_at_5": 1.0
+        if any(rank is not None and rank <= 5 for rank in ranks)
+        else 0.0,
+        "hit_at_10": 1.0
+        if any(rank is not None and rank <= 10 for rank in ranks)
+        else 0.0,
         "mrr": max((1.0 / rank for rank in matched), default=0.0),
-        "recall_at_10": sum(1 for rank in ranks if rank is not None and rank <= 10) / len(evidence),
-        "recall_at_20": sum(1 for rank in ranks if rank is not None and rank <= 20) / len(evidence),
+        "recall_at_10": sum(1 for rank in ranks if rank is not None and rank <= 10)
+        / len(evidence),
+        "recall_at_20": sum(1 for rank in ranks if rank is not None and rank <= 20)
+        / len(evidence),
         "matched_evidence": matched_evidence,
     }
 
 
-def evaluate_answer(question: dict[str, Any], answer: str, retrieved_contexts: list[str]) -> dict[str, Any]:
+def evaluate_answer(
+    question: dict[str, Any], answer: str, retrieved_contexts: list[str]
+) -> dict[str, Any]:
     """Compute answer metrics (correctness, faithfulness, answer_relevancy).
 
     Defaults to a compact custom JSON judge. DeepEval can still be selected with
@@ -498,7 +551,11 @@ def evaluate_answer(question: dict[str, Any], answer: str, retrieved_contexts: l
     # Only normalize hedging/refusal patterns for unanswerable questions — applying
     # this globally would convert retrieval failures on answerable questions to "Unsupported",
     # replacing a partially-correct answer with a fully-wrong one.
-    normalized_answer = normalize_unsupported(cleaned) if question.get("question_type") == "unanswerable" else cleaned
+    normalized_answer = (
+        normalize_unsupported(cleaned)
+        if question.get("question_type") == "unanswerable"
+        else cleaned
+    )
 
     correctness = None
     faithfulness = None
@@ -524,13 +581,17 @@ def evaluate_answer(question: dict[str, Any], answer: str, retrieved_contexts: l
 
     if os.getenv("EVAL_JUDGE_MODE", "custom").lower() != "deepeval":
         try:
-            judged = _custom_judge_answer(question, normalized_answer, gold_answer, retrieved_contexts)
+            judged = _custom_judge_answer(
+                question, normalized_answer, gold_answer, retrieved_contexts
+            )
             if no_faithfulness:
                 judged["faithfulness"] = None
             judged["clean_answer"] = normalized_answer
             return judged
         except BaseException as exc:
-            logging.warning("  [WARN] custom judge failed (%s) — using exact-match fallback.", exc)
+            logging.warning(
+                "  [WARN] custom judge failed (%s) — using exact-match fallback.", exc
+            )
             return {
                 "correctness": _exact_match_score(normalized_answer, gold_answer),
                 "faithfulness": None,
@@ -571,7 +632,9 @@ def evaluate_answer(question: dict[str, Any], answer: str, retrieved_contexts: l
             ),
         )
         faithfulness_metric = FaithfulnessMetric(model=judge_model, async_mode=False)
-        answer_relevancy_metric = AnswerRelevancyMetric(model=judge_model, async_mode=False)
+        answer_relevancy_metric = AnswerRelevancyMetric(
+            model=judge_model, async_mode=False
+        )
         correctness_metric.measure(test_case)
         faithfulness_metric.measure(test_case)
         answer_relevancy_metric.measure(test_case)
@@ -583,12 +646,20 @@ def evaluate_answer(question: dict[str, Any], answer: str, retrieved_contexts: l
             judge_used = "deepeval_partial_exact_match_fallback"
     except BaseException as _judge_exc:
         import time
-        logging.warning("  [WARN] deepeval judge failed (%s) — retrying once after 5s.", _judge_exc)
+
+        logging.warning(
+            "  [WARN] deepeval judge failed (%s) — retrying once after 5s.", _judge_exc
+        )
         time.sleep(5)
         try:
-            from deepeval.metrics import AnswerRelevancyMetric, FaithfulnessMetric, GEval
+            from deepeval.metrics import (
+                AnswerRelevancyMetric,
+                FaithfulnessMetric,
+                GEval,
+            )
             from deepeval.models import GPTModel
             from deepeval.test_case import LLMTestCase, LLMTestCaseParams
+
             judge_model_name, judge_base_url, judge_api_key = _judge_config()
             judge_model2 = GPTModel(
                 model=judge_model_name,
@@ -605,7 +676,11 @@ def evaluate_answer(question: dict[str, Any], answer: str, retrieved_contexts: l
                 name="Correctness",
                 model=judge_model2,
                 async_mode=False,
-                evaluation_params=[LLMTestCaseParams.INPUT, LLMTestCaseParams.ACTUAL_OUTPUT, LLMTestCaseParams.EXPECTED_OUTPUT],
+                evaluation_params=[
+                    LLMTestCaseParams.INPUT,
+                    LLMTestCaseParams.ACTUAL_OUTPUT,
+                    LLMTestCaseParams.EXPECTED_OUTPUT,
+                ],
                 criteria="Score whether the answer correctly answers the question and is semantically consistent with the expected answer. Accept paraphrases and formatting differences.",
             )
             fm2 = FaithfulnessMetric(model=judge_model2, async_mode=False)
@@ -620,7 +695,9 @@ def evaluate_answer(question: dict[str, Any], answer: str, retrieved_contexts: l
                 correctness = _exact_match_score(normalized_answer, gold_answer)
                 judge_used = "deepeval_partial_exact_match_fallback"
         except BaseException:
-            logging.exception("  [WARN] deepeval retry also failed — using exact-match fallback.")
+            logging.exception(
+                "  [WARN] deepeval retry also failed — using exact-match fallback."
+            )
             correctness = _exact_match_score(normalized_answer, gold_answer)
             judge_used = "exact_match_fallback"
 
@@ -673,19 +750,22 @@ def run(
         # an explicit sub-question plan. Excel cross-doc questions are excluded — the
         # SQL sub-agent handles multiple tables natively in one call, and decomposition
         # would just add an extra gpt-4o-mini call that competes with the eval judge TPM.
-        evidence_doc_ids = {ev.get("doc_id", "") for ev in question.get("evidence", []) if ev.get("doc_id")}
-        is_multihop = (
-            not _looks_excel(query)
-            and (
-                len(evidence_doc_ids) > 1
-                or question.get("question_type", "").startswith("cross")
-            )
+        evidence_doc_ids = {
+            ev.get("doc_id", "")
+            for ev in question.get("evidence", [])
+            if ev.get("doc_id")
+        }
+        is_multihop = not _looks_excel(query) and (
+            len(evidence_doc_ids) > 1
+            or question.get("question_type", "").startswith("cross")
         )
 
         retrieved_contexts: list[str] = []
         if is_multihop:
             try:
-                answer = ask_with_decomposition(decomposition_pipeline, query, collected_chunks=retrieved_contexts)
+                answer = ask_with_decomposition(
+                    decomposition_pipeline, query, collected_chunks=retrieved_contexts
+                )
             except Exception as exc:
                 print(f"  [WARN] decomposition pipeline failed: {exc}")
                 answer = "Unsupported"
@@ -694,11 +774,15 @@ def run(
             # Falls back to reflection on failure.
             try:
                 answer_tokens: list[str] = []
-                for token in stream_agent(agent, query, collected_chunks=retrieved_contexts):
+                for token in stream_agent(
+                    agent, query, collected_chunks=retrieved_contexts
+                ):
                     answer_tokens.append(token)
                 answer = "".join(answer_tokens)
             except Exception as exc:
-                print(f"  [WARN] stream_agent failed ({type(exc).__name__}): {exc}. Retrying with reflection pipeline.")
+                print(
+                    f"  [WARN] stream_agent failed ({type(exc).__name__}): {exc}. Retrying with reflection pipeline."
+                )
                 try:
                     answer = ask_with_reflection(reflection_pipeline, query)
                 except Exception as exc2:
@@ -722,7 +806,9 @@ def run(
             try:
                 retry_chunks: list[str] = []
                 retry_tokens: list[str] = []
-                for token in stream_agent(agent, query + _RETRY_INSTRUCTION, collected_chunks=retry_chunks):
+                for token in stream_agent(
+                    agent, query + _RETRY_INSTRUCTION, collected_chunks=retry_chunks
+                ):
                     retry_tokens.append(token)
                 retry_answer = "".join(retry_tokens).strip()
                 if retry_answer and retry_answer.lower() != "unsupported":
@@ -732,13 +818,15 @@ def run(
                 print(f"  [WARN] forced retry failed: {exc}")
 
         answer_eval = evaluate_answer(question, answer, retrieved_contexts)
-        answer_rows.append({
-            "qa_id": question["qa_id"],
-            "question": query,
-            "gold_answer": question.get("gold_answer"),
-            "predicted_answer": answer_eval.pop("clean_answer", answer),
-            **answer_eval,
-        })
+        answer_rows.append(
+            {
+                "qa_id": question["qa_id"],
+                "question": query,
+                "gold_answer": question.get("gold_answer"),
+                "predicted_answer": answer_eval.pop("clean_answer", answer),
+                **answer_eval,
+            }
+        )
 
         # Pace requests to stay under the eval judge TPM limit (200k/min on gpt-4o-mini).
         time.sleep(6)
@@ -748,21 +836,37 @@ def run(
         encoding="utf-8",
     )
 
-    correctness = [r["correctness"] for r in answer_rows if r.get("correctness") is not None]
-    faithfulness = [r["faithfulness"] for r in answer_rows if r.get("faithfulness") is not None]
-    answer_relevancy = [r["answer_relevancy"] for r in answer_rows if r.get("answer_relevancy") is not None]
+    correctness = [
+        r["correctness"] for r in answer_rows if r.get("correctness") is not None
+    ]
+    faithfulness = [
+        r["faithfulness"] for r in answer_rows if r.get("faithfulness") is not None
+    ]
+    answer_relevancy = [
+        r["answer_relevancy"]
+        for r in answer_rows
+        if r.get("answer_relevancy") is not None
+    ]
     judge_breakdown = dict(Counter(r.get("judge_used", "unknown") for r in answer_rows))
 
     # Split retrieval rows by modality
     vector_rows = [r for r in retrieval_rows if r.get("retrieval_method") == "vector"]
-    structured_qids = {r["qa_id"] for r in retrieval_rows if r.get("retrieval_method") == "structured"}
-    unanswerable_qids = {r["qa_id"] for r in retrieval_rows if r.get("retrieval_method") == "none"}
+    structured_qids = {
+        r["qa_id"] for r in retrieval_rows if r.get("retrieval_method") == "structured"
+    }
+    unanswerable_qids = {
+        r["qa_id"] for r in retrieval_rows if r.get("retrieval_method") == "none"
+    }
 
     hit_at_5 = [r["hit_at_5"] for r in vector_rows if r.get("hit_at_5") is not None]
     hit_at_10 = [r["hit_at_10"] for r in vector_rows if r.get("hit_at_10") is not None]
     mrr = [r["mrr"] for r in vector_rows if r.get("mrr") is not None]
-    recall_at_10 = [r["recall_at_10"] for r in vector_rows if r.get("recall_at_10") is not None]
-    recall_at_20 = [r["recall_at_20"] for r in vector_rows if r.get("recall_at_20") is not None]
+    recall_at_10 = [
+        r["recall_at_10"] for r in vector_rows if r.get("recall_at_10") is not None
+    ]
+    recall_at_20 = [
+        r["recall_at_20"] for r in vector_rows if r.get("recall_at_20") is not None
+    ]
 
     # Structured accuracy: token-overlap between agent answer and gold answer
     answer_by_qid = {r["qa_id"]: r for r in answer_rows}
@@ -770,8 +874,12 @@ def run(
     excel_correct = sum(1 for r in excel_rows if (r.get("correctness") or 0) >= 1.0)
 
     # Unanswerable: fraction where agent correctly refused
-    unanswerable_rows = [answer_by_qid[qid] for qid in unanswerable_qids if qid in answer_by_qid]
-    unanswerable_correct = sum(1 for r in unanswerable_rows if (r.get("correctness") or 0) >= 1.0)
+    unanswerable_rows = [
+        answer_by_qid[qid] for qid in unanswerable_qids if qid in answer_by_qid
+    ]
+    unanswerable_correct = sum(
+        1 for r in unanswerable_rows if (r.get("correctness") or 0) >= 1.0
+    )
 
     summary = {
         "question_count": len(questions),
@@ -781,8 +889,12 @@ def run(
             "hit_at_5": sum(hit_at_5) / len(hit_at_5) if hit_at_5 else None,
             "hit_at_10": sum(hit_at_10) / len(hit_at_10) if hit_at_10 else None,
             "mrr": sum(mrr) / len(mrr) if mrr else None,
-            "evidence_recall_at_10": sum(recall_at_10) / len(recall_at_10) if recall_at_10 else None,
-            "evidence_recall_at_20": sum(recall_at_20) / len(recall_at_20) if recall_at_20 else None,
+            "evidence_recall_at_10": sum(recall_at_10) / len(recall_at_10)
+            if recall_at_10
+            else None,
+            "evidence_recall_at_20": sum(recall_at_20) / len(recall_at_20)
+            if recall_at_20
+            else None,
         },
         "structured_retrieval_metrics": {
             "scope": "Excel/CSV questions (DuckDB-served, not Qdrant)",
@@ -791,19 +903,27 @@ def run(
         },
         "unanswerable_metrics": {
             "question_count": len(unanswerable_rows),
-            "correct_refusal_rate": unanswerable_correct / len(unanswerable_rows) if unanswerable_rows else None,
+            "correct_refusal_rate": unanswerable_correct / len(unanswerable_rows)
+            if unanswerable_rows
+            else None,
         },
         "agent_answer_metrics": {
             "correctness": sum(correctness) / len(correctness) if correctness else None,
-            "faithfulness": sum(faithfulness) / len(faithfulness) if faithfulness else None,
-            "answer_relevancy": sum(answer_relevancy) / len(answer_relevancy) if answer_relevancy else None,
+            "faithfulness": sum(faithfulness) / len(faithfulness)
+            if faithfulness
+            else None,
+            "answer_relevancy": sum(answer_relevancy) / len(answer_relevancy)
+            if answer_relevancy
+            else None,
         },
         "judge_breakdown": judge_breakdown,
         "question_breakdown": dict(Counter(q["question_type"] for q in questions)),
         "answer_result_file": str(ANSWER_RESULTS_PATH),
         "retrieval_result_file": str(RETRIEVAL_RESULTS_PATH),
     }
-    SUMMARY_PATH.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    SUMMARY_PATH.write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     return summary
 
 
@@ -811,7 +931,19 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--category", default=None, help="Filter to a single question_type (e.g. table_lookup)")
-    parser.add_argument("--qa-files", nargs="+", default=None, help="Run only these QA JSON files")
+    parser.add_argument(
+        "--category",
+        default=None,
+        help="Filter to a single question_type (e.g. table_lookup)",
+    )
+    parser.add_argument(
+        "--qa-files", nargs="+", default=None, help="Run only these QA JSON files"
+    )
     args = parser.parse_args()
-    print(json.dumps(run(category_filter=args.category, qa_files=args.qa_files), ensure_ascii=False, indent=2))
+    print(
+        json.dumps(
+            run(category_filter=args.category, qa_files=args.qa_files),
+            ensure_ascii=False,
+            indent=2,
+        )
+    )

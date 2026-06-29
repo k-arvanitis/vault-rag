@@ -1,4 +1,5 @@
 """Vault RAG — FastAPI backend for the Next.js UI."""
+
 from __future__ import annotations
 
 import asyncio
@@ -17,7 +18,16 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile  # noqa: E402
+from fastapi import (  # noqa: E402
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Request,
+    UploadFile,
+)
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
@@ -34,8 +44,15 @@ from src.config import (  # noqa: E402
     RERANKER_MODEL,
     RETRIEVAL_TOP_K,
 )
-from src.vector_store import scroll_all_payloads, get_chunks_by_file, delete_by_file, _request as _qdrant  # noqa: E402
-from src.file_resolver import resolve_original_name as _resolve_original_name  # noqa: E402
+from src.file_resolver import (  # noqa: E402
+    resolve_original_name as _resolve_original_name,
+)
+from src.vector_store import _request as _qdrant  # noqa: E402
+from src.vector_store import (  # noqa: E402
+    delete_by_file,
+    get_chunks_by_file,
+    scroll_all_payloads,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +72,7 @@ _executor = ThreadPoolExecutor(max_workers=2)
 
 
 # ── lifespan: warm the agent on startup ────────────────────────────────────────
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -83,6 +101,7 @@ app.add_middleware(
 
 # ── auth dep — required on mutating endpoints when API_KEY is set ─────────────
 
+
 async def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
     """Raise 401 unless the X-API-Key header matches API_KEY (when configured)."""
     if not API_KEY:
@@ -93,6 +112,7 @@ async def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
 
 # ── global exception handler — never leak stack traces ────────────────────────
 
+
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Log the exception and return a generic 500 instead of leaking str(exc)."""
@@ -102,10 +122,12 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
 # ── agent singleton ────────────────────────────────────────────────────────────
 
+
 @lru_cache(maxsize=1)
 def _get_agent() -> Any:
     """Build (and cache) the RAG agent — one instance reused across requests."""
     from src.rag_agent import build_rag_agent
+
     return build_rag_agent(
         qdrant_url=QDRANT_URL,
         collection=QDRANT_COLLECTION,
@@ -119,7 +141,10 @@ def _get_agent() -> Any:
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
-def _run_ingest_sync(job_id: str, dest: Path, force_pipeline: str | None = None) -> None:
+
+def _run_ingest_sync(
+    job_id: str, dest: Path, force_pipeline: str | None = None
+) -> None:
     """Ingest one uploaded file into Qdrant/DuckDB, updating the job record."""
     suffix = dest.suffix.lower()
     _jobs[job_id]["status"] = "processing"
@@ -127,16 +152,27 @@ def _run_ingest_sync(job_id: str, dest: Path, force_pipeline: str | None = None)
         if suffix in {".xlsx", ".xls", ".csv"}:
             _jobs[job_id]["stage"] = "chunking"
             from src.ingest_table_rows import ingest_table_rows
+
             ingest_table_rows(str(dest), collection=QDRANT_COLLECTION)
             _jobs[job_id]["chunks_created"] = -1
         else:
             from src.ingest import run_ingest
+
             _jobs[job_id]["stage"] = "parsing"
-            result = run_ingest(pdf_path=dest, collection=QDRANT_COLLECTION, force_pipeline=force_pipeline)
-            chunks_path = result.get("chunks_path") if isinstance(result, dict) else None
+            result = run_ingest(
+                pdf_path=dest,
+                collection=QDRANT_COLLECTION,
+                force_pipeline=force_pipeline,
+            )
+            chunks_path = (
+                result.get("chunks_path") if isinstance(result, dict) else None
+            )
             if chunks_path and Path(chunks_path).exists():
                 import json as _json
-                _jobs[job_id]["chunks_created"] = len(_json.loads(Path(chunks_path).read_text()))
+
+                _jobs[job_id]["chunks_created"] = len(
+                    _json.loads(Path(chunks_path).read_text())
+                )
         _jobs[job_id].update({"status": "done", "stage": "indexed"})
     except Exception as exc:
         _jobs[job_id].update({"status": "failed", "stage": "failed", "error": str(exc)})
@@ -145,6 +181,7 @@ def _run_ingest_sync(job_id: str, dest: Path, force_pipeline: str | None = None)
 def _payloads_to_docs(payloads: list[dict]) -> list[dict]:
     """Group Qdrant payloads into one document card per source file."""
     from collections import defaultdict
+
     counts: dict[str, int] = defaultdict(int)
     for p in payloads:
         meta = p.get("metadata", {}) or {}
@@ -152,9 +189,16 @@ def _payloads_to_docs(payloads: list[dict]) -> list[dict]:
         if name:
             counts[name] += 1
     type_map = {
-        "pdf": "PDF", "xlsx": "Excel", "xls": "Excel", "csv": "CSV",
-        "docx": "Word", "doc": "Word", "md": "MD",
-        "png": "Image", "jpg": "Image", "jpeg": "Image",
+        "pdf": "PDF",
+        "xlsx": "Excel",
+        "xls": "Excel",
+        "csv": "CSV",
+        "docx": "Word",
+        "doc": "Word",
+        "md": "MD",
+        "png": "Image",
+        "jpg": "Image",
+        "jpeg": "Image",
     }
     return [
         {
@@ -248,7 +292,7 @@ def _parse_sources(collected: list[str]) -> list[dict]:
             page = int(page_m.group(1)) if page_m else None
 
             if filename.startswith("eval/data/raw/"):
-                filename = filename[len("eval/data/raw/"):]
+                filename = filename[len("eval/data/raw/") :]
             filename = _resolve_original_name(filename)
 
             heading_m = _MD_HEADING_RE.search(body[:600])
@@ -290,14 +334,16 @@ def _parse_sources(collected: list[str]) -> list[dict]:
             if key in seen:
                 continue
             seen.add(key)
-            sources.append({
-                "filename": filename,
-                "section": section,
-                "location": location,
-                "page": page,
-                "excerpt": excerpt,
-                "score": round(score, 4) if score else None,
-            })
+            sources.append(
+                {
+                    "filename": filename,
+                    "section": section,
+                    "location": location,
+                    "page": page,
+                    "excerpt": excerpt,
+                    "score": round(score, 4) if score else None,
+                }
+            )
     return sources[:8]
 
 
@@ -344,6 +390,7 @@ def _split_markdown_pages(md_text: str) -> tuple[dict[int, str], dict[int, str]]
 
 # ── routes ─────────────────────────────────────────────────────────────────────
 
+
 @app.get("/health")
 async def health():
     """Liveness probe — returns immediately, does not touch Qdrant or the agent."""
@@ -369,7 +416,11 @@ async def ingest_status(job_id: str):
     job = _jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    return {"status": job["status"], "stage": job["stage"], "chunks_created": job.get("chunks_created", 0)}
+    return {
+        "status": job["status"],
+        "stage": job["stage"],
+        "chunks_created": job.get("chunks_created", 0),
+    }
 
 
 @app.get("/documents")
@@ -410,8 +461,9 @@ _RETRY_INSTRUCTION = (
 @app.post("/query")
 async def query(req: QueryRequest):
     """POST /query — answer a question with the RAG agent, splitting multi-part questions and merging the sub-answers."""
-    from src.rag_agent import stream_agent, route_question, routing_directive
     from src.answer_quality import _is_multi_part_query, _split_multi_part_query
+    from src.rag_agent import route_question, routing_directive, stream_agent
+
     agent = _get_agent()
     loop = asyncio.get_running_loop()
 
@@ -486,7 +538,9 @@ async def query(req: QueryRequest):
         # Blank line between parts (a single \n is only a soft break in
         # markdown); number them so a terse part still reads as its own answer.
         kept = [a for a in sub_answers if a]
-        answer = "\n\n".join(f"{i}. {a}" for i, a in enumerate(kept, 1)) or "Unsupported"
+        answer = (
+            "\n\n".join(f"{i}. {a}" for i, a in enumerate(kept, 1)) or "Unsupported"
+        )
         excel_trace = {"sql": sql_all, "tools": tools_all}
 
     answer = _strip_leaked_headers(answer)
@@ -501,7 +555,10 @@ async def query(req: QueryRequest):
 
 
 # Real tool names → frontend pill keys (see TOOL_META in TraceSidebar.tsx).
-_TOOL_DISPLAY = {"search_knowledge_base": "search_documents", "query_excel": "query_excel"}
+_TOOL_DISPLAY = {
+    "search_knowledge_base": "search_documents",
+    "query_excel": "query_excel",
+}
 
 
 def _tools_used(tool_calls: list[str]) -> list[str]:
@@ -536,6 +593,7 @@ async def delete_document(filename: str):
 
 # ── inspector endpoints ────────────────────────────────────────────────────────
 
+
 @app.get("/documents/{filename:path}/chunks")
 async def document_chunks(filename: str):
     """All Qdrant chunks for a file, grouped and sorted for the inspector."""
@@ -547,7 +605,11 @@ async def document_chunks(filename: str):
         return {"summary": None, "chunks": []}
 
     summary_payload = next(
-        (p for p in payloads if (p.get("metadata") or {}).get("chunk_type") == "document_summary"),
+        (
+            p
+            for p in payloads
+            if (p.get("metadata") or {}).get("chunk_type") == "document_summary"
+        ),
         None,
     )
     data_chunks = [
@@ -558,7 +620,9 @@ async def document_chunks(filename: str):
         for p in payloads
         if (p.get("metadata") or {}).get("chunk_type") != "document_summary"
     ]
-    data_chunks.sort(key=lambda c: c["metadata"].get("chunk_index", c["metadata"].get("part", 0)))
+    data_chunks.sort(
+        key=lambda c: c["metadata"].get("chunk_index", c["metadata"].get("part", 0))
+    )
 
     return {
         "summary": summary_payload.get("content") if summary_payload else None,
@@ -593,10 +657,13 @@ async def document_pdf_page(filename: str, page: int):
         raise HTTPException(status_code=404, detail="PDF not found")
     try:
         import pypdfium2 as pdfium
+
         doc = pdfium.PdfDocument(str(pdf_path))
         n = len(doc)
         if page < 1 or page > n:
-            raise HTTPException(status_code=404, detail=f"Page {page} out of range (1–{n})")
+            raise HTTPException(
+                status_code=404, detail=f"Page {page} out of range (1–{n})"
+            )
         bitmap = doc[page - 1].render(scale=1.5)
         img = bitmap.to_pil()
         buf = io.BytesIO()
@@ -619,16 +686,21 @@ async def document_table_sheet(filename: str, sheet: str):
     raw_path = INPUT_DIR / filename
     suffix = Path(filename).suffix.lower()
 
-    cleaned_md: str | None = md_path.read_text(encoding="utf-8") if md_path.exists() else None
+    cleaned_md: str | None = (
+        md_path.read_text(encoding="utf-8") if md_path.exists() else None
+    )
 
     raw_rows: list[list[str]] | None = None
     if raw_path.exists():
         try:
             import pandas as pd
+
             if suffix == ".csv":
                 df = pd.read_csv(raw_path, header=None, dtype=str, nrows=60).fillna("")
             else:
-                df = pd.read_excel(raw_path, sheet_name=sheet, header=None, dtype=str, nrows=60).fillna("")
+                df = pd.read_excel(
+                    raw_path, sheet_name=sheet, header=None, dtype=str, nrows=60
+                ).fillna("")
             raw_rows = df.values.tolist()
         except Exception:
             raw_rows = None
@@ -647,6 +719,7 @@ async def document_pdf_info(filename: str):
         raise HTTPException(status_code=404, detail="PDF not found")
     try:
         import pypdfium2 as pdfium
+
         doc = pdfium.PdfDocument(str(pdf_path))
         return {"total_pages": len(doc)}
     except Exception as exc:

@@ -1,6 +1,6 @@
 [![CI](https://github.com/k-arvanitis/vault-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/k-arvanitis/vault-rag/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
-![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js-000000?style=for-the-badge&logo=next.js&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
 ![Qdrant](https://img.shields.io/badge/Qdrant-FF4136?style=for-the-badge&logoColor=white)
 ![Groq](https://img.shields.io/badge/Groq-F55036?style=for-the-badge&logo=groq&logoColor=white)
@@ -51,7 +51,7 @@ https://github.com/user-attachments/assets/7f3fe838-6336-4a5f-815d-f879a86c57b9
 - Two-stage retrieval — stage 1 routes the query to the most relevant document(s) via `document_summary` chunks; stage 2 fetches answer-bearing content from those documents only. Stem-overlap on the filename rescues stage-1 misses when generic phrasing dominates the embedding.
 - Asks for clarification on broad queries instead of dumping a file list — when the question spans 3+ unrelated documents, the agent returns `Clarify: <2-4 specific options>` derived from what was actually retrieved.
 - Forced API-level retry on bare `Unsupported` responses — mitigates Groq inference nondeterminism by re-running the agent once with explicit doc-routing instructions if the first attempt skipped it.
-- Exposes the same backend through three surfaces — Streamlit operator console, Slack bot, and a FastAPI service for the Next.js frontend.
+- Exposes the same backend through three surfaces — Next.js chat UI (upload, chat, document inspector, trace sidebar), Slack bot, and a FastAPI service.
 
 ---
 
@@ -314,7 +314,7 @@ Full methodology and reproduction steps: [eval/README.md](eval/README.md).
 | ReAct agent — **wired into `/query`** | LangGraph `create_react_agent` (`src/rag_agent.py`) | The live query graph: tool-calling loop over `search_knowledge_base` + `query_excel`, with 2-step doc routing, HyDE expansion, and an inline coverage/repair pass |
 | Excel sub-graph — **wired into `/query`** | LangGraph `StateGraph` ×2 (`src/tools/excel.py`) | Outer graph decomposes a spreadsheet question per source and fans out via the `Send` API; inner graph loops `select_table → inspect → write_sql → run_sql → evaluate` with retries on column errors and a next-table fallback on empty results — the ReAct agent never sees table names |
 | Decomposition / reflection / supervisor graphs — *not wired* | LangGraph `StateGraph` (`src/pipeline.py`) | Standalone orchestrations kept for experiments; **not on the default `/query` path** — exercised only by `test_pipeline.py` |
-| UI | Streamlit + Next.js | Streamlit for the operator console (Python-native, fast iteration); Next.js + FastAPI for the end-user chat UI |
+| UI | Next.js + FastAPI | Next.js chat UI with upload zone, document inspector, citation panel, and trace sidebar; FastAPI (`api.py`) is the backend |
 | Observability | Langfuse | End-to-end traces make it possible to inspect prompts, tool calls, retrieved chunks, and token usage |
 
 ---
@@ -380,7 +380,8 @@ cp .env.example .env   # set GROQ_API_KEY at minimum
 make up                # Qdrant + OCR stack
 ollama pull nomic-embed-text
 make seed              # download two PDFs + one CSV and ingest them
-make app               # → http://localhost:8501
+make api               # FastAPI backend → http://localhost:8001
+make ui                # Next.js frontend → http://localhost:3000
 ```
 
 `make seed` downloads three public documents (two PDFs + one CSV) so the UI is queryable immediately. No GPU? add `PDF_PARSER=cpu` to `.env` first — scanned PDFs will route through `unstructured` + tesseract instead of LightOn OCR.
@@ -392,7 +393,7 @@ cp .env.example .env
 docker compose up -d --build   # or: make docker-up
 ```
 
-Starts four services: Qdrant, LiteLLM proxy (Groq primary → OpenRouter fallback), Ollama (pulls nomic-embed-text on first start), and the Streamlit app at `http://localhost:8501`. First start takes a few minutes while Ollama downloads the model (~274 MB).
+Starts four services: Qdrant, LiteLLM proxy (Groq primary → OpenRouter fallback), Ollama (pulls nomic-embed-text on first start), and the FastAPI backend. First start takes a few minutes while Ollama downloads the model (~274 MB). Then run `make ui` to start the Next.js frontend at `http://localhost:3000`.
 
 ```bash
 make docker-up-gpu   # adds LightOn OCR vLLM container — requires CUDA 12+ and NVIDIA runtime
@@ -451,8 +452,7 @@ uv run pytest tests/ -v
 
 ```text
 vault-rag/
-├── app.py                     # Streamlit operator console
-├── api.py                     # FastAPI backend for the Next.js frontend
+├── api.py                     # FastAPI backend (agent, ingest, document endpoints)
 ├── slack_app.py               # Slack bot (Socket Mode)
 ├── src/
 │   ├── config.py              # All env vars in one place

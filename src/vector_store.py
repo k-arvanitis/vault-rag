@@ -2,11 +2,10 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
-from urllib.error import HTTPError
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from src.config import QDRANT_URL, QDRANT_COLLECTION
+from src.config import QDRANT_COLLECTION, QDRANT_URL
 
 
 def _stable_id(file_name: str, chunk_idx: object) -> int:
@@ -17,7 +16,9 @@ def _stable_id(file_name: str, chunk_idx: object) -> int:
 
 def _request(method: str, url: str, body: dict | None = None) -> dict:
     data = json.dumps(body).encode("utf-8") if body is not None else None
-    req = Request(url, data=data, method=method, headers={"Content-Type": "application/json"})
+    req = Request(
+        url, data=data, method=method, headers={"Content-Type": "application/json"}
+    )
     try:
         with urlopen(req, timeout=120) as resp:
             return json.loads(resp.read().decode("utf-8"))
@@ -25,16 +26,14 @@ def _request(method: str, url: str, body: dict | None = None) -> dict:
         detail = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"Vector store HTTP {exc.code} at {url}: {detail}") from exc
     except URLError as exc:
-        raise RuntimeError(f"Could not connect to vector store at {url}. Is Qdrant running?") from exc
+        raise RuntimeError(
+            f"Could not connect to vector store at {url}. Is Qdrant running?"
+        ) from exc
 
 
 def _collection_has_sparse(info: dict, collection: str, verbose: bool = True) -> bool:
     """Check if the collection has sparse_vectors configured; warn if not."""
-    params = (
-        info.get("result", {})
-        .get("config", {})
-        .get("params", {})
-    )
+    params = info.get("result", {}).get("config", {}).get("params", {})
     has_sparse = bool(params.get("sparse_vectors"))
     if not has_sparse and verbose:
         print(
@@ -99,7 +98,9 @@ def ingest_embeddings(
         }
         try:
             sparse_indices, sparse_values = get_sparse_embedder().embed(vector_text)
-            point["sparse_vectors"] = {"sparse": {"indices": sparse_indices, "values": sparse_values}}
+            point["sparse_vectors"] = {
+                "sparse": {"indices": sparse_indices, "values": sparse_values}
+            }
         except Exception:
             pass  # Fall back to dense-only point
         points.append(point)
@@ -123,7 +124,9 @@ def scroll_all_payloads(url: str, collection: str) -> list[dict]:
         if offset is not None:
             body["offset"] = offset
         try:
-            result = _request("POST", f"{base}/collections/{collection}/points/scroll", body)
+            result = _request(
+                "POST", f"{base}/collections/{collection}/points/scroll", body
+            )
         except RuntimeError as exc:
             if "404" in str(exc) or "doesn't exist" in str(exc):
                 return []
@@ -140,15 +143,24 @@ def get_document_summary(url: str, collection: str, file_name: str) -> str | Non
     """Return the document summary content for a given file, or None if not found."""
     base = url.rstrip("/")
     try:
-        result = _request("POST", f"{base}/collections/{collection}/points/scroll", {
-            "filter": {"must": [
-                {"key": "metadata.chunk_type", "match": {"value": "document_summary"}},
-                {"key": "metadata.file_name", "match": {"value": file_name}},
-            ]},
-            "limit": 1,
-            "with_payload": True,
-            "with_vector": False,
-        })
+        result = _request(
+            "POST",
+            f"{base}/collections/{collection}/points/scroll",
+            {
+                "filter": {
+                    "must": [
+                        {
+                            "key": "metadata.chunk_type",
+                            "match": {"value": "document_summary"},
+                        },
+                        {"key": "metadata.file_name", "match": {"value": file_name}},
+                    ]
+                },
+                "limit": 1,
+                "with_payload": True,
+                "with_vector": False,
+            },
+        )
     except RuntimeError:
         return None
     points = result.get("result", {}).get("points", [])
@@ -164,9 +176,11 @@ def get_chunks_by_file(url: str, collection: str, source_file: str) -> list[dict
     offset = None
     while True:
         body: dict = {
-            "filter": {"must": [
-                {"key": "metadata.source_file", "match": {"value": source_file}},
-            ]},
+            "filter": {
+                "must": [
+                    {"key": "metadata.source_file", "match": {"value": source_file}},
+                ]
+            },
             "limit": 250,
             "with_payload": True,
             "with_vector": False,
@@ -174,7 +188,9 @@ def get_chunks_by_file(url: str, collection: str, source_file: str) -> list[dict
         if offset is not None:
             body["offset"] = offset
         try:
-            result = _request("POST", f"{base}/collections/{collection}/points/scroll", body)
+            result = _request(
+                "POST", f"{base}/collections/{collection}/points/scroll", body
+            )
         except RuntimeError as exc:
             if "404" in str(exc) or "doesn't exist" in str(exc):
                 return []
@@ -191,18 +207,34 @@ def delete_by_file(url: str, collection: str, file_name: str) -> int:
     """Delete all PDF chunk points for a given file_name. Returns deleted count."""
     base = url.rstrip("/")
     try:
-        result = _request("POST", f"{base}/collections/{collection}/points/count", {
-            "filter": {"must": [{"key": "metadata.source_file", "match": {"value": file_name}}]}
-        })
+        result = _request(
+            "POST",
+            f"{base}/collections/{collection}/points/count",
+            {
+                "filter": {
+                    "must": [
+                        {"key": "metadata.source_file", "match": {"value": file_name}}
+                    ]
+                }
+            },
+        )
     except RuntimeError as exc:
         if "404" in str(exc) or "doesn't exist" in str(exc):
             return 0
         raise
     count = result.get("result", {}).get("count", 0)
     if count > 0:
-        _request("POST", f"{base}/collections/{collection}/points/delete?wait=true", {
-            "filter": {"must": [{"key": "metadata.source_file", "match": {"value": file_name}}]}
-        })
+        _request(
+            "POST",
+            f"{base}/collections/{collection}/points/delete?wait=true",
+            {
+                "filter": {
+                    "must": [
+                        {"key": "metadata.source_file", "match": {"value": file_name}}
+                    ]
+                }
+            },
+        )
     return count
 
 

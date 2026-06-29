@@ -9,23 +9,27 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
+# ---------------------------------------------------------------------------
+# HTML table multi-row header → flat markdown table
+# ---------------------------------------------------------------------------
+import re as _re  # noqa: E402
+
 from pypdf import PdfReader  # noqa: E402
 
 from src import chunker as chunker_module  # noqa: E402
 from src.config import (  # noqa: E402
-    QDRANT_URL, QDRANT_COLLECTION, OLLAMA_API_BASE, OLLAMA_EMBED_MODEL,
-    OCR_API_BASE, OCR_MODEL,
+    OCR_API_BASE,
+    OCR_MODEL,
+    OLLAMA_API_BASE,
+    OLLAMA_EMBED_MODEL,
+    QDRANT_COLLECTION,
+    QDRANT_URL,
 )
 from src.embedder import embed_chunks_file  # noqa: E402
 from src.ingest_table_rows import ingest_table_rows  # noqa: E402
 from src.parser.input_utils import resolve_to_pdf  # noqa: E402
 from src.parser.pdf_parser import parse_pdf  # noqa: E402
 from src.vector_store import delete_by_file, ingest_embeddings  # noqa: E402
-
-# ---------------------------------------------------------------------------
-# HTML table multi-row header → flat markdown table
-# ---------------------------------------------------------------------------
-import re as _re  # noqa: E402
 
 _HTML_TABLE_RE = _re.compile(r"(?is)<table\b[^>]*>.*?</table>")
 _SUB_COL_TOKEN_RE = _re.compile(r"^(R@\d+|NDCG@\d+|[PF]@\d+|MRR@?\d*|@\w+|-)$")
@@ -103,7 +107,9 @@ def _fix_html_multirow_header(table_html: str) -> str | None:
         group = thead_cells[i] if i < len(thead_cells) else ""
         sub = h
         if group and not _SUB_COL_TOKEN_RE.match(group):
-            flat_headers.append(f"{group} {sub}" if _SUB_COL_TOKEN_RE.match(sub) else group)
+            flat_headers.append(
+                f"{group} {sub}" if _SUB_COL_TOKEN_RE.match(sub) else group
+            )
         else:
             flat_headers.append(sub)
 
@@ -115,7 +121,7 @@ def _fix_html_multirow_header(table_html: str) -> str | None:
     data_md_rows = []
     for row_html in body_rows_html[1:]:
         cells = _parse_html_cells(row_html, "td")
-        cells = cells[:len(flat_headers)]
+        cells = cells[: len(flat_headers)]
         while len(cells) < len(flat_headers):
             cells.append("")
         data_md_rows.append("| " + " | ".join(cells) + " |")
@@ -135,7 +141,7 @@ def _fix_html_table_headers_in_markdown(markdown: str, verbose: bool = True) -> 
         table_html = m.group(0)
         flat = _fix_html_multirow_header(table_html)
         if flat:
-            result = result[:m.start()] + "\n\n" + flat + "\n\n" + result[m.end():]
+            result = result[: m.start()] + "\n\n" + flat + "\n\n" + result[m.end() :]
             fixed += 1
 
     if verbose and fixed:
@@ -143,7 +149,9 @@ def _fix_html_table_headers_in_markdown(markdown: str, verbose: bool = True) -> 
     return result
 
 
-def _fill_empty_last_column_from_text(markdown: str, pdf_path: Path, verbose: bool = True) -> str:
+def _fill_empty_last_column_from_text(
+    markdown: str, pdf_path: Path, verbose: bool = True
+) -> str:
     """Fill empty last-column cells in pipe tables using the PDF text layer.
 
     Born-digital PDFs (arXiv papers) have a text layer that contains all values.
@@ -157,15 +165,24 @@ def _fill_empty_last_column_from_text(markdown: str, pdf_path: Path, verbose: bo
 
     def _has_empty_last_col(table_str: str) -> bool:
         """Return True if >50% of data rows have an empty last cell."""
-        rows = [line for line in table_str.strip().splitlines() if line.startswith("|") and "---" not in line]
+        rows = [
+            line
+            for line in table_str.strip().splitlines()
+            if line.startswith("|") and "---" not in line
+        ]
         if len(rows) < 2:
             return False
-        empty = sum(1 for r in rows[1:] if r.rstrip().endswith("|  |") or r.rstrip().endswith("| |"))
+        empty = sum(
+            1
+            for r in rows[1:]
+            if r.rstrip().endswith("|  |") or r.rstrip().endswith("| |")
+        )
         return empty / max(len(rows) - 1, 1) > 0.5
 
     def _extract_page_text(page_num: int) -> str:
         try:
             from pypdf import PdfReader
+
             reader = PdfReader(str(pdf_path))
             if 0 <= page_num < len(reader.pages):
                 return reader.pages[page_num].extract_text() or ""
@@ -173,7 +190,9 @@ def _fill_empty_last_column_from_text(markdown: str, pdf_path: Path, verbose: bo
             pass
         return ""
 
-    def _find_row_value_in_text(label: str, page_text: str, n_expected: int) -> str | None:
+    def _find_row_value_in_text(
+        label: str, page_text: str, n_expected: int
+    ) -> str | None:
         r"""Find the n_expected-th decimal number in the row starting with label.
 
         PDF text layers concatenate adjacent numbers with no space (e.g. "2.9524.141").
@@ -184,7 +203,7 @@ def _fill_empty_last_column_from_text(markdown: str, pdf_path: Path, verbose: bo
         m = _re.search(label_clean, page_text)
         if not m:
             return None
-        tail = page_text[m.end(): m.end() + 300]
+        tail = page_text[m.end() : m.end() + 300]
         # Try 3-decimal match first (most precise, avoids greedy over-capture)
         nums = _re.findall(r"\d+\.\d{3}", tail)
         if len(nums) < n_expected:
@@ -224,7 +243,9 @@ def _fill_empty_last_column_from_text(markdown: str, pdf_path: Path, verbose: bo
         data_rows_str = m.group(3)
 
         # Count how many numeric columns exist in a complete row (to know which column is last)
-        data_rows = [r for r in data_rows_str.strip().splitlines() if r.strip().startswith("|")]
+        data_rows = [
+            r for r in data_rows_str.strip().splitlines() if r.strip().startswith("|")
+        ]
         new_rows: list[str] = []
         filled = 0
 
@@ -243,7 +264,7 @@ def _fill_empty_last_column_from_text(markdown: str, pdf_path: Path, verbose: bo
 
         if filled:
             new_table = header_row + "\n" + sep_row + "\n" + "\n".join(new_rows) + "\n"
-            result = result[:m.start()] + new_table + result[m.end():]
+            result = result[: m.start()] + new_table + result[m.end() :]
             total_filled += filled
 
     if verbose and total_filled:
@@ -256,7 +277,7 @@ def _fill_empty_last_column_from_text(markdown: str, pdf_path: Path, verbose: bo
 # ---------------------------------------------------------------------------
 
 # Matches $\text{...}$ blocks that are long enough to be a table
-_LATEX_TEXT_TABLE_RE = _re.compile(r'\$\\text\{(.{80,}?)\}\$', _re.DOTALL)
+_LATEX_TEXT_TABLE_RE = _re.compile(r"\$\\text\{(.{80,}?)\}\$", _re.DOTALL)
 
 
 def _is_latex_table(inner: str) -> bool:
@@ -289,7 +310,7 @@ def _preprocess_latex_table(inner: str) -> tuple[str, str, list[str]]:
     """
     first_bold = _re.search(r"\\textbf\{([^}]+)\}", inner)
     header_str = first_bold.group(1).strip() if first_bold else ""
-    after_headers = inner[first_bold.end():].strip() if first_bold else inner
+    after_headers = inner[first_bold.end() :].strip() if first_bold else inner
     clean_data = _re.sub(r"\\textbf\{([^}]+)\}", r"\1", after_headers).strip()
 
     derived = _derive_column_names(header_str, clean_data)
@@ -366,7 +387,7 @@ def _derive_column_names(header_str: str, clean_data: str) -> list[str]:
     for i in range(len(groups)):
         if i < len(groups) - 1:
             # Normal group: take exactly n_unit sub-cols
-            slice_ = sub_col_tokens[idx: idx + n_unit]
+            slice_ = sub_col_tokens[idx : idx + n_unit]
             if len(slice_) < n_unit:
                 return []  # not enough sub-cols — fall back to LLM
             sub_slices.append(slice_)
@@ -468,6 +489,7 @@ def _convert_latex_table(inner: str) -> str:
 
     # Fallback: ask LLM to reconstruct (no derived columns available)
     from openai import OpenAI
+
     from src.config import GENERATION_API_BASE, GENERATION_MODEL, GROQ_API_KEY
 
     api_base = os.getenv("GENERATION_API_BASE", GENERATION_API_BASE)
@@ -512,14 +534,16 @@ def _convert_latex_tables_in_markdown(markdown: str, verbose: bool = True) -> st
     result = markdown
     for m, inner in reversed(table_matches):  # reversed so offsets stay valid
         converted = _convert_latex_table(inner)
-        result = result[:m.start()] + "\n\n" + converted + "\n\n" + result[m.end():]
+        result = result[: m.start()] + "\n\n" + converted + "\n\n" + result[m.end() :]
     return result
 
 
 REPO_ROOT = chunker_module.REPO_ROOT
 
 
-def _log(message: str, step: int | None = None, debug: bool = False, enabled: bool = True) -> None:
+def _log(
+    message: str, step: int | None = None, debug: bool = False, enabled: bool = True
+) -> None:
     """Print a prefixed ingestion log line; no-ops when enabled=False."""
     if not enabled:
         return
@@ -540,7 +564,9 @@ def _load_json_list(path: Path, label: str) -> list[dict]:
     """Read a JSON file and assert it is a list; raises ValueError otherwise."""
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, list):
-        raise ValueError(f"Expected list in {label} at {path}, got {type(payload).__name__}")
+        raise ValueError(
+            f"Expected list in {label} at {path}, got {type(payload).__name__}"
+        )
     return payload
 
 
@@ -572,7 +598,11 @@ def _run_ingest_pdf(
         debug=True,
         enabled=verbose,
     )
-    _log(f"Input file exists={pdf_path.exists()} | path={pdf_path}", debug=True, enabled=verbose)
+    _log(
+        f"Input file exists={pdf_path.exists()} | path={pdf_path}",
+        debug=True,
+        enabled=verbose,
+    )
     if not pdf_path.exists():
         raise FileNotFoundError(f"Input file not found: {pdf_path}")
     if pdf_path.suffix.lower() not in {".pdf", ".docx", ".doc", ".ppt", ".pptx"}:
@@ -613,7 +643,9 @@ def _run_ingest_pdf(
 
     # 1a-ii) Fill empty last-column cells from the PDF text layer (born-digital PDFs).
     #        OCR sometimes misses the rightmost column of wide tables.
-    markdown = _fill_empty_last_column_from_text(markdown, resolved_pdf_path, verbose=verbose)
+    markdown = _fill_empty_last_column_from_text(
+        markdown, resolved_pdf_path, verbose=verbose
+    )
 
     # 1b-i) Convert any LaTeX-encoded tables ($\text{...}$) to markdown tables
     markdown = _convert_latex_tables_in_markdown(markdown, verbose=verbose)
@@ -621,12 +653,18 @@ def _run_ingest_pdf(
 
     # 1c) Convert ASCII grid tables to row sentences, save to data/output/processed/
     from src.preprocessing.table_processor import process_and_save as _process_md
+
     processed_dir = REPO_ROOT / "data" / "output" / "processed"
     markdown, _ = _process_md(markdown, md_path.stem, processed_dir)
 
     # 2) markdown -> chunks JSON
     _log("Chunk markdown -> chunks JSON", step=2, enabled=verbose)
-    _log(f"Chunking config: enrich_with_llm={enrich_with_llm}", step=2, debug=True, enabled=verbose)
+    _log(
+        f"Chunking config: enrich_with_llm={enrich_with_llm}",
+        step=2,
+        debug=True,
+        enabled=verbose,
+    )
     # Reload chunker to pick up local prompt/chunking edits in long-running notebook kernels.
     chunker = importlib.reload(chunker_module)
     created_chunks = chunker.chunk_markdown(
@@ -639,7 +677,9 @@ def _run_ingest_pdf(
     )
     chunks_path = REPO_ROOT / "data/output/chunks" / f"{md_path.stem}_chunks.json"
     if not chunks_path.exists():
-        raise FileNotFoundError(f"Chunk output not found after chunking step: {chunks_path}")
+        raise FileNotFoundError(
+            f"Chunk output not found after chunking step: {chunks_path}"
+        )
     chunk_rows = _load_json_list(chunks_path, "chunks output")
     _log(
         f"Done | chunks={len(chunk_rows)} (in_memory={len(created_chunks)}) | file={chunks_path} | size={_path_size_mb(chunks_path):.2f} MB",
@@ -657,14 +697,18 @@ def _run_ingest_pdf(
     )
     embeddings_path = embed_chunks_file(
         input_path=chunks_path,
-        output_path=REPO_ROOT / "data/output/embeddings" / f"{md_path.stem}_chunks_embeddings.json",
+        output_path=REPO_ROOT
+        / "data/output/embeddings"
+        / f"{md_path.stem}_chunks_embeddings.json",
         api_base=ollama_api_base,
         model_name=ollama_embed_model,
         batch_size=2,
         verbose=verbose,
     )
     if not embeddings_path.exists():
-        raise FileNotFoundError(f"Embeddings output not found after embedding step: {embeddings_path}")
+        raise FileNotFoundError(
+            f"Embeddings output not found after embedding step: {embeddings_path}"
+        )
     embedding_rows = _load_json_list(embeddings_path, "embeddings output")
     vector_dim = 0
     if embedding_rows:
@@ -679,9 +723,15 @@ def _run_ingest_pdf(
 
     # 4) embeddings JSON -> vector store (Qdrant)
     _log("Upsert embeddings -> Qdrant", step=4, enabled=verbose)
-    deleted = delete_by_file(url=qdrant_url, collection=collection, file_name=md_path.name)
+    deleted = delete_by_file(
+        url=qdrant_url, collection=collection, file_name=md_path.name
+    )
     if deleted > 0:
-        _log(f"Removed {deleted} existing points for '{md_path.name}'", step=4, enabled=verbose)
+        _log(
+            f"Removed {deleted} existing points for '{md_path.name}'",
+            step=4,
+            enabled=verbose,
+        )
     _log(
         f"Qdrant target: url={qdrant_url}, collection={collection}, points={len(embedding_rows)}",
         step=4,
@@ -694,14 +744,21 @@ def _run_ingest_pdf(
         collection=collection,
         verbose=verbose,
     )
-    _log(f"Done | upserted_points={len(embedding_rows)} | collection={collection}", step=4, enabled=verbose)
+    _log(
+        f"Done | upserted_points={len(embedding_rows)} | collection={collection}",
+        step=4,
+        enabled=verbose,
+    )
 
     # 5) Load any tables embedded in the document into DuckDB (+ Qdrant summaries)
     #    so the SQL agent can answer aggregation / exact-lookup questions over them.
     _log("Load embedded tables -> DuckDB", step=5, enabled=verbose)
     try:
         from src.ingestion.pdf_tables import ingest_pdf_tables
-        n_tables = ingest_pdf_tables(md_path.stem, markdown, collection=collection, verbose=verbose)
+
+        n_tables = ingest_pdf_tables(
+            md_path.stem, markdown, collection=collection, verbose=verbose
+        )
         _log(f"Done | tables_loaded={n_tables}", step=5, enabled=verbose)
     except Exception as exc:  # noqa: BLE001 — table load must not crash the doc's ingest
         _log(f"[WARN] embedded-table ingestion failed: {exc}", step=5, enabled=verbose)
@@ -775,7 +832,11 @@ def run_ingest(
     for pattern in search_patterns:
         doc_files.extend(target_dir.glob(pattern))
 
-    table_pattern = "**/*.xlsx **/*.xls **/*.csv".split() if recursive else ["*.xlsx", "*.xls", "*.csv"]
+    table_pattern = (
+        "**/*.xlsx **/*.xls **/*.csv".split()
+        if recursive
+        else ["*.xlsx", "*.xls", "*.csv"]
+    )
     table_files: list[Path] = []
     for pattern in table_pattern:
         table_files.extend(target_dir.glob(pattern))
@@ -794,8 +855,13 @@ def run_ingest(
     for index, file_path in enumerate(all_files, start=1):
         file_started_at = time.perf_counter()
         if file_path.suffix.lower() in _TABLE_EXTS:
-            _log(f"File {index}/{len(all_files)} | {file_path.name} [TABLE]", enabled=verbose)
-            out_path = ingest_table_rows(str(file_path), collection=collection, verbose=verbose)
+            _log(
+                f"File {index}/{len(all_files)} | {file_path.name} [TABLE]",
+                enabled=verbose,
+            )
+            out_path = ingest_table_rows(
+                str(file_path), collection=collection, verbose=verbose
+            )
             results.append({"chunks_path": out_path})
         else:
             file_size_mb = _path_size_mb(file_path)
@@ -817,7 +883,10 @@ def run_ingest(
             )
             results.append(out)
         elapsed_seconds = time.perf_counter() - file_started_at
-        _log(f"File {index}/{len(all_files)} done | elapsed={elapsed_seconds:.2f}s", enabled=verbose)
+        _log(
+            f"File {index}/{len(all_files)} done | elapsed={elapsed_seconds:.2f}s",
+            enabled=verbose,
+        )
 
     _log(f"Folder ingest finished | processed={len(results)} files", enabled=verbose)
     return results
@@ -827,7 +896,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     source_group = parser.add_mutually_exclusive_group(required=True)
     source_group.add_argument("--pdf", type=Path, help="Single PDF or DOCX file")
-    source_group.add_argument("--folder", type=Path, help="Directory containing PDF/DOCX files")
+    source_group.add_argument(
+        "--folder", type=Path, help="Directory containing PDF/DOCX files"
+    )
     parser.add_argument(
         "--recursive",
         action=argparse.BooleanOptionalAction,
@@ -839,7 +910,9 @@ def main() -> None:
     parser.add_argument("--ocr-endpoint", default=f"{OCR_API_BASE}/v1/chat/completions")
     parser.add_argument("--ocr-model-name", default=OCR_MODEL)
     parser.add_argument("--ocr-table-mode", choices=["pipe", "grid"], default="grid")
-    parser.add_argument("--data-format", choices=["pdf", "docx", "pptx", "all"], default="all")
+    parser.add_argument(
+        "--data-format", choices=["pdf", "docx", "pptx", "all"], default="all"
+    )
     parser.add_argument("--ollama-api-base", default=OLLAMA_API_BASE)
     parser.add_argument("--ollama-embed-model", default=OLLAMA_EMBED_MODEL)
     parser.add_argument(

@@ -28,32 +28,40 @@ import json
 import os
 from pathlib import Path
 from typing import Any
-from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from openai import OpenAI
 
-from src.ingest_tables import load_sheets
+from src.config import (
+    DUCKDB_PATH,
+    NO_DATA_TOKENS,
+    SKIP_ROW_VALUES,
+    SKIP_SHEET_KEYWORDS,
+)
 from src.config import (
     OLLAMA_API_BASE as _DEFAULT_OLLAMA_BASE,
-    OLLAMA_EMBED_MODEL as _DEFAULT_EMBED_MODEL,
-    QDRANT_URL as _DEFAULT_QDRANT_URL,
-    DUCKDB_PATH,
-    SKIP_SHEET_KEYWORDS,
-    SKIP_ROW_VALUES,
-    NO_DATA_TOKENS,
 )
-
+from src.config import (
+    OLLAMA_EMBED_MODEL as _DEFAULT_EMBED_MODEL,
+)
+from src.config import (
+    QDRANT_URL as _DEFAULT_QDRANT_URL,
+)
+from src.ingest_tables import load_sheets
 
 # ---------------------------------------------------------------------------
 # Config helpers (reuse same env vars as the rest of the project)
 # ---------------------------------------------------------------------------
 
+
 def _ollama_base() -> str:
     return os.getenv("OLLAMA_API_BASE", _DEFAULT_OLLAMA_BASE).rstrip("/")
 
+
 def _embed_model() -> str:
     return os.getenv("OLLAMA_EMBED_MODEL", _DEFAULT_EMBED_MODEL)
+
 
 def _qdrant_url() -> str:
     return os.getenv("QDRANT_URL", _DEFAULT_QDRANT_URL)
@@ -62,6 +70,7 @@ def _qdrant_url() -> str:
 # ---------------------------------------------------------------------------
 # Header detection (heuristic, no LLM)
 # ---------------------------------------------------------------------------
+
 
 def _find_header_row(rows: list[list[Any]]) -> int:
     """Return index of the best header row.
@@ -98,9 +107,35 @@ def _is_unit_like(v: str) -> bool:
         return False
     if v.startswith("(") and v.endswith(")"):
         return True
-    unit_tokens = {"kt", "gg", "tg", "pg", "tj", "gj", "mj", "pj", "%", "t", "mg",
-                   "kg", "g", "mw", "gw", "tw", "kwh", "mwh", "gwh", "twh", "na", "no",
-                   "yes", "n/a", "n.a.", "-", "–"}
+    unit_tokens = {
+        "kt",
+        "gg",
+        "tg",
+        "pg",
+        "tj",
+        "gj",
+        "mj",
+        "pj",
+        "%",
+        "t",
+        "mg",
+        "kg",
+        "g",
+        "mw",
+        "gw",
+        "tw",
+        "kwh",
+        "mwh",
+        "gwh",
+        "twh",
+        "na",
+        "no",
+        "yes",
+        "n/a",
+        "n.a.",
+        "-",
+        "–",
+    }
     return v.lower() in unit_tokens
 
 
@@ -135,6 +170,7 @@ def _detect_units_row(rows: list[list[Any]], header_idx: int) -> int | None:
         return next_idx
     return None
 
+
 def _is_numeric(v: Any) -> bool:
     try:
         float(str(v).replace(",", ""))
@@ -146,6 +182,7 @@ def _is_numeric(v: Any) -> bool:
 # ---------------------------------------------------------------------------
 # Row → text
 # ---------------------------------------------------------------------------
+
 
 def _extract_sheet_title(rows: list[list[Any]], header_idx: int) -> str:
     """Collect all distinct text values from pre-header rows (rows 0..header_idx-1).
@@ -241,6 +278,7 @@ def _qualify_headers(headers: list[str], subheader_rows: list[list[Any]]) -> lis
         return headers
     # Find header names that occur more than once — only those need qualifying.
     from collections import Counter
+
     counts = Counter(h for h in headers if h and not h.startswith("col_"))
     duplicate_headers = {h for h, c in counts.items() if c > 1}
     if not duplicate_headers:
@@ -253,14 +291,20 @@ def _qualify_headers(headers: list[str], subheader_rows: list[list[Any]]) -> lis
             continue
         sub_parts = []
         for sh_row in subheader_rows:
-            val = str(sh_row[i]).strip() if i < len(sh_row) and sh_row[i] is not None else ""
+            val = (
+                str(sh_row[i]).strip()
+                if i < len(sh_row) and sh_row[i] is not None
+                else ""
+            )
             if val and val not in {"-", "–"}:
                 sub_parts.append(val)
         qualified.append(f"{h} ({' '.join(sub_parts)})" if sub_parts else h)
     return qualified
 
 
-def _collect_subheaders(rows: list[list[Any]], after_idx: int) -> tuple[list[list[Any]], int]:
+def _collect_subheaders(
+    rows: list[list[Any]], after_idx: int
+) -> tuple[list[list[Any]], int]:
     """Collect sub-header rows that appear after the main header/units row.
 
     Sub-header rows have an empty first cell and contain only text annotations
@@ -311,7 +355,9 @@ def _should_skip_data_row(row: list[Any]) -> bool:
     first_val = str(row[0]).strip().lower() if row and row[0] is not None else ""
     if first_val in SKIP_ROW_VALUES:
         return True
-    data_vals = [str(v).strip().lower() for v in row[1:] if v is not None and str(v).strip()]
+    data_vals = [
+        str(v).strip().lower() for v in row[1:] if v is not None and str(v).strip()
+    ]
     return bool(data_vals) and all(v in NO_DATA_TOKENS for v in data_vals)
 
 
@@ -335,14 +381,19 @@ def sheet_to_markdown(
     # Emit any column-annotation / units rows right under the header.
     if subheader_rows:
         for sh_row in subheader_rows:
-            cells = [_format_cell(sh_row[i]) if i < len(sh_row) else "" for i in range(len(headers))]
+            cells = [
+                _format_cell(sh_row[i]) if i < len(sh_row) else ""
+                for i in range(len(headers))
+            ]
             lines.append("| " + " | ".join(cells) + " |")
 
     # Emit each data row, skipping no-data and documentation rows.
     for row in data_rows:
         if _should_skip_data_row(row):
             continue
-        cells = [_format_cell(row[i]) if i < len(row) else "" for i in range(len(headers))]
+        cells = [
+            _format_cell(row[i]) if i < len(row) else "" for i in range(len(headers))
+        ]
         lines.append("| " + " | ".join(cells) + " |")
 
     return "\n".join(lines)
@@ -361,7 +412,9 @@ def sheet_to_chunk(
     The description enables semantic retrieval; the markdown table lets the LLM
     read exact values without needing SQL or row-by-row search.
     """
-    description = sheet_summary_text(file_name, sheet_name, headers, data_rows, sheet_title)
+    description = sheet_summary_text(
+        file_name, sheet_name, headers, data_rows, sheet_title
+    )
     table_md = sheet_to_markdown(headers, data_rows, subheader_rows=subheader_rows)
     return description + "\n\n" + table_md
 
@@ -370,7 +423,9 @@ def sheet_to_chunk(
 # Embed + store
 # ---------------------------------------------------------------------------
 
-_MAX_EMBED_CHARS = int(os.getenv("MAX_EMBED_CHARS", "24000"))  # BGE-M3 supports 8192 tokens (~24000 chars)
+_MAX_EMBED_CHARS = int(
+    os.getenv("MAX_EMBED_CHARS", "24000")
+)  # BGE-M3 supports 8192 tokens (~24000 chars)
 
 
 def _embed(text: str) -> list[float]:
@@ -381,6 +436,7 @@ def _embed(text: str) -> list[float]:
 def _embed_batch(texts: list[str], batch_size: int = 64) -> list[list[float]]:
     """Embed many texts in batches against the Ollama embedding endpoint."""
     import httpx
+
     client = OpenAI(
         base_url=f"{_ollama_base()}/v1",
         api_key="ollama",
@@ -392,14 +448,19 @@ def _embed_batch(texts: list[str], batch_size: int = 64) -> list[list[float]]:
         batch = [t[:_MAX_EMBED_CHARS] for t in texts[i : i + batch_size]]
         response = client.embeddings.create(model=_embed_model(), input=batch)
         # Re-sort by index — the API may return embeddings out of order.
-        results.extend([d.embedding for d in sorted(response.data, key=lambda d: d.index)])
+        results.extend(
+            [d.embedding for d in sorted(response.data, key=lambda d: d.index)]
+        )
     return results
+
 
 def _qdrant_request(method: str, url: str, body: dict | None = None) -> dict:
     """Send a JSON request to the Qdrant REST API and return the parsed response."""
     # Serialise the body and issue the HTTP request.
     data = json.dumps(body).encode() if body else None
-    req = Request(url, data=data, method=method, headers={"Content-Type": "application/json"})
+    req = Request(
+        url, data=data, method=method, headers={"Content-Type": "application/json"}
+    )
     try:
         with urlopen(req, timeout=60) as r:
             return json.loads(r.read())
@@ -408,6 +469,7 @@ def _qdrant_request(method: str, url: str, body: dict | None = None) -> dict:
     except URLError as e:
         raise RuntimeError(f"Cannot connect to Qdrant: {e}") from e
 
+
 def _ensure_collection(collection: str, dim: int) -> None:
     """Create the Qdrant collection with the given vector dim if it is missing."""
     base = _qdrant_url().rstrip("/")
@@ -415,17 +477,26 @@ def _ensure_collection(collection: str, dim: int) -> None:
     try:
         _qdrant_request("GET", f"{base}/collections/{collection}")
     except RuntimeError:
-        _qdrant_request("PUT", f"{base}/collections/{collection}", {
-            "vectors": {"size": dim, "distance": "Cosine"},
-            "sparse_vectors": {"sparse": {}},
-        })
+        _qdrant_request(
+            "PUT",
+            f"{base}/collections/{collection}",
+            {
+                "vectors": {"size": dim, "distance": "Cosine"},
+                "sparse_vectors": {"sparse": {}},
+            },
+        )
         print(f"  Created collection '{collection}'")
+
 
 def _upsert(collection: str, points: list[dict], batch_size: int = 200) -> None:
     """Upsert points into a Qdrant collection in batches."""
     base = _qdrant_url().rstrip("/")
     for i in range(0, len(points), batch_size):
-        _qdrant_request("PUT", f"{base}/collections/{collection}/points?wait=true", {"points": points[i : i + batch_size]})
+        _qdrant_request(
+            "PUT",
+            f"{base}/collections/{collection}/points?wait=true",
+            {"points": points[i : i + batch_size]},
+        )
 
 
 def _point_id(file_name: str, sheet_name: str, key_suffix: Any) -> int:
@@ -456,7 +527,10 @@ def _build_file_document_summary(
     # Derive the doc id and concatenate every sheet summary into one document text.
     parts = file_name.split("_")
     doc_id = f"{parts[0]}_{parts[1]}" if len(parts) >= 2 else parts[0]
-    combined = f"## Document Summary\n\nDocument ID: {doc_id}\nFile: {file_name}\n\n" + "\n\n".join(sheet_summaries)
+    combined = (
+        f"## Document Summary\n\nDocument ID: {doc_id}\nFile: {file_name}\n\n"
+        + "\n\n".join(sheet_summaries)
+    )
     # Embed the combined text and build the document_summary Qdrant point.
     vec = _embed(combined)
     point_id = _point_id(file_name, "__summary__", "document_summary")
@@ -483,16 +557,21 @@ def _save_chunks_json(file_path: str, all_chunks: list[dict]) -> Path:
     out_dir = REPO_ROOT / "data" / "output" / "chunks"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{stem}_table_chunks.json"
-    out_path.write_text(json.dumps(all_chunks, ensure_ascii=False, indent=2), encoding="utf-8")
+    out_path.write_text(
+        json.dumps(all_chunks, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     return out_path
 
 
-def _load_into_duckdb(file_path: str, file_name: str, verbose: bool) -> dict[str, list[str]]:
+def _load_into_duckdb(
+    file_path: str, file_name: str, verbose: bool
+) -> dict[str, list[str]]:
     """Clean file with LLM and load all sheets into DuckDB. Returns {sheet_name: [columns]}."""
     import duckdb
-    from src.preprocessing.excel_cleaner import process_file
-    from src.duckdb_store import _table_name, _normalize_dates
+
+    from src.duckdb_store import _normalize_dates, _table_name
     from src.llm_utils import _make_groq_llm_fn
+    from src.preprocessing.excel_cleaner import process_file
 
     # Open the persistent DuckDB file and build the Groq LLM callable for cleaning.
     db_path = os.getenv("DUCKDB_PATH", DUCKDB_PATH)
@@ -504,7 +583,9 @@ def _load_into_duckdb(file_path: str, file_name: str, verbose: bool) -> dict[str
     try:
         sheet_results = process_file(file_path, llm_fn)
     except Exception as e:
-        print(f"  [WARNING] excel_cleaner failed for '{file_name}': {e}. Skipping DuckDB load.")
+        print(
+            f"  [WARNING] excel_cleaner failed for '{file_name}': {e}. Skipping DuckDB load."
+        )
         con.close()
         return {}
 
@@ -513,7 +594,8 @@ def _load_into_duckdb(file_path: str, file_name: str, verbose: bool) -> dict[str
     for sheet_name, sr in sheet_results.items():
         tname = _table_name(file_name, sheet_name)
         existing = con.execute(
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?", [tname]
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?",
+            [tname],
         ).fetchone()[0]
         if existing:
             if verbose:
@@ -545,6 +627,7 @@ def _build_sheet_summary_point(
     Includes the DuckDB table name so the agent can map directly to the right table.
     """
     from src.duckdb_store import _table_name
+
     # Resolve the DuckDB table name and doc id for this sheet.
     tname = _table_name(file_name, sheet_name)
     parts = file_name.split("_")
@@ -564,22 +647,27 @@ def _build_sheet_summary_point(
     vec = _embed(content)
     point_id = _point_id(file_name, sheet_name, "sheet_summary")
     _ensure_collection(collection, len(vec))
-    _upsert(collection, [{
-        "id": point_id,
-        "vector": vec,
-        "payload": {
-            "content": content,
-            "source_type": "table",
-            "metadata": {
-                "source_file": file_name,
-                "doc_id": doc_id,
-                "sheet_name": sheet_name,
-                "duckdb_table": tname,
-                "chunk_type": "sheet_summary",
-                "chunk_index": -1,
-            },
-        },
-    }])
+    _upsert(
+        collection,
+        [
+            {
+                "id": point_id,
+                "vector": vec,
+                "payload": {
+                    "content": content,
+                    "source_type": "table",
+                    "metadata": {
+                        "source_file": file_name,
+                        "doc_id": doc_id,
+                        "sheet_name": sheet_name,
+                        "duckdb_table": tname,
+                        "chunk_type": "sheet_summary",
+                        "chunk_index": -1,
+                    },
+                },
+            }
+        ],
+    )
 
 
 def ingest_table_rows(
@@ -599,9 +687,17 @@ def ingest_table_rows(
     # Delete any existing Qdrant points for this file
     base = _qdrant_url().rstrip("/")
     try:
-        _qdrant_request("POST", f"{base}/collections/{collection}/points/delete?wait=true", {
-            "filter": {"must": [{"key": "metadata.source_file", "match": {"value": file_name}}]}
-        })
+        _qdrant_request(
+            "POST",
+            f"{base}/collections/{collection}/points/delete?wait=true",
+            {
+                "filter": {
+                    "must": [
+                        {"key": "metadata.source_file", "match": {"value": file_name}}
+                    ]
+                }
+            },
+        )
         if verbose:
             print(f"  Deleted existing Qdrant points for '{file_name}'")
     except Exception:
@@ -629,7 +725,10 @@ def ingest_table_rows(
             description = ""
         else:
             header_idx = _find_header_row(rows)
-            headers = [str(h).strip() if h is not None else f"col_{i}" for i, h in enumerate(rows[header_idx])]
+            headers = [
+                str(h).strip() if h is not None else f"col_{i}"
+                for i, h in enumerate(rows[header_idx])
+            ]
             units_idx = _detect_units_row(rows, header_idx)
             if units_idx is not None:
                 headers = _merge_units_into_headers(headers, rows[units_idx])
@@ -639,25 +738,31 @@ def ingest_table_rows(
 
         # Pull the merged-title text and the data rows below the header.
         sheet_title = _extract_sheet_title(rows, _find_header_row(rows))
-        data_rows = rows[_find_header_row(rows) + 1:]
+        data_rows = rows[_find_header_row(rows) + 1 :]
 
         if verbose:
             print(f"  {sheet_name}: {len(data_rows)} rows, {len(columns)} columns")
 
         # Build the sheet summary text and record it for the chunks JSON.
-        summary_text = sheet_summary_text(file_name, sheet_name, columns, data_rows, sheet_title)
+        summary_text = sheet_summary_text(
+            file_name, sheet_name, columns, data_rows, sheet_title
+        )
         sheet_summary_texts.append(summary_text)
-        all_chunks.append({
-            "content": summary_text,
-            "metadata": {
-                "source_file": file_name,
-                "sheet_name": sheet_name,
-                "sheet_title": sheet_title,
-                "chunk_type": "sheet_summary",
-            },
-        })
+        all_chunks.append(
+            {
+                "content": summary_text,
+                "metadata": {
+                    "source_file": file_name,
+                    "sheet_name": sheet_name,
+                    "sheet_title": sheet_title,
+                    "chunk_type": "sheet_summary",
+                },
+            }
+        )
 
-        _build_sheet_summary_point(file_name, sheet_name, columns, description, collection)
+        _build_sheet_summary_point(
+            file_name, sheet_name, columns, description, collection
+        )
         if verbose:
             print("    → sheet_summary upserted to Qdrant")
 
@@ -665,17 +770,29 @@ def ingest_table_rows(
         # Re-derive raw headers, units and subheaders to render the full sheet table.
         header_idx = _find_header_row(rows)
         units_idx = _detect_units_row(rows, header_idx)
-        raw_headers = [str(h).strip() if h is not None else f"col_{i}" for i, h in enumerate(rows[header_idx])]
+        raw_headers = [
+            str(h).strip() if h is not None else f"col_{i}"
+            for i, h in enumerate(rows[header_idx])
+        ]
         if units_idx is not None:
             raw_headers = _merge_units_into_headers(raw_headers, rows[units_idx])
             subheader_rows, data_start = _collect_subheaders(rows, units_idx + 1)
         else:
             subheader_rows, data_start = _collect_subheaders(rows, header_idx + 1)
-        full_sheet_md = sheet_to_chunk(file_name, sheet_name, raw_headers, rows[data_start:], sheet_title, subheader_rows=subheader_rows)
+        full_sheet_md = sheet_to_chunk(
+            file_name,
+            sheet_name,
+            raw_headers,
+            rows[data_start:],
+            sheet_title,
+            subheader_rows=subheader_rows,
+        )
         md_out_dir = REPO_ROOT / "data" / "output" / "table_markdowns"
         md_out_dir.mkdir(parents=True, exist_ok=True)
         safe_sheet = sheet_name.replace("/", "_").replace("\\", "_")
-        (md_out_dir / f"{Path(file_path).stem}__{safe_sheet}.md").write_text(full_sheet_md, encoding="utf-8")
+        (md_out_dir / f"{Path(file_path).stem}__{safe_sheet}.md").write_text(
+            full_sheet_md, encoding="utf-8"
+        )
 
     # Step 3: document_summary
     _build_file_document_summary(file_name, sheet_summary_texts, collection)
@@ -692,9 +809,12 @@ def ingest_table_rows(
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     """Parse CLI arguments and ingest one table file."""
-    parser = argparse.ArgumentParser(description="Ingest table file: LLM cleaning → DuckDB, metadata → Qdrant.")
+    parser = argparse.ArgumentParser(
+        description="Ingest table file: LLM cleaning → DuckDB, metadata → Qdrant."
+    )
     parser.add_argument("file_path", help="Path to .xlsx or .csv file")
     parser.add_argument("--collection", default="documents_chunks")
     args = parser.parse_args()

@@ -15,6 +15,7 @@ _extract_table_filter_token), src/reranker.py (QwenReranker), src/file_resolver.
 (resolve_original_name), src/llm_utils.py (LLM helpers for HyDE) and Qdrant's
 scroll API directly for neighbour-chunk fetching.
 """
+
 from __future__ import annotations
 
 import json
@@ -27,20 +28,20 @@ from langchain_core.tools import StructuredTool
 from langsmith import traceable
 from pydantic import BaseModel
 
+from src.config import DOC_MIN_SCORE, MAX_CHUNK_CHARS, MAX_TABLE_CHARS, MAX_TOOL_RESULTS
 from src.file_resolver import resolve_original_name
+from src.llm_utils import _is_thinking_model, _llm_call, _to_openai_base
 from src.reranker import QwenReranker
 from src.retriever import (
     _extract_table_filter_token,
     infer_query_chunk_types,
     retrieve,
 )
-from src.config import DOC_MIN_SCORE, MAX_CHUNK_CHARS, MAX_TABLE_CHARS, MAX_TOOL_RESULTS
-from src.llm_utils import _is_thinking_model, _llm_call, _to_openai_base
-
 
 # ---------------------------------------------------------------------------
 # Scope plan — the routing decision passed from _resolve_scope to _fetch_docs
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class _ScopePlan:
@@ -61,6 +62,7 @@ class _ScopePlan:
 # HyDE — generate a hypothetical answer to embed instead of the raw query
 # ---------------------------------------------------------------------------
 
+
 @traceable(name="hyde-expansion")
 def _hyde(query: str, api_base: str, model_name: str) -> str:
     """Generate a hypothetical answer to embed instead of the raw query (HyDE)."""
@@ -71,7 +73,8 @@ def _hyde(query: str, api_base: str, model_name: str) -> str:
         f"{no_think}Write a short passage (2-3 sentences) that would directly answer "
         f"this question. Use the same language and terminology as the likely source document."
         f"\n\nQuestion: {query}",
-        api_base, model_name,
+        api_base,
+        model_name,
     )
 
 
@@ -79,21 +82,49 @@ def _hyde(query: str, api_base: str, model_name: str) -> str:
 # Snippet selection — keep the most query-relevant window of a long chunk
 # ---------------------------------------------------------------------------
 
+
 def _query_terms(query: str) -> list[str]:
     """Extract useful lexical anchors for snippet selection."""
     # Strip stop-words and keep distinct content tokens of length >= 3.
     stop_words = {
-        "about", "according", "after", "also", "and", "are", "before", "between", "does",
-        "document", "during", "from", "have", "into", "issued", "must", "that", "the",
-        "their", "there", "this", "what", "when", "where", "which", "while", "with",
-        "within", "would", "your", "approved", "policy",
+        "about",
+        "according",
+        "after",
+        "also",
+        "and",
+        "are",
+        "before",
+        "between",
+        "does",
+        "document",
+        "during",
+        "from",
+        "have",
+        "into",
+        "issued",
+        "must",
+        "that",
+        "the",
+        "their",
+        "there",
+        "this",
+        "what",
+        "when",
+        "where",
+        "which",
+        "while",
+        "with",
+        "within",
+        "would",
+        "your",
+        "approved",
+        "policy",
     }
     terms = []
     for term in re.findall(r"[A-Za-z0-9][A-Za-z0-9'/-]{2,}", query.lower()):
         if term not in stop_words and term not in terms:
             terms.append(term)
     return terms
-
 
 
 def _best_snippet(content: str, query: str, max_chars: int) -> str:
@@ -134,14 +165,30 @@ def _best_snippet(content: str, query: str, max_chars: int) -> str:
                 score += weight + min(occurrences, 3)
         # Prefer windows with answer-like numeric phrases when the query asks for
         # amounts, dates, periods, counts, or durations.
-        if re.search(r"\b(how many|amount|date|period|longer|total|cost|rate|range)\b", query, re.IGNORECASE):
-            if re.search(r"\b(up to|maximum|total|invoice date|please pay|contract term|closed\s*[-–]\s*implemented)\b", window):
+        if re.search(
+            r"\b(how many|amount|date|period|longer|total|cost|rate|range)\b",
+            query,
+            re.IGNORECASE,
+        ):
+            if re.search(
+                r"\b(up to|maximum|total|invoice date|please pay|contract term|closed\s*[-–]\s*implemented)\b",
+                window,
+            ):
                 score += 14
-            if re.search(r"\b(months?|years?|percent|transactions?|districts?|areas?|recommendations?)\b", window):
+            if re.search(
+                r"\b(months?|years?|percent|transactions?|districts?|areas?|recommendations?)\b",
+                window,
+            ):
                 score += 6
-            if re.search(r"\b(up to|maximum|total|date|amount|range|percent|months?|years?)\b.{0,80}\d", window):
+            if re.search(
+                r"\b(up to|maximum|total|date|amount|range|percent|months?|years?)\b.{0,80}\d",
+                window,
+            ):
                 score += 8
-            if re.search(r"\d.{0,40}\b(months?|years?|percent|transactions?|districts?|areas?|recommendations?)\b", window):
+            if re.search(
+                r"\d.{0,40}\b(months?|years?|percent|transactions?|districts?|areas?|recommendations?)\b",
+                window,
+            ):
                 score += 8
         # Keep the highest-scoring window; tie-break toward better-centred ones.
         distance = abs(position - (start + max_chars // 2))
@@ -171,6 +218,7 @@ def _best_snippet(content: str, query: str, max_chars: int) -> str:
 # Table formatting — render retrieved table text as explicit key/value rows
 # ---------------------------------------------------------------------------
 
+
 def _split_markdown_row(line: str) -> list[str]:
     """Split a simple markdown table row into cells."""
     stripped = line.strip()
@@ -179,11 +227,9 @@ def _split_markdown_row(line: str) -> list[str]:
     return [cell.strip() for cell in stripped.strip("|").split("|")]
 
 
-
 def _normalize_table_match_text(text: str) -> str:
     """Lower-case text and collapse non-alphanumeric runs to single spaces."""
     return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
-
 
 
 def _table_match_terms(query: str) -> list[str]:
@@ -194,10 +240,35 @@ def _table_match_terms(query: str) -> list[str]:
         if len(normalized) < 3:
             continue
         if normalized in {
-            "the", "and", "for", "row", "what", "which", "where", "when", "with",
-            "dated", "date", "amount", "total", "net", "supplier", "department",
-            "directorate", "transaction", "transactions", "council", "doncaster",
-            "published", "spend", "report", "purchase", "card", "q1", "2025", "2026",
+            "the",
+            "and",
+            "for",
+            "row",
+            "what",
+            "which",
+            "where",
+            "when",
+            "with",
+            "dated",
+            "date",
+            "amount",
+            "total",
+            "net",
+            "supplier",
+            "department",
+            "directorate",
+            "transaction",
+            "transactions",
+            "council",
+            "doncaster",
+            "published",
+            "spend",
+            "report",
+            "purchase",
+            "card",
+            "q1",
+            "2025",
+            "2026",
         }:
             continue
         if normalized not in terms:
@@ -205,8 +276,9 @@ def _table_match_terms(query: str) -> list[str]:
     return terms
 
 
-
-def _format_key_value_rows(headers: list[str], rows: list[list[str]], query: str, max_rows: int = 4) -> str:
+def _format_key_value_rows(
+    headers: list[str], rows: list[list[str]], query: str, max_rows: int = 4
+) -> str:
     """Render table rows as explicit field/value lines for reliable cell extraction."""
     # Score each row by how many query terms its cells contain.
     terms = _table_match_terms(query)
@@ -234,7 +306,6 @@ def _format_key_value_rows(headers: list[str], rows: list[list[str]], query: str
     return "\n".join(blocks)
 
 
-
 def _table_context_as_key_values(content: str, query: str) -> str | None:
     """Convert retrieved markdown or pipe-delimited table text to key/value rows."""
     lines = [line for line in content.splitlines() if line.strip()]
@@ -248,7 +319,8 @@ def _table_context_as_key_values(content: str, query: str) -> str | None:
         if len(parsed) >= 2:
             headers = parsed[0]
             rows = [
-                row for row in parsed[1:]
+                row
+                for row in parsed[1:]
                 if not all(re.fullmatch(r":?-{3,}:?", cell.strip()) for cell in row)
             ]
             rows = [row for row in rows if len(row) >= len(headers)]
@@ -257,7 +329,8 @@ def _table_context_as_key_values(content: str, query: str) -> str | None:
 
     # Case 2: a single "label: value | label: value" line — split it into rows.
     pipe_pair_lines = [
-        line for line in lines
+        line
+        for line in lines
         if ": " in line and " | " in line and not line.lstrip().startswith("[")
     ]
     if pipe_pair_lines:
@@ -273,12 +346,14 @@ def _table_context_as_key_values(content: str, query: str) -> str | None:
     return None
 
 
-
 # ---------------------------------------------------------------------------
 # Hit merging & neighbour-chunk expansion
 # ---------------------------------------------------------------------------
 
-def _merge_hits(primary: list[dict[str, Any]], secondary: list[dict[str, Any]]) -> list[dict[str, Any]]:
+
+def _merge_hits(
+    primary: list[dict[str, Any]], secondary: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     """Merge retrieval hits while preserving order and removing duplicate chunks."""
     merged: list[dict[str, Any]] = []
     seen: set[tuple[Any, ...]] = set()
@@ -301,7 +376,6 @@ def _merge_hits(primary: list[dict[str, Any]], secondary: list[dict[str, Any]]) 
     return merged
 
 
-
 def _fetch_neighbor_chunks(
     qdrant_url: str,
     collection: str,
@@ -319,21 +393,26 @@ def _fetch_neighbor_chunks(
         return {}
     # Scroll-filter Qdrant for the requested chunk indices within one file.
     from urllib.request import Request, urlopen
+
     base = qdrant_url.rstrip("/")
     url = f"{base}/collections/{collection}/points/scroll"
-    body = json.dumps({
-        "limit": len(indices) + 2,
-        "with_payload": True,
-        "with_vector": False,
-        "filter": {
-            "must": [
-                {"key": "metadata.source_file", "match": {"value": source_file}},
-                {"key": "metadata.chunk_index", "match": {"any": indices}},
-            ]
-        },
-    }).encode("utf-8")
+    body = json.dumps(
+        {
+            "limit": len(indices) + 2,
+            "with_payload": True,
+            "with_vector": False,
+            "filter": {
+                "must": [
+                    {"key": "metadata.source_file", "match": {"value": source_file}},
+                    {"key": "metadata.chunk_index", "match": {"any": indices}},
+                ]
+            },
+        }
+    ).encode("utf-8")
     # Any failure is non-fatal — neighbour expansion is best-effort.
-    req = Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+    req = Request(
+        url, data=body, headers={"Content-Type": "application/json"}, method="POST"
+    )
     try:
         with urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
@@ -350,10 +429,10 @@ def _fetch_neighbor_chunks(
     return out
 
 
-
 # ---------------------------------------------------------------------------
 # Tool factory — assembles the search_knowledge_base StructuredTool
 # ---------------------------------------------------------------------------
+
 
 def _make_unified_tool(
     qdrant_url: str,
@@ -367,6 +446,7 @@ def _make_unified_tool(
     doc_registry: dict[str, str] | None = None,
 ) -> tuple[StructuredTool, dict]:
     """Build the search_knowledge_base tool plus its mutable _limits dict."""
+
     class SearchInput(BaseModel):
         query: str
         doc_id: str = ""  # Optional: restrict to a specific doc (e.g. "doc_006"). Leave empty for all docs.
@@ -375,10 +455,10 @@ def _make_unified_tool(
     # These must be routed to scope_doc_id (metadata filter), not used as content text filters.
     # Pattern: short alphanumeric prefix + underscore + digits (e.g. "doc_001", "inv_2024", "rpt_003").
     # Extend this pattern if your corpus uses a different naming convention.
-    _DOC_ID_RE = re.compile(r'\b[a-z]{2,6}_\d+\b', re.IGNORECASE)
+    _DOC_ID_RE = re.compile(r"\b[a-z]{2,6}_\d+\b", re.IGNORECASE)
     # Detect content ID-like tokens: mixed alphanumeric codes (invoice numbers, transaction IDs, etc.)
     # that appear verbatim inside chunk text and are useful as Qdrant text-match filters.
-    _ID_RE = re.compile(r'\b(?=[^\s]*[A-Za-z])(?=[^\s]*\d)[\w/-]{4,}\b')
+    _ID_RE = re.compile(r"\b(?=[^\s]*[A-Za-z])(?=[^\s]*\d)[\w/-]{4,}\b")
 
     # Mutable limits dict — allows ask_agent to reduce limits on overflow retry
     _limits: dict = {
@@ -419,21 +499,31 @@ def _make_unified_tool(
         elif len(inferred_doc_ids) == 1:
             effective_scope = inferred_doc_ids[0]
         else:
-            effective_scope = None  # cross-doc or no scope — parallel retrieval handles this below
+            effective_scope = (
+                None  # cross-doc or no scope — parallel retrieval handles this below
+            )
         # Whether to run parallel scoped retrieval instead of a single unscoped search.
         # Activates when exactly two distinct doc_ids appear in the query and no explicit
         # scope was passed from outside — equivalent to LangGraph Send fan-out per doc.
-        _parallel_doc_ids: list[str] = inferred_doc_ids if len(inferred_doc_ids) == 2 and not valid_doc_scope else []
+        _parallel_doc_ids: list[str] = (
+            inferred_doc_ids
+            if len(inferred_doc_ids) == 2 and not valid_doc_scope
+            else []
+        )
         # Explicitly mentioned doc_ids get maximum stage1 boost regardless of embedding rank.
         explicitly_mentioned_doc_ids: set[str] = set(inferred_doc_ids)
 
-        non_doc_ids = [m for m in _ID_RE.findall(search_query) if not _DOC_ID_RE.match(m)]
+        non_doc_ids = [
+            m for m in _ID_RE.findall(search_query) if not _DOC_ID_RE.match(m)
+        ]
         filter_token: str | None = non_doc_ids[0] if non_doc_ids else None
         # _ID_RE requires a letter+digit mix, so pure-digit codes (invoice numbers, IDs)
         # are missed. Extract them explicitly when the query mentions "invoice" or "transaction".
         if filter_token is None:
-            _pure_digit_id = re.search(r'\b(\d{5,})\b', search_query)
-            if _pure_digit_id and any(w in search_query.lower() for w in ("invoice", "transaction", "record")):
+            _pure_digit_id = re.search(r"\b(\d{5,})\b", search_query)
+            if _pure_digit_id and any(
+                w in search_query.lower() for w in ("invoice", "transaction", "record")
+            ):
                 filter_token = _pure_digit_id.group(1)
         if filter_token is None:
             filter_token = _extract_table_filter_token(search_query)
@@ -473,10 +563,15 @@ def _make_unified_tool(
             stem_match_scores: dict[str, int] = {}
             if doc_registry:
                 _STEM_STOPWORDS = {
-                    "the", "and", "for", "with", "from",
+                    "the",
+                    "and",
+                    "for",
+                    "with",
+                    "from",
                 }
                 q_tokens = {
-                    t for t in re.findall(r"[a-z]{3,}", search_query.lower())
+                    t
+                    for t in re.findall(r"[a-z]{3,}", search_query.lower())
                     if t not in _STEM_STOPWORDS
                 }
                 seen_doc_ids: set[str] = set()
@@ -484,7 +579,8 @@ def _make_unified_tool(
                     if mapped_id in seen_doc_ids or not _DOC_ID_RE.fullmatch(mapped_id):
                         continue
                     stem_tokens = {
-                        t for t in re.findall(r"[a-z]{3,}", stem)
+                        t
+                        for t in re.findall(r"[a-z]{3,}", stem)
                         if t not in _STEM_STOPWORDS and not t.startswith("doc")
                     }
                     overlap = len(q_tokens & stem_tokens)
@@ -501,12 +597,10 @@ def _make_unified_tool(
             # topically-similar but query-unrelated docs from competing for slots and
             # confusing the LLM. Stays inert for symmetric cross-doc queries (where two
             # docs tie or are close).
-            if (
-                not effective_scope
-                and not _parallel_doc_ids
-                and stem_match_scores
-            ):
-                sorted_pairs = sorted(stem_match_scores.items(), key=lambda kv: kv[1], reverse=True)
+            if not effective_scope and not _parallel_doc_ids and stem_match_scores:
+                sorted_pairs = sorted(
+                    stem_match_scores.items(), key=lambda kv: kv[1], reverse=True
+                )
                 top_id, top_score = sorted_pairs[0]
                 second_score = sorted_pairs[1][1] if len(sorted_pairs) > 1 else 0
                 if top_score >= 3 and (top_score - second_score) >= 2:
@@ -539,7 +633,12 @@ def _make_unified_tool(
         # (section header in chunk N, table values in N+1). For the top-5 PDF/text
         # chunks, fetch chunk_index ± 1 from the same file and append. Generic fix
         # for "right chunk, missing detail" misses across all docs.
-        _NEIGHBOR_EXCLUDE_TYPES = {"sheet_summary", "document_summary", "sheet_table", "sheet_row"}
+        _NEIGHBOR_EXCLUDE_TYPES = {
+            "sheet_summary",
+            "document_summary",
+            "sheet_table",
+            "sheet_row",
+        }
         neighbor_requests: dict[str, set[int]] = {}
         for h in top_hits:
             meta = h.get("metadata") or {}
@@ -562,7 +661,9 @@ def _make_unified_tool(
             }
             needed = sorted(i for i in idxs if i not in existing)
             if needed:
-                neighbors_by_file[src] = _fetch_neighbor_chunks(qdrant_url, collection, src, needed)
+                neighbors_by_file[src] = _fetch_neighbor_chunks(
+                    qdrant_url, collection, src, needed
+                )
 
         # Render each surviving hit into one numbered [N] block.
         parts: list[str] = []
@@ -578,7 +679,11 @@ def _make_unified_tool(
             file_name = resolve_original_name(file_name)
             chunk_type = meta.get("chunk_type", "")
             sheet_name = meta.get("sheet_name")
-            location = f"sheet={sheet_name}" if sheet_name else f"chunk={meta.get('chunk_index', meta.get('part', '?'))}"
+            location = (
+                f"sheet={sheet_name}"
+                if sheet_name
+                else f"chunk={meta.get('chunk_index', meta.get('part', '?'))}"
+            )
             content = (h.get("content", "") or "").strip()
             is_pdf_table = "[TABLE_START]" in content
             is_sheet_table = chunk_type == "sheet_table"
@@ -588,24 +693,49 @@ def _make_unified_tool(
             # When filter_token matched an ID, extract only header + matching rows
             if filter_token and is_sheet_table:
                 lines = content.splitlines()
-                header_lines = [ln for ln in lines if not ln.startswith("|") or ln.startswith("| ---")]
+                header_lines = [
+                    ln
+                    for ln in lines
+                    if not ln.startswith("|") or ln.startswith("| ---")
+                ]
                 table_lines = [ln for ln in lines if ln.startswith("|")]
                 matching = [ln for ln in table_lines if filter_token in ln]
                 if matching:
                     # keep description + table header rows (first 2 table lines) + matching rows
-                    sep_idx = next((i for i, ln in enumerate(table_lines) if ln.startswith("| ---")), 1)
-                    content = "\n".join(header_lines[:header_lines.index(table_lines[0]) if table_lines[0] in header_lines else len(header_lines)]
-                                       + table_lines[:sep_idx + 1] + matching)
+                    sep_idx = next(
+                        (
+                            i
+                            for i, ln in enumerate(table_lines)
+                            if ln.startswith("| ---")
+                        ),
+                        1,
+                    )
+                    content = "\n".join(
+                        header_lines[
+                            : header_lines.index(table_lines[0])
+                            if table_lines[0] in header_lines
+                            else len(header_lines)
+                        ]
+                        + table_lines[: sep_idx + 1]
+                        + matching
+                    )
             elif (is_pdf_table or is_sheet_table) and len(content) > max_table_chars:
                 content = content[:max_table_chars] + "\n… (truncated)"
-            elif not is_pdf_table and not is_sheet_table and not is_sheet_row and len(content) > max_chunk_chars:
+            elif (
+                not is_pdf_table
+                and not is_sheet_table
+                and not is_sheet_row
+                and len(content) > max_chunk_chars
+            ):
                 content = _best_snippet(content, retrieval_query, max_chunk_chars)
             # For sheet tables/rows, prepend an explicit key/value rendering so
             # the LLM can read cell values reliably.
             if is_sheet_table or is_sheet_row:
                 table_context = _table_context_as_key_values(content, search_query)
                 if table_context:
-                    content = f"{table_context}\n\nOriginal retrieved table text:\n{content}"
+                    content = (
+                        f"{table_context}\n\nOriginal retrieved table text:\n{content}"
+                    )
 
             # Inject neighbor chunks (N-1, N+1) for PDF/text chunks in the top-5
             src_path = meta.get("source_file")
@@ -628,7 +758,9 @@ def _make_unified_tool(
                         next_text = next_text[:budget] + "…"
                     content = f"{content}\n\n[next chunk]\n{next_text}"
 
-            parts.append(f"[{i}] file={file_name} {location} score={score:.4f}\n{content}")
+            parts.append(
+                f"[{i}] file={file_name} {location} score={score:.4f}\n{content}"
+            )
 
         # Nothing survived the score/format filters.
         if not parts:
@@ -640,7 +772,10 @@ def _make_unified_tool(
         )
         return "\n\n".join(parts)
 
-    @traceable(name="fetch-docs", metadata={"top_k": retrieval_top_k, "rerank_top_n": rerank_top_n})
+    @traceable(
+        name="fetch-docs",
+        metadata={"top_k": retrieval_top_k, "rerank_top_n": rerank_top_n},
+    )
     def _fetch_docs(query: str, doc_id: str = "") -> str | None:
         """Retrieve, rerank and format knowledge-base chunks for one query; return the formatted block, or None when nothing relevant is found."""
         # Read the current (mutable) size limits and the LLM endpoint.
@@ -700,6 +835,7 @@ def _make_unified_tool(
                     force_exclude_chunk_types=["sheet_summary", "document_summary"],
                     scope_doc_id=doc_id,
                 )
+
             with ThreadPoolExecutor(max_workers=len(_parallel_doc_ids)) as pool:
                 futures = [pool.submit(_retrieve_scoped, d) for d in _parallel_doc_ids]
                 raw_hits = _merge_hits(futures[0].result(), futures[1].result())
@@ -738,7 +874,10 @@ def _make_unified_tool(
         if use_hyde:
             try:
                 embed_query = _hyde(retrieval_query, api_base, generation_model)
-                if embed_query and embed_query.strip().lower() != retrieval_query.strip().lower():
+                if (
+                    embed_query
+                    and embed_query.strip().lower() != retrieval_query.strip().lower()
+                ):
                     hyde_hits = retrieve(
                         query=embed_query,
                         top_k=retrieval_top_k,
@@ -774,7 +913,9 @@ def _make_unified_tool(
 
             # Force-fetch a few chunks for each boosted doc absent from the pool.
             present_doc_ids = {_hit_doc_id(h) for h in hits}
-            missing_doc_ids = [d for d in stage1_doc_ids if d and d not in present_doc_ids]
+            missing_doc_ids = [
+                d for d in stage1_doc_ids if d and d not in present_doc_ids
+            ]
             for missing_id in missing_doc_ids:
                 try:
                     injected = retrieve(
@@ -821,28 +962,84 @@ def _make_unified_tool(
         # overlap (cross-encoders are trained on passage-answer pairs, not metadata
         # discovery chunks, so they return noise scores for sheet_summaries).
         # All other chunks go through the normal BGE reranker path.
-        sheet_hits = [h for h in hits if (h.get("metadata") or {}).get("chunk_type") == "sheet_summary"]
-        other_hits = [h for h in hits if (h.get("metadata") or {}).get("chunk_type") != "sheet_summary"]
+        sheet_hits = [
+            h
+            for h in hits
+            if (h.get("metadata") or {}).get("chunk_type") == "sheet_summary"
+        ]
+        other_hits = [
+            h
+            for h in hits
+            if (h.get("metadata") or {}).get("chunk_type") != "sheet_summary"
+        ]
 
         _COL_STOPWORDS = {
-            "what", "which", "where", "when", "who", "how", "is", "are", "was", "were",
-            "the", "a", "an", "and", "or", "of", "for", "to", "in", "on", "at", "by",
-            "with", "from", "that", "this", "these", "those", "be", "do", "does", "did",
-            "have", "has", "had", "as", "it", "its", "into", "any", "all",
-            "summary", "data", "table", "sheet", "report", "row", "column", "value",
+            "what",
+            "which",
+            "where",
+            "when",
+            "who",
+            "how",
+            "is",
+            "are",
+            "was",
+            "were",
+            "the",
+            "a",
+            "an",
+            "and",
+            "or",
+            "of",
+            "for",
+            "to",
+            "in",
+            "on",
+            "at",
+            "by",
+            "with",
+            "from",
+            "that",
+            "this",
+            "these",
+            "those",
+            "be",
+            "do",
+            "does",
+            "did",
+            "have",
+            "has",
+            "had",
+            "as",
+            "it",
+            "its",
+            "into",
+            "any",
+            "all",
+            "summary",
+            "data",
+            "table",
+            "sheet",
+            "report",
+            "row",
+            "column",
+            "value",
         }
         # Distinct content terms of the query, used for sheet column matching.
         q_terms = {
-            t for t in re.sub(r"[^a-z0-9 ]", " ", retrieval_query.lower()).split()
+            t
+            for t in re.sub(r"[^a-z0-9 ]", " ", retrieval_query.lower()).split()
             if t not in _COL_STOPWORDS and len(t) >= 3
         }
 
         def _col_overlap(hit: dict) -> int:
             """Count query terms that appear in a sheet_summary hit's column list."""
             content = (hit.get("content") or "").lower()
-            col_line = next((ln for ln in content.splitlines() if ln.startswith("columns:")), "")
+            col_line = next(
+                (ln for ln in content.splitlines() if ln.startswith("columns:")), ""
+            )
             col_tokens = {
-                t for t in re.sub(r"[^a-z0-9 ]", " ", col_line).split()
+                t
+                for t in re.sub(r"[^a-z0-9 ]", " ", col_line).split()
                 if t not in _COL_STOPWORDS and len(t) >= 3
             }
             return len(q_terms & col_tokens)
@@ -851,7 +1048,11 @@ def _make_unified_tool(
             """Sort key for sheet_summary hits: (column overlap, stage-1 doc bonus)."""
             overlap = _col_overlap(hit)
             # Stage 1 boost: prefer sheets from Stage 1-identified docs as a tiebreaker.
-            stage1_bonus = 1 if (hit.get("metadata") or {}).get("doc_id", "") in stage1_doc_ids else 0
+            stage1_bonus = (
+                1
+                if (hit.get("metadata") or {}).get("doc_id", "") in stage1_doc_ids
+                else 0
+            )
             return (overlap, stage1_bonus)
 
         ranked_sheet_hits = sorted(sheet_hits, key=_sheet_sort_key, reverse=True)
@@ -864,7 +1065,9 @@ def _make_unified_tool(
             # fact. With the previous top_n=_rerank_top_n cut, stage1 chunks the reranker
             # ranked 11th+ were silently dropped before we could promote them.
             reranked = ranker.rerank(retrieval_query, docs, top_n=len(docs))
-            reranked_hits = [{**other_hits[r["index"]], "rerank_score": r["score"]} for r in reranked]
+            reranked_hits = [
+                {**other_hits[r["index"]], "rerank_score": r["score"]} for r in reranked
+            ]
             reranked_used = True
 
             if stage1_doc_ids and not effective_scope:
@@ -886,13 +1089,19 @@ def _make_unified_tool(
                             guaranteed_keys.add(key)
                 remaining_slots = max(_rerank_top_n - len(guaranteed), 0)
                 rest = [
-                    h for h in reranked_hits
-                    if ((h.get("metadata") or {}).get("source_file"),
-                        (h.get("metadata") or {}).get("chunk_index")) not in guaranteed_keys
+                    h
+                    for h in reranked_hits
+                    if (
+                        (h.get("metadata") or {}).get("source_file"),
+                        (h.get("metadata") or {}).get("chunk_index"),
+                    )
+                    not in guaranteed_keys
                 ][:remaining_slots]
                 top_other = guaranteed + rest
             else:
-                top_other = _merge_hits(raw_hits[: min(3, _rerank_top_n)], reranked_hits)[:_rerank_top_n]
+                top_other = _merge_hits(
+                    raw_hits[: min(3, _rerank_top_n)], reranked_hits
+                )[:_rerank_top_n]
         else:
             top_other = other_hits[:_rerank_top_n]
 
@@ -905,8 +1114,13 @@ def _make_unified_tool(
 
         # Expand neighbours and render the final numbered block for the agent.
         return _format_hits(
-            top_hits, filter_token, reranked_used,
-            retrieval_query, search_query, max_table_chars, max_chunk_chars,
+            top_hits,
+            filter_token,
+            reranked_used,
+            retrieval_query,
+            search_query,
+            max_table_chars,
+            max_chunk_chars,
         )
 
     def search_knowledge_base(query: str, doc_id: str = "") -> str:
@@ -928,4 +1142,3 @@ def _make_unified_tool(
         args_schema=SearchInput,
     )
     return tool, _limits
-

@@ -1,4 +1,5 @@
 """Shared LLM/endpoint helpers used by the agent and the retrieval tool."""
+
 from __future__ import annotations
 
 import os
@@ -36,16 +37,23 @@ def _is_thinking_model(model_name: str) -> bool:
     return any(k in name for k in ("qwen", "qwq", "deepseek-r", "r1"))
 
 
-
 def _to_openai_base(api_base: str) -> str:
     """Normalize an API base URL to end in /v1, as the OpenAI client expects."""
     base = api_base.rstrip("/")
     return base if base.endswith("/v1") else f"{base}/v1"
 
 
-def _llm_call(prompt: str, api_base: str, model_name: str, api_key: str = "", max_tokens: int = 128, temperature: float = 0.0) -> str:
+def _llm_call(
+    prompt: str,
+    api_base: str,
+    model_name: str,
+    api_key: str = "",
+    max_tokens: int = 128,
+    temperature: float = 0.0,
+) -> str:
     """Send one prompt to an OpenAI-compatible endpoint; return the reply with <think> blocks stripped."""
     import openai
+
     # Resolve key: explicit arg → LiteLLM master key → Groq → OpenAI → dummy
     key = (
         api_key

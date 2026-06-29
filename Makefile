@@ -54,4 +54,5 @@ test:
 	uv run pytest tests/ -v --tb=short
 
 lint:
-	uv run ruff check src/ slack_app.py
+	uv run ruff check src/ api.py slack_app.py eval/
+	uv run ruff format --check src/ api.py slack_app.py eval/

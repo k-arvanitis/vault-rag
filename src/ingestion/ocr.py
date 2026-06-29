@@ -1,4 +1,5 @@
 """Thin wrapper that sends a fitz Pixmap to the LightOn OCR endpoint."""
+
 from __future__ import annotations
 
 import base64

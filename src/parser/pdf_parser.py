@@ -4,6 +4,7 @@ Routes each page to either:
 - pymupdf4llm  — pages with a text layer (len(text) >= 50 chars)
 - LightOn OCR  — scanned pages with no usable text layer
 """
+
 from __future__ import annotations
 
 import logging
@@ -21,11 +22,11 @@ from src.ingestion.vlm import call_vlm_description
 logger = logging.getLogger(__name__)
 
 # Raster image written to disk by pymupdf4llm
-_IMG_REF_RE = re.compile(r'!\[\]\(([^)]+\.png)\)')
+_IMG_REF_RE = re.compile(r"!\[\]\(([^)]+\.png)\)")
 
 # Vector graphic whose text was extracted instead of rasterised
 _PICTURE_TEXT_RE = re.compile(
-    r'-{3,}\s*Start of picture text\s*-{3,}.*?-{3,}\s*End of picture text\s*-{3,}',
+    r"-{3,}\s*Start of picture text\s*-{3,}.*?-{3,}\s*End of picture text\s*-{3,}",
     re.DOTALL | re.IGNORECASE,
 )
 
@@ -43,6 +44,7 @@ def _ocr_page(pix) -> tuple[str, str]:
     """
     if PDF_PARSER == "cpu":
         from src.ingestion.unstructured_ocr import call_unstructured_ocr
+
         return call_unstructured_ocr(pix), _LABEL_OCR_CPU
     return call_lighton_ocr(pix), _LABEL_OCR
 
@@ -70,17 +72,20 @@ def parse_pdf(path: str, force_pipeline: str | None = None) -> list[tuple[str, s
         for page_number, page in enumerate(doc):
             text = page.get_text().strip()
 
-            use_ocr = (
-                force_pipeline == "ocr"
-                or (force_pipeline != "text" and len(text) < 50)
+            use_ocr = force_pipeline == "ocr" or (
+                force_pipeline != "text" and len(text) < 50
             )
 
             if use_ocr:
                 pix = page.get_pixmap(dpi=300)
                 page_string, label = _ocr_page(pix)
-                print(f"[INGEST] Page {page_number + 1}/{n_pages} → {label} ({'forced' if force_pipeline == 'ocr' else 'scanned'})")
+                print(
+                    f"[INGEST] Page {page_number + 1}/{n_pages} → {label} ({'forced' if force_pipeline == 'ocr' else 'scanned'})"
+                )
             else:
-                print(f"[INGEST] Page {page_number + 1}/{n_pages} → {_LABEL_TEXT} ({'forced' if force_pipeline == 'text' else 'text-layer'})")
+                print(
+                    f"[INGEST] Page {page_number + 1}/{n_pages} → {_LABEL_TEXT} ({'forced' if force_pipeline == 'text' else 'text-layer'})"
+                )
                 page_string = _parse_text_layer_page(path, page_number, tmp_dir)
                 label = _LABEL_TEXT
 
@@ -125,9 +130,7 @@ def _parse_text_layer_page(path: str, page_number: int, image_dir: str) -> str:
     # Collect all image markers in document order (both types)
     all_matches: list[tuple[str, re.Match]] = [
         ("img_ref", m) for m in _IMG_REF_RE.finditer(page_markdown)
-    ] + [
-        ("picture_text", m) for m in _PICTURE_TEXT_RE.finditer(page_markdown)
-    ]
+    ] + [("picture_text", m) for m in _PICTURE_TEXT_RE.finditer(page_markdown)]
     all_matches.sort(key=lambda x: x[1].start())
 
     # pymupdf4llm's internal OCR path silently skips image extraction.
@@ -142,7 +145,9 @@ def _parse_text_layer_page(path: str, page_number: int, image_dir: str) -> str:
             image_info = fitz_page.get_image_info(hashes=False, xrefs=True)
             # Build xref → bbox lookup
             xref_to_bbox: dict[int, fitz.Rect] = {
-                info["xref"]: fitz.Rect(info["bbox"]) for info in image_info if "xref" in info
+                info["xref"]: fitz.Rect(info["bbox"])
+                for info in image_info
+                if "xref" in info
             }
             original_len = len(page_markdown)
             insert_offset = 0
@@ -153,7 +158,11 @@ def _parse_text_layer_page(path: str, page_number: int, image_dir: str) -> str:
                     img_bytes = base_image["image"]
                     description = call_vlm_description(img_bytes)
                 except Exception:
-                    logger.exception("Fallback VLM extraction failed for page %d xref %d", page_number, xref)
+                    logger.exception(
+                        "Fallback VLM extraction failed for page %d xref %d",
+                        page_number,
+                        xref,
+                    )
                     description = "description unavailable"
                 marker = f"[FIGURE_START]\n{description}\n[FIGURE_END]\n\n"
                 bbox = xref_to_bbox.get(xref)
@@ -168,7 +177,9 @@ def _parse_text_layer_page(path: str, page_number: int, image_dir: str) -> str:
                     pos = para_break
                 else:
                     pos = len(page_markdown)
-                page_markdown = page_markdown[:pos] + "\n\n" + marker + page_markdown[pos:]
+                page_markdown = (
+                    page_markdown[:pos] + "\n\n" + marker + page_markdown[pos:]
+                )
                 insert_offset += len(marker) + 2
         return page_markdown
 
@@ -186,16 +197,25 @@ def _parse_text_layer_page(path: str, page_number: int, image_dir: str) -> str:
             if not embedded_path.is_absolute():
                 embedded_path = Path(image_dir) / embedded_path
             if not embedded_path.exists():
-                embedded_path = Path(image_dir) / f"{pdf_stem}-{page_number}-{img_idx}.png"
+                embedded_path = (
+                    Path(image_dir) / f"{pdf_stem}-{page_number}-{img_idx}.png"
+                )
 
             if embedded_path.exists():
                 try:
                     description = call_vlm_description(embedded_path.read_bytes())
                 except Exception:
-                    logger.exception("VLM call failed for page %d index %d", page_number, img_idx)
+                    logger.exception(
+                        "VLM call failed for page %d index %d", page_number, img_idx
+                    )
                     description = "description unavailable"
             else:
-                logger.warning("Image file not found for page %d index %d: %s", page_number, img_idx, embedded_path)
+                logger.warning(
+                    "Image file not found for page %d index %d: %s",
+                    page_number,
+                    img_idx,
+                    embedded_path,
+                )
                 description = "description unavailable"
             replacements.append((match, f"[FIGURE_START]\n{description}\n[FIGURE_END]"))
 
@@ -213,12 +233,20 @@ def _parse_text_layer_page(path: str, page_number: int, image_dir: str) -> str:
                     pix = fitz_page.get_pixmap(dpi=150)
                 description = call_vlm_description(pix.tobytes("png"))
             except Exception:
-                logger.exception("VLM render failed for picture text block page %d index %d", page_number, img_idx)
+                logger.exception(
+                    "VLM render failed for picture text block page %d index %d",
+                    page_number,
+                    img_idx,
+                )
                 description = "description unavailable"
             replacements.append((match, f"[FIGURE_START]\n{description}\n[FIGURE_END]"))
 
     # Apply replacements from end to start to preserve string positions
-    for match, replacement in sorted(replacements, key=lambda x: x[0].start(), reverse=True):
-        page_markdown = page_markdown[:match.start()] + replacement + page_markdown[match.end():]
+    for match, replacement in sorted(
+        replacements, key=lambda x: x[0].start(), reverse=True
+    ):
+        page_markdown = (
+            page_markdown[: match.start()] + replacement + page_markdown[match.end() :]
+        )
 
     return page_markdown

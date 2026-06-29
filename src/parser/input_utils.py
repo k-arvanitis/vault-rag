@@ -4,13 +4,14 @@ import shutil
 import subprocess
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DOCX_PDF_DIR = REPO_ROOT / "data/interim/docx_pdf"
 ALLOWED_OFFICE_EXTENSIONS = {".docx", ".doc", ".pptx", ".ppt"}
 
 
-def office_to_pdf(input_path: str | Path, output_dir: str | Path = DEFAULT_DOCX_PDF_DIR) -> Path:
+def office_to_pdf(
+    input_path: str | Path, output_dir: str | Path = DEFAULT_DOCX_PDF_DIR
+) -> Path:
     if shutil.which("libreoffice") is None:
         raise RuntimeError(
             "libreoffice is not installed. Install with: sudo apt-get install -y libreoffice"
@@ -47,7 +48,9 @@ def office_to_pdf(input_path: str | Path, output_dir: str | Path = DEFAULT_DOCX_
     return pdf_path
 
 
-def resolve_to_pdf(input_path: str | Path, output_dir: str | Path = DEFAULT_DOCX_PDF_DIR) -> Path:
+def resolve_to_pdf(
+    input_path: str | Path, output_dir: str | Path = DEFAULT_DOCX_PDF_DIR
+) -> Path:
     path = Path(input_path).expanduser().resolve()
     suffix = path.suffix.lower()
     if suffix == ".pdf":
@@ -56,4 +59,6 @@ def resolve_to_pdf(input_path: str | Path, output_dir: str | Path = DEFAULT_DOCX
         return path
     if suffix in ALLOWED_OFFICE_EXTENSIONS:
         return office_to_pdf(path, output_dir=output_dir)
-    raise ValueError(f"Unsupported input type: {suffix}. Use .pdf, .doc, .docx, .ppt, or .pptx")
+    raise ValueError(
+        f"Unsupported input type: {suffix}. Use .pdf, .doc, .docx, .ppt, or .pptx"
+    )

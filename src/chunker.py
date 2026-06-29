@@ -13,21 +13,21 @@ splitters, and tiktoken for token counting.
 
 import argparse
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import tiktoken
 from dotenv import load_dotenv
 from langchain_text_splitters import (
     MarkdownHeaderTextSplitter,
     RecursiveCharacterTextSplitter,
 )
 from openai import OpenAI
-import os
-import tiktoken
 
-from src.config import CHUNK_LLM_API_BASE, CHUNK_LLM_MODEL, CHUNK_LLM_API_KEY
+from src.config import CHUNK_LLM_API_BASE, CHUNK_LLM_API_KEY, CHUNK_LLM_MODEL
 from src.prompts import CHUNK_CONTEXT_PROMPT, DOCUMENT_SUMMARY_PROMPT
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -36,6 +36,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # ---------------------------------------------------------------------------
 # Chunk model and debug helper
 # ---------------------------------------------------------------------------
+
 
 def _debug(message: str) -> None:
     print(f"[CHUNKER][DEBUG] {message}")
@@ -57,6 +58,7 @@ class Chunk:
 # LLM enrichment: document summary + per-chunk context line
 # ---------------------------------------------------------------------------
 
+
 def generate_document_summary(client: OpenAI, model_name: str, markdown: str) -> str:
     """Generate a 3-5 sentence document-level summary for the whole document."""
     # Cap the input so the prompt stays within the model context window.
@@ -76,7 +78,9 @@ def generate_document_summary(client: OpenAI, model_name: str, markdown: str) ->
         return f"Summary unavailable: {e}"
 
 
-def contextualize_chunk(client: OpenAI, model_name: str, doc_context: str, chunk_content: str) -> str:
+def contextualize_chunk(
+    client: OpenAI, model_name: str, doc_context: str, chunk_content: str
+) -> str:
     """Write a one-sentence retrieval-context line for a chunk.
 
     doc_context is the background shown to the model — either the whole document
@@ -91,8 +95,8 @@ def contextualize_chunk(client: OpenAI, model_name: str, doc_context: str, chunk
     # Extract heading and table hints from the chunk to steer the context line.
     heading_match = re.search(r"(?m)^#{1,3}\s+(.+?)\s*$", chunk_content)
     table_match = re.search(r"(?i)\btable\s+\d+[^\n]*", chunk_content)
-    heading_hint = (heading_match.group(1).strip() if heading_match else "none")
-    table_hint = (table_match.group(0).strip() if table_match else "none")
+    heading_hint = heading_match.group(1).strip() if heading_match else "none"
+    table_hint = table_match.group(0).strip() if table_match else "none"
 
     prompt = CHUNK_CONTEXT_PROMPT.format(
         heading_hint=heading_hint,
@@ -117,6 +121,7 @@ def contextualize_chunk(client: OpenAI, model_name: str, doc_context: str, chunk
 # ---------------------------------------------------------------------------
 # Core chunking pipeline: split → merge → enrich → write JSON
 # ---------------------------------------------------------------------------
+
 
 def chunk_markdown(
     markdown: str,
@@ -161,15 +166,13 @@ def chunk_markdown(
     )
 
     # Matches a whole figure block so it can be kept atomic during token splits.
-    _figure_block_re = re.compile(
-        r'\[FIGURE_START\].*?\[FIGURE_END\]', re.DOTALL
-    )
+    _figure_block_re = re.compile(r"\[FIGURE_START\].*?\[FIGURE_END\]", re.DOTALL)
 
     # Split at page-boundary markers emitted by pymupdf4llm before header splitting.
     # Without this, a ## heading from page N and a table/figure starting on page N+1
     # land in the same chunk — the reranker then sees the wrong lead content (the
     # heading) and demotes the chunk for table/figure queries.
-    _page_marker_re = re.compile(r'(?=<!--\s*PAGE\s+\d+)', re.IGNORECASE)
+    _page_marker_re = re.compile(r"(?=<!--\s*PAGE\s+\d+)", re.IGNORECASE)
 
     def _split_protecting_figures(content: str, metadata: dict) -> list[Chunk]:
         """Split content on token limit while keeping figure blocks atomic."""
@@ -185,13 +188,22 @@ def chunk_markdown(
                 if token_count <= max_tokens:
                     result.append(Chunk(content=part, metadata=dict(metadata)))
                 else:
-                    for sub_doc in text_splitter.create_documents([part], metadatas=[metadata]):
+                    for sub_doc in text_splitter.create_documents(
+                        [part], metadatas=[metadata]
+                    ):
                         sub_content = sub_doc.page_content.strip()
                         if sub_content:
-                            result.append(Chunk(content=sub_content, metadata=dict(sub_doc.metadata or {})))
+                            result.append(
+                                Chunk(
+                                    content=sub_content,
+                                    metadata=dict(sub_doc.metadata or {}),
+                                )
+                            )
             # Re-insert the figure block that originally followed this part, intact.
             if idx < len(figures):
-                result.append(Chunk(content=figures[idx].strip(), metadata=dict(metadata)))
+                result.append(
+                    Chunk(content=figures[idx].strip(), metadata=dict(metadata))
+                )
         return result
 
     # Split by page boundaries first so each page is processed independently,
@@ -252,20 +264,35 @@ def chunk_markdown(
         has_figure = "[FIGURE_START]" in chunk.content
 
         # Keep as-is: tables, figures, large-enough chunks, or section starts.
-        if has_table or has_figure or chunk_chars >= min_chars or _has_section_header(chunk.content):
+        if (
+            has_table
+            or has_figure
+            or chunk_chars >= min_chars
+            or _has_section_header(chunk.content)
+        ):
             merged_chunks.append(chunk)
             i += 1
             continue
 
         # Otherwise fold the tiny chunk into the previous one (if not a table/figure).
-        if merged_chunks and "[TABLE_START]" not in merged_chunks[-1].content and "[FIGURE_START]" not in merged_chunks[-1].content:
+        if (
+            merged_chunks
+            and "[TABLE_START]" not in merged_chunks[-1].content
+            and "[FIGURE_START]" not in merged_chunks[-1].content
+        ):
             merged_chunks[-1].content += "\n\n" + chunk.content
             i += 1
             continue
 
         # No usable previous chunk: prepend it to the next chunk instead.
-        if i + 1 < len(compact_chunks) and "[TABLE_START]" not in compact_chunks[i + 1].content and "[FIGURE_START]" not in compact_chunks[i + 1].content:
-            compact_chunks[i + 1].content = chunk.content + "\n\n" + compact_chunks[i + 1].content
+        if (
+            i + 1 < len(compact_chunks)
+            and "[TABLE_START]" not in compact_chunks[i + 1].content
+            and "[FIGURE_START]" not in compact_chunks[i + 1].content
+        ):
+            compact_chunks[i + 1].content = (
+                chunk.content + "\n\n" + compact_chunks[i + 1].content
+            )
             i += 1
             continue
 
@@ -291,8 +318,14 @@ def chunk_markdown(
         whole_doc_fits = len(tokenizer.encode(markdown)) <= doc_budget
 
         if verbose:
-            mode = "full document" if whole_doc_fits else f"summary + ±{window}-chunk window"
-            _debug(f"Enriching {total_chunks} chunks using {model_name} | context: {mode}")
+            mode = (
+                "full document"
+                if whole_doc_fits
+                else f"summary + ±{window}-chunk window"
+            )
+            _debug(
+                f"Enriching {total_chunks} chunks using {model_name} | context: {mode}"
+            )
         for i, chunk in enumerate(compact_chunks, start=1):
             # Build the background context: full doc, or summary + neighbour window.
             if whole_doc_fits:
@@ -304,7 +337,9 @@ def chunk_markdown(
                 neighbours = "\n\n".join(c.content for c in compact_chunks[lo:hi])
                 doc_context = f"{doc_summary}\n\n--- Nearby text ---\n{neighbours}"
             # Generate the context line and store it on metadata + vector_text.
-            context = contextualize_chunk(client, model_name, doc_context, chunk.content)
+            context = contextualize_chunk(
+                client, model_name, doc_context, chunk.content
+            )
             context = context.strip()
             chunk.metadata["context"] = context
             chunk.vector_text = f"CONTEXT: {context}\n\nCONTENT:\n{chunk.content}"
@@ -316,7 +351,11 @@ def chunk_markdown(
         # Derive a doc_NNN id from the file name for the summary chunk header.
         doc_id_match = re.search(r"doc_\d+", file_name)
         doc_id = doc_id_match.group(0) if doc_id_match else ""
-        id_header = f"Document ID: {doc_id}\nFile: {file_name}\n\n" if doc_id else f"File: {file_name}\n\n"
+        id_header = (
+            f"Document ID: {doc_id}\nFile: {file_name}\n\n"
+            if doc_id
+            else f"File: {file_name}\n\n"
+        )
         summary_content = f"## Document Summary\n\n{id_header}{doc_summary}"
         summary_chunk = Chunk(
             content=summary_content,
@@ -378,11 +417,19 @@ def chunk_markdown(
     if output_dir is None:
         final_output_dir = REPO_ROOT / "data/output/chunks"
     else:
-        final_output_dir = output_dir if output_dir.is_absolute() else REPO_ROOT / output_dir
+        final_output_dir = (
+            output_dir if output_dir.is_absolute() else REPO_ROOT / output_dir
+        )
     final_output_dir.mkdir(parents=True, exist_ok=True)
-    output_name = f"{Path(file_name).stem}_chunks.json" if file_name and file_name != "unknown" else "chunks.json"
+    output_name = (
+        f"{Path(file_name).stem}_chunks.json"
+        if file_name and file_name != "unknown"
+        else "chunks.json"
+    )
     output_path = final_output_dir / output_name
-    output_path.write_text(json.dumps(output_chunks, ensure_ascii=False, indent=2), encoding="utf-8")
+    output_path.write_text(
+        json.dumps(output_chunks, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     if verbose:
         print(f"Saved: {output_path}")
 
@@ -392,6 +439,7 @@ def chunk_markdown(
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     """Parse CLI arguments and chunk a single markdown file."""

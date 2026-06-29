@@ -29,8 +29,15 @@ NARRATIVE_DOCS = [
 
 # Table docs
 TABLE_DOCS = [
-    ("doc_006", TABLE_MD_DIR / "doc_006_purchase_card_transactions_q1_2025_26__DataAnalysis.md"),
-    ("doc_007", TABLE_MD_DIR / "doc_007_published_spend_report_april_25__doc_007_published_spend_report_april_25.md"),
+    (
+        "doc_006",
+        TABLE_MD_DIR / "doc_006_purchase_card_transactions_q1_2025_26__DataAnalysis.md",
+    ),
+    (
+        "doc_007",
+        TABLE_MD_DIR
+        / "doc_007_published_spend_report_april_25__doc_007_published_spend_report_april_25.md",
+    ),
 ]
 
 # OCR docs — hand-written questions only, skip synthesis
@@ -53,7 +60,9 @@ def synthesize_for_doc(doc_id: str, md_path: Path, n: int = 8) -> list[dict]:
         expected_output_format="A concise factual answer, one to three sentences.",
     )
 
-    synthesizer = Synthesizer(model="gpt-4o-mini", async_mode=False, styling_config=styling)
+    synthesizer = Synthesizer(
+        model="gpt-4o-mini", async_mode=False, styling_config=styling
+    )
     contexts = [[text]]
     goldens = synthesizer.generate_goldens_from_contexts(
         contexts=contexts,
@@ -64,13 +73,15 @@ def synthesize_for_doc(doc_id: str, md_path: Path, n: int = 8) -> list[dict]:
 
     results = []
     for i, golden in enumerate(goldens):
-        results.append({
-            "doc_id": doc_id,
-            "question": golden.input,
-            "gold_answer": golden.expected_output,
-            "context": golden.context,
-        })
-        print(f"  [{doc_id}] Q{i+1}: {golden.input[:80]}")
+        results.append(
+            {
+                "doc_id": doc_id,
+                "question": golden.input,
+                "gold_answer": golden.expected_output,
+                "context": golden.context,
+            }
+        )
+        print(f"  [{doc_id}] Q{i + 1}: {golden.input[:80]}")
     return results
 
 

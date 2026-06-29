@@ -4,6 +4,7 @@ The full chandra_parser (which required the proprietary `chandra` package) has b
 removed. This shim retains the five functions imported by lightonocr_parser so the
 active OCR pipeline continues to work without modification.
 """
+
 from __future__ import annotations
 
 import re
@@ -137,7 +138,9 @@ def html_table_to_markdown(
 ) -> str:
     import pandas as pd
 
-    if mode == "pipe" and _table_is_complex(table_html, max_cols_for_pipe=max_cols_for_pipe):
+    if mode == "pipe" and _table_is_complex(
+        table_html, max_cols_for_pipe=max_cols_for_pipe
+    ):
         mode = "grid"
 
     dfs = pd.read_html(StringIO(table_html), flavor="lxml")
@@ -203,7 +206,7 @@ def replace_html_tables_with_titles(
             if line_end == -1:
                 before = before[:line_start]
             else:
-                before = before[:line_start] + before[line_end + 1:]
+                before = before[:line_start] + before[line_end + 1 :]
 
         try:
             rendered = html_table_to_markdown(table_html, mode=mode)

@@ -13,6 +13,7 @@ build_decomposition_pipeline()
     explicit step-by-step plan and works through it via tool calls.
     Single-hop questions bypass decomposition and go directly to the agent.
 """
+
 from __future__ import annotations
 
 import json
@@ -39,14 +40,25 @@ def _is_unsupported(answer: str) -> bool:
 
 def _looks_excel(question: str) -> bool:
     """Heuristic: does this question target a structured Excel/CSV document?"""
-    kw = ("transaction", "supplier", "beneficiary", "spend", "csv", "excel",
-          "spreadsheet", "total amount", "net amount", "purchase card")
+    kw = (
+        "transaction",
+        "supplier",
+        "beneficiary",
+        "spend",
+        "csv",
+        "excel",
+        "spreadsheet",
+        "total amount",
+        "net amount",
+        "purchase card",
+    )
     return any(k in question.lower() for k in kw)
 
 
 # ---------------------------------------------------------------------------
 # Reflection pipeline
 # ---------------------------------------------------------------------------
+
 
 class _ReflectState(TypedDict):
     question: str
@@ -107,25 +119,30 @@ def build_reflection_pipeline(agent: Any) -> Any:
     builder.add_node("reflect", _reflect_node)
     builder.set_entry_point("run")
     builder.add_edge("run", "reflect")
-    builder.add_conditional_edges("reflect", _route_after_reflect, {"run": "run", END: END})
+    builder.add_conditional_edges(
+        "reflect", _route_after_reflect, {"run": "run", END: END}
+    )
     return builder.compile()
 
 
 def ask_with_reflection(pipeline: Any, question: str) -> str:
     """Invoke a reflection pipeline and return the final answer string."""
-    result = pipeline.invoke({
-        "question": question,
-        "answer": "",
-        "retry_count": 0,
-        "drop_filter": False,
-        "retrieved_contexts": [],
-    })
+    result = pipeline.invoke(
+        {
+            "question": question,
+            "answer": "",
+            "retry_count": 0,
+            "drop_filter": False,
+            "retrieved_contexts": [],
+        }
+    )
     return result["answer"]
 
 
 # ---------------------------------------------------------------------------
 # Decomposition pipeline
 # ---------------------------------------------------------------------------
+
 
 class _DecomposeState(TypedDict):
     question: str
@@ -211,7 +228,9 @@ def build_decomposition_pipeline(
     def _run_node(state: _DecomposeState) -> dict:
         """Run the ReAct agent on the (possibly plan-formatted) question."""
         chunks: list[str] = []
-        answer = ask_agent(agent, state["formatted_question"], retrieved_contexts=chunks)
+        answer = ask_agent(
+            agent, state["formatted_question"], retrieved_contexts=chunks
+        )
         return {"answer": answer, "contexts": chunks}
 
     builder: StateGraph = StateGraph(_DecomposeState)
@@ -232,13 +251,15 @@ def ask_with_decomposition(
     while answering are appended to it (same contract as stream_agent/ask_agent),
     so callers like the eval harness can ground a faithfulness judge.
     """
-    result = pipeline.invoke({
-        "question": question,
-        "sub_questions": [],
-        "formatted_question": "",
-        "answer": "",
-        "contexts": [],
-    })
+    result = pipeline.invoke(
+        {
+            "question": question,
+            "sub_questions": [],
+            "formatted_question": "",
+            "answer": "",
+            "contexts": [],
+        }
+    )
     if collected_chunks is not None:
         collected_chunks.extend(result.get("contexts") or [])
     return result["answer"]

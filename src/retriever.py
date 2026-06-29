@@ -25,24 +25,30 @@ from dotenv import load_dotenv
 
 from src.config import OLLAMA_EMBED_MODEL
 
-
 # ---------------------------------------------------------------------------
 # Embedding & similarity helpers
 # ---------------------------------------------------------------------------
+
 
 def _ollama_embed_query(api_base: str, model_name: str, query: str) -> list[float]:
     """Embed a single query string via the Ollama /api/embed endpoint."""
     # Build the POST request to Ollama's embed endpoint (num_gpu=0 keeps it CPU).
     url = f"{api_base.rstrip('/')}/api/embed"
-    payload = json.dumps({"model": model_name, "input": [query], "options": {"num_gpu": 0}}).encode("utf-8")
-    req = Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+    payload = json.dumps(
+        {"model": model_name, "input": [query], "options": {"num_gpu": 0}}
+    ).encode("utf-8")
+    req = Request(
+        url, data=payload, headers={"Content-Type": "application/json"}, method="POST"
+    )
     # Send the request, turning HTTP/connection errors into clear RuntimeErrors.
     try:
         with urlopen(req, timeout=300) as resp:
             body = json.loads(resp.read().decode("utf-8"))
     except HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Ollama embed request failed ({exc.code}): {detail}") from exc
+        raise RuntimeError(
+            f"Ollama embed request failed ({exc.code}): {detail}"
+        ) from exc
     except URLError as exc:
         raise RuntimeError(
             f"Could not connect to Ollama at {api_base}. Ensure `ollama serve` is running."
@@ -72,6 +78,7 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
 # ---------------------------------------------------------------------------
 # Qdrant payload filters — chunk-type routing, doc scoping, text matching
 # ---------------------------------------------------------------------------
+
 
 def _text_filter(token: str) -> dict:
     """Build a Qdrant payload filter that requires token to appear in the content field."""
@@ -104,20 +111,24 @@ def _metadata_filter(
     if chunk_types:
         must.append({"key": "metadata.chunk_type", "match": {"any": chunk_types}})
     if exclude_chunk_types:
-        must_not.append({"key": "metadata.chunk_type", "match": {"any": exclude_chunk_types}})
+        must_not.append(
+            {"key": "metadata.chunk_type", "match": {"any": exclude_chunk_types}}
+        )
     # Require a literal token to appear in the chunk's content text.
     if filter_token:
         must.append({"key": "content", "match": {"text": filter_token}})
     if scope_doc_id:
         # OR across all three doc-id fields — older ingestions may only have
         # source_file/file_name; newer ones set metadata.doc_id explicitly.
-        must.append({
-            "should": [
-                {"key": "metadata.doc_id", "match": {"value": scope_doc_id}},
-                {"key": "metadata.source_file", "match": {"text": scope_doc_id}},
-                {"key": "metadata.file_name", "match": {"text": scope_doc_id}},
-            ]
-        })
+        must.append(
+            {
+                "should": [
+                    {"key": "metadata.doc_id", "match": {"value": scope_doc_id}},
+                    {"key": "metadata.source_file", "match": {"text": scope_doc_id}},
+                    {"key": "metadata.file_name", "match": {"text": scope_doc_id}},
+                ]
+            }
+        )
     # No conditions means "no filter" — Qdrant should search everything.
     if not must and not must_not:
         return None
@@ -134,21 +145,66 @@ def _metadata_filter(
 # Table query analysis — pick distinctive value tokens for table lookups
 # ---------------------------------------------------------------------------
 
-_TABLE_STOP_WORDS = frozenset({
-    # Question structure words
-    "what", "which", "where", "when", "who", "how", "does", "according", "listed",
-    "appears", "dated", "where",
-    # Generic English connectives
-    "is", "the", "a", "an", "for", "on", "in", "at", "of", "to", "with", "and",
-    "that", "this", "from", "have", "been",
-    # Common table column names — these are structural words, not values
-    "row", "amount", "total", "date", "number", "net", "value",
-    "transaction", "transactions", "supplier", "beneficiary",
-    "merchant", "category", "purchase", "expenditure",
-    "department", "directorate", "authority",
-    # Context words that appear in table-query phrasing but are not entity values
-    "spreadsheet", "report", "spend", "published", "card",
-})
+_TABLE_STOP_WORDS = frozenset(
+    {
+        # Question structure words
+        "what",
+        "which",
+        "where",
+        "when",
+        "who",
+        "how",
+        "does",
+        "according",
+        "listed",
+        "appears",
+        "dated",
+        "where",
+        # Generic English connectives
+        "is",
+        "the",
+        "a",
+        "an",
+        "for",
+        "on",
+        "in",
+        "at",
+        "of",
+        "to",
+        "with",
+        "and",
+        "that",
+        "this",
+        "from",
+        "have",
+        "been",
+        # Common table column names — these are structural words, not values
+        "row",
+        "amount",
+        "total",
+        "date",
+        "number",
+        "net",
+        "value",
+        "transaction",
+        "transactions",
+        "supplier",
+        "beneficiary",
+        "merchant",
+        "category",
+        "purchase",
+        "expenditure",
+        "department",
+        "directorate",
+        "authority",
+        # Context words that appear in table-query phrasing but are not entity values
+        "spreadsheet",
+        "report",
+        "spend",
+        "published",
+        "card",
+    }
+)
 
 
 def _extract_table_filter_token(query: str) -> str | None:
@@ -163,7 +219,9 @@ def _extract_table_filter_token(query: str) -> str | None:
 
     # Plain alphanumeric tokens only — no & or . so cross-word combos aren't captured
     words = re.findall(r"[A-Za-z0-9]+", query)
-    candidates = [w for w in words if w.lower() not in _TABLE_STOP_WORDS and len(w) >= 5]
+    candidates = [
+        w for w in words if w.lower() not in _TABLE_STOP_WORDS and len(w) >= 5
+    ]
     if not candidates:
         return None
     # Prefer tokens that look like proper values: contain digits or start with uppercase
@@ -199,6 +257,7 @@ def _extract_table_filter_terms(query: str) -> list[str]:
 # Chunk-type routing
 # ---------------------------------------------------------------------------
 
+
 def infer_query_chunk_types(query: str) -> tuple[list[str] | None, list[str] | None]:
     """Infer chunk type routing for a query.
 
@@ -212,6 +271,7 @@ def infer_query_chunk_types(query: str) -> tuple[list[str] | None, list[str] | N
 # ---------------------------------------------------------------------------
 # Qdrant transport — dense, hybrid and scroll-filter search calls
 # ---------------------------------------------------------------------------
+
 
 def _qdrant_search(
     qdrant_url: str,
@@ -241,7 +301,9 @@ def _qdrant_search(
         body["filter"] = payload_filter
     # Send the request, converting HTTP/connection errors into RuntimeErrors.
     payload = json.dumps(body).encode("utf-8")
-    req = Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+    req = Request(
+        url, data=payload, headers={"Content-Type": "application/json"}, method="POST"
+    )
     try:
         with urlopen(req, timeout=300) as resp:
             body = json.loads(resp.read().decode("utf-8"))
@@ -296,7 +358,11 @@ def _qdrant_hybrid_search(
     body: dict[str, Any] = {
         "prefetch": [
             {"query": query_vec, "limit": top_k * 3},
-            {"query": {"indices": sparse_indices, "values": sparse_values}, "using": "sparse", "limit": top_k * 3},
+            {
+                "query": {"indices": sparse_indices, "values": sparse_values},
+                "using": "sparse",
+                "limit": top_k * 3,
+            },
         ],
         "query": {"fusion": "rrf"},
         "limit": top_k,
@@ -314,13 +380,17 @@ def _qdrant_hybrid_search(
         body["filter"] = payload_filter
     # Send the request, converting HTTP/connection errors into RuntimeErrors.
     payload = json.dumps(body).encode("utf-8")
-    req = Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+    req = Request(
+        url, data=payload, headers={"Content-Type": "application/json"}, method="POST"
+    )
     try:
         with urlopen(req, timeout=300) as resp:
             body = json.loads(resp.read().decode("utf-8"))
     except HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Qdrant hybrid query failed ({exc.code}): {detail}") from exc
+        raise RuntimeError(
+            f"Qdrant hybrid query failed ({exc.code}): {detail}"
+        ) from exc
     except URLError as exc:
         raise RuntimeError(f"Could not connect to Qdrant at {qdrant_url}.") from exc
 
@@ -363,7 +433,9 @@ def _qdrant_scroll_filter(
         body["filter"] = payload_filter
     # Send the request, converting HTTP/connection errors into RuntimeErrors.
     payload = json.dumps(body).encode("utf-8")
-    req = Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+    req = Request(
+        url, data=payload, headers={"Content-Type": "application/json"}, method="POST"
+    )
     try:
         with urlopen(req, timeout=300) as resp:
             body = json.loads(resp.read().decode("utf-8"))
@@ -383,6 +455,7 @@ def _qdrant_scroll_filter(
 # ---------------------------------------------------------------------------
 # Public entry point — embed the query and return ranked chunks
 # ---------------------------------------------------------------------------
+
 
 def retrieve(
     query: str,
@@ -408,7 +481,9 @@ def retrieve(
     source_file text filter — guarantees small docs appear even if globally outranked.
     """
     # Embed the query once — the same vector is reused for every search below.
-    query_vec = _ollama_embed_query(api_base=api_base, model_name=model_name, query=query)
+    query_vec = _ollama_embed_query(
+        api_base=api_base, model_name=model_name, query=query
+    )
 
     if use_qdrant:
         # Decide chunk-type routing: explicit force_* overrides win, otherwise
@@ -430,6 +505,7 @@ def retrieve(
             if _collection_has_sparse(qdrant_url=qdrant_url, collection=collection):
                 try:
                     from src.sparse_embedder import get_sparse_embedder
+
                     sparse_indices, sparse_values = get_sparse_embedder().embed(query)
                     hybrid_points = _qdrant_hybrid_search(
                         qdrant_url=qdrant_url,
@@ -476,6 +552,7 @@ def retrieve(
         if _collection_has_sparse(qdrant_url=qdrant_url, collection=collection):
             try:
                 from src.sparse_embedder import get_sparse_embedder
+
                 sparse_indices, sparse_values = get_sparse_embedder().embed(query)
                 points = _qdrant_hybrid_search(
                     qdrant_url=qdrant_url,
@@ -560,7 +637,8 @@ def retrieve(
                 # alternate query terms (handles multi-word/punctuated names).
                 if not exact_points:
                     alternate_terms = [
-                        term for term in sorted(filter_terms, key=len, reverse=True)
+                        term
+                        for term in sorted(filter_terms, key=len, reverse=True)
                         if term != filter_token.lower() and len(term) >= 4
                     ][:4]
                     for term in alternate_terms:
@@ -588,7 +666,9 @@ def retrieve(
                         exact_points.extend(term_points)
                 # Prepend exact matches, then append vector hits not already seen.
                 seen_ids = {point.get("id") for point in exact_points}
-                points = exact_points + [point for point in points if point.get("id") not in seen_ids]
+                points = exact_points + [
+                    point for point in points if point.get("id") not in seen_ids
+                ]
             except Exception:
                 pass
         # Normalize raw Qdrant points into the flat hit dicts callers expect.
@@ -609,12 +689,15 @@ def retrieve(
         # Table queries: soft-reorder hits by how many value terms they contain
         # (primary key), breaking ties with the vector score, then cut to top_k.
         if filter_terms:
+
             def _table_term_score(hit: dict[str, Any]) -> int:
                 """Count how many table value terms appear in a hit's content."""
                 content = (hit.get("content") or "").lower()
                 return sum(1 for term in filter_terms if term in content)
 
-            scored_from_qdrant.sort(key=lambda h: (_table_term_score(h), h.get("score", 0.0)), reverse=True)
+            scored_from_qdrant.sort(
+                key=lambda h: (_table_term_score(h), h.get("score", 0.0)), reverse=True
+            )
             return scored_from_qdrant[:top_k]
         return scored_from_qdrant
 
@@ -625,7 +708,9 @@ def retrieve(
     # Load and validate the embeddings file.
     rows = json.loads(embeddings_path.read_text(encoding="utf-8"))
     if not isinstance(rows, list):
-        raise ValueError(f"Expected a list in {embeddings_path}, got {type(rows).__name__}")
+        raise ValueError(
+            f"Expected a list in {embeddings_path}, got {type(rows).__name__}"
+        )
     if not rows:
         return []
 
@@ -655,13 +740,16 @@ def retrieve(
 # CLI entry point
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     """Parse CLI args, run a single retrieve() call and print the JSON results."""
     # Load .env so OLLAMA_API_BASE etc. are picked up before arg parsing.
     load_dotenv()
 
     # Define the CLI arguments (query, embeddings path, Qdrant settings, …).
-    parser = argparse.ArgumentParser(description="Retrieve top-k relevant chunks from embeddings JSON.")
+    parser = argparse.ArgumentParser(
+        description="Retrieve top-k relevant chunks from embeddings JSON."
+    )
     parser.add_argument("--query", required=True, help="Search query text")
     parser.add_argument(
         "--embeddings",
@@ -669,9 +757,15 @@ def main() -> None:
         default=None,
         help="Path to embeddings JSON created by src/embedder.py (used when --no-use-qdrant).",
     )
-    parser.add_argument("--top-k", type=int, default=5, help="Number of chunks to return")
-    parser.add_argument("--qdrant-url", default="http://127.0.0.1:7333", help="Qdrant base URL")
-    parser.add_argument("--collection", default="documents_chunks", help="Qdrant collection name")
+    parser.add_argument(
+        "--top-k", type=int, default=5, help="Number of chunks to return"
+    )
+    parser.add_argument(
+        "--qdrant-url", default="http://127.0.0.1:7333", help="Qdrant base URL"
+    )
+    parser.add_argument(
+        "--collection", default="documents_chunks", help="Qdrant collection name"
+    )
     parser.add_argument(
         "--use-qdrant",
         action=argparse.BooleanOptionalAction,

@@ -28,14 +28,22 @@ DEFAULT_OUTPUT_DIR = REPO_ROOT / "data/output/lightonocr"
 
 DEFAULT_ENDPOINT = "http://127.0.0.1:8002/v1/chat/completions"
 DEFAULT_MODEL = "lightonocr-2-1b-ocr-soup"
+
+
 def _build_image_analysis_endpoint() -> str:
-    base = os.getenv("IMAGE_ANALYSIS_API_BASE", os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11434")).rstrip("/")
+    base = os.getenv(
+        "IMAGE_ANALYSIS_API_BASE",
+        os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11434"),
+    ).rstrip("/")
     if not base.endswith("/v1"):
         base = f"{base}/v1"
     return f"{base}/chat/completions"
 
+
 DEFAULT_IMAGE_ANALYSIS_ENDPOINT = _build_image_analysis_endpoint()
-DEFAULT_IMAGE_ANALYSIS_MODEL = os.getenv("IMAGE_ANALYSIS_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
+DEFAULT_IMAGE_ANALYSIS_MODEL = os.getenv(
+    "IMAGE_ANALYSIS_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct"
+)
 DEFAULT_PROMPT = (
     "Transcribe this page into Markdown. If there are images, figures, or diagrams, "
     "provide a brief description of what they contain within the text flow."
@@ -92,7 +100,9 @@ def _post_process_markdown(
     markdown_content = HTML_IMG_RE.sub(_replace_html_img, markdown_content)
 
     if markdown_tables:
-        markdown_content = replace_html_tables_with_titles(markdown_content, mode=table_mode)
+        markdown_content = replace_html_tables_with_titles(
+            markdown_content, mode=table_mode
+        )
     markdown_content = normalize_superscripts(markdown_content)
     markdown_content = normalize_subscripts(markdown_content)
     markdown_content = normalize_footnote_prefixes(markdown_content)
@@ -120,7 +130,10 @@ def _analyze_page_images_with_qwen(
                 "role": "user",
                 "content": [
                     {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": _image_to_data_url(image)}},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": _image_to_data_url(image)},
+                    },
                 ],
             }
         ],
@@ -129,7 +142,9 @@ def _analyze_page_images_with_qwen(
     }
 
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-    response = requests.post(endpoint, json=payload, headers=headers, timeout=timeout_sec)
+    response = requests.post(
+        endpoint, json=payload, headers=headers, timeout=timeout_sec
+    )
     response.raise_for_status()
     content = response.json()["choices"][0]["message"]["content"]
     text = str(content).strip()
@@ -139,13 +154,19 @@ def _analyze_page_images_with_qwen(
 
     try:
         parsed = json.loads(text)
-        descriptions = parsed.get("descriptions", []) if isinstance(parsed, dict) else []
+        descriptions = (
+            parsed.get("descriptions", []) if isinstance(parsed, dict) else []
+        )
         descriptions = [str(x).strip() for x in descriptions if str(x).strip()]
     except json.JSONDecodeError:
-        descriptions = [line.strip("- ").strip() for line in text.splitlines() if line.strip()]
+        descriptions = [
+            line.strip("- ").strip() for line in text.splitlines() if line.strip()
+        ]
 
     if not descriptions:
-        descriptions = ["Visual element detected, but detailed description was not produced."] * marker_count
+        descriptions = [
+            "Visual element detected, but detailed description was not produced."
+        ] * marker_count
 
     if len(descriptions) < marker_count:
         descriptions.extend([descriptions[-1]] * (marker_count - len(descriptions)))
@@ -183,7 +204,10 @@ def _ocr_image_markdown(
             {
                 "role": "user",
                 "content": [
-                    {"type": "image_url", "image_url": {"url": _image_to_data_url(image)}},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": _image_to_data_url(image)},
+                    },
                     {"type": "text", "text": prompt},
                 ],
             }
@@ -325,7 +349,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run LightOn OCR (vLLM OpenAI API) on a PDF/Office file or PNG and save markdown."
     )
-    parser.add_argument("input_path", help="Path to a PDF/Office file (.doc/.docx/.ppt/.pptx) or PNG.")
+    parser.add_argument(
+        "input_path", help="Path to a PDF/Office file (.doc/.docx/.ppt/.pptx) or PNG."
+    )
     parser.add_argument(
         "--output-dir",
         default=str(DEFAULT_OUTPUT_DIR),
@@ -426,7 +452,9 @@ def main() -> None:
             image_analysis_timeout_sec=args.image_analysis_timeout_sec,
         )
     else:
-        raise ValueError(f"Unsupported input type: {suffix}. Use .pdf/.doc/.docx/.ppt/.pptx or .png")
+        raise ValueError(
+            f"Unsupported input type: {suffix}. Use .pdf/.doc/.docx/.ppt/.pptx or .png"
+        )
 
     print(f"Saved markdown to: {out_path.resolve()}")
 
