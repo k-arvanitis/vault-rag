@@ -9,6 +9,8 @@
 
 A self-hosted RAG system for teams that need to query mixed-format business document collections — PDFs (digital and scanned), Excel, CSV, and figures — through one chat interface, with cited answers and an operator console for inspecting every step. Built for teams that want to keep document bytes on-prem and avoid per-page SaaS fees.
 
+**Who this is for:** Teams with mixed-format internal document collections (PDFs, scanned docs, spreadsheets) who need cited, auditable answers without shipping their files to a SaaS vendor or paying per-page processing fees.
+
 **Benchmark — 82 questions over 14 mixed-format public documents, graded by an independent `gpt-oss-120b` judge** (distinct from the answer model, so no self-grading bias):
 
 | Capability | Score | Reading |
@@ -505,4 +507,10 @@ vault-rag/
 
 ---
 
-*Built by Konstantinos Arvanitis — AI Agent & RAG Developer*
+## Contact
+
+Built by Konstantinos Arvanitis — AI engineer & automation specialist.
+
+- [LinkedIn](https://www.linkedin.com/in/konstantinos-arvanitis-0248b3246/)
+- [GitHub](https://github.com/k-arvanitis)
+- Email: konstantinos.arvanitis@outlook.com

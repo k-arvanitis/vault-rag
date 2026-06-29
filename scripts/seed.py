@@ -108,7 +108,7 @@ def main() -> None:
             _ingest_table(dest)
 
     print("\n" + "─" * 60)
-    print("Seed complete. Try these sample questions in the Streamlit UI:")
+    print("Seed complete. Try these sample questions in the chat UI:")
     for q in SAMPLE_QUESTIONS:
         print(f'  • "{q}"')
     print()

@@ -25,7 +25,7 @@ jobs:
           UV_TORCH_BACKEND: cpu
 
       - name: Lint
-        run: uv run ruff check src/ app.py
+        run: uv run ruff check src/ slack_app.py
 
       - name: Test
         run: uv run pytest tests/ -v --tb=short

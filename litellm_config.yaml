@@ -52,6 +52,18 @@ litellm_settings:
   drop_params: true
   # Emit structured request/response logs to stdout
   set_verbose: false
+  # Cost + latency + quality logging to Langfuse (set LANGFUSE_* in .env).
+  # LiteLLM computes USD cost per call from its built-in price table.
+  success_callback: ["langfuse"]
+  # Semantic cache: similar prompts return a cached answer before hitting Groq.
+  # Needs the Redis Stack service (vector search) + the cache-embed model above.
+  cache: true
+  cache_params:
+    type: redis-semantic
+    similarity_threshold: 0.85          # lower = more hits, higher staleness risk
+    redis_semantic_cache_embedding_model: ollama/nomic-embed-text  # OLLAMA_API_BASE set in compose
+    redis_url: redis://redis:6379       # passwordless redis on the vault network
+    ttl: 3600                           # seconds before a cached answer expires
 
 general_settings:
   # Optional: protect the proxy with a master key (set LITELLM_MASTER_KEY in .env)

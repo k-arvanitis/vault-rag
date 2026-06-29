@@ -31,8 +31,6 @@ dependencies = [
   # Observability
   "langfuse>=2.0.0,<3.0.0",
   "langsmith>=0.1.0",
-  # UI
-  "streamlit>=1.35.0",
   # Env
   "python-dotenv>=1.0.0",
   "langchain-text-splitters>=1.1.1",

@@ -3,9 +3,9 @@ include .env
 export
 endif
 
-.PHONY: up docker-up docker-up-gpu docker-down app api ui slack docker-slack-build docker-slack-up litellm seed eval eval-cross test lint
+.PHONY: up docker-up docker-up-gpu docker-down api ui slack docker-slack-build docker-slack-up litellm seed eval eval-cross test lint
 
-# Full stack in Docker (Qdrant + LiteLLM + Ollama + Streamlit app)
+# Backing services in Docker (Qdrant + LiteLLM + Ollama)
 docker-up:
 	docker compose up -d --build
 
@@ -16,12 +16,9 @@ docker-up-gpu:
 docker-down:
 	docker compose down
 
-# Ingestion-stack only (Qdrant + LiteLLM + OCR — no Streamlit container)
+# Ingestion-stack only (Qdrant + LiteLLM + OCR)
 up:
 	docker compose -f docker/ingestion-stack/docker-compose.yaml up -d
-
-app:
-	uv run streamlit run app.py
 
 api:
 	uv run uvicorn api:app --host :: --port 8001 --reload
@@ -57,4 +54,4 @@ test:
 	uv run pytest tests/ -v --tb=short
 
 lint:
-	uv run ruff check src/ app.py slack_app.py
+	uv run ruff check src/ slack_app.py

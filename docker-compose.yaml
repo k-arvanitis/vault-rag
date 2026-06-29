@@ -13,6 +13,21 @@ services:
     networks:
       - vault
 
+  # ── Semantic cache store (Redis Stack = Redis + vector search) ──────────────
+  # Plain redis:7 will NOT work — LiteLLM's semantic cache needs RediSearch.
+  redis:
+    image: redis/redis-stack-server:latest
+    container_name: vault-redis
+    restart: unless-stopped
+    ports:
+      # Host 6380 (6379 is often taken by another project's redis); litellm
+      # reaches it as redis:6379 over the vault network regardless of this.
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - vault
+
   # ── LLM proxy (Groq primary → OpenRouter fallback) ──────────────────────────
   litellm:
     image: ghcr.io/berriai/litellm:main-latest
@@ -24,8 +39,18 @@ services:
       - ./litellm_config.yaml:/app/config.yaml:ro
     environment:
       - GROQ_API_KEY=${GROQ_API_KEY}
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY:-}
+      - NVIDIA_NIM_API_KEY=${NVIDIA_API_KEY:-}    # semantic-cache embedder auth
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      # Ollama + Langfuse run on the HOST (not in compose) on this box, so the
+      # container reaches them via host.docker.internal (see extra_hosts below).
+      - OLLAMA_API_BASE=http://ollama:11434   # semantic-cache embedder (container ollama)
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-}
+      - LANGFUSE_HOST=http://host.docker.internal:3000
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "2"]
     networks:
       - vault
@@ -35,73 +60,27 @@ services:
     image: ollama/ollama:latest
     container_name: ollama
     restart: unless-stopped
+    # Explicit public DNS — this box's default resolver isn't reachable from
+    # containers, which otherwise breaks `ollama pull`.
+    dns:
+      - "8.8.8.8"
+      - "1.1.1.1"
     ports:
-      - "11434:11434"
+      # Host 11435 (a host-level ollama already owns 11434); litellm reaches
+      # this one as ollama:11434 over the vault network regardless.
+      - "11435:11434"
     volumes:
       - ollama_data:/root/.ollama
-    # Serve in background, pull the embedding model, then keep serving
-    entrypoint: ["/bin/sh", "-c", "ollama serve & sleep 8 && ollama pull nomic-embed-text && wait"]
+    # Serve in background, pull the embedding model, then keep serving.
+    # `|| true` so a transient pull failure doesn't crash-loop the container
+    # once the model is already cached in the volume.
+    entrypoint: ["/bin/sh", "-c", "ollama serve & sleep 8 && (ollama pull nomic-embed-text || true) && wait"]
     healthcheck:
       test: ["CMD-SHELL", "ollama list | grep -q nomic-embed-text"]
       interval: 15s
       timeout: 10s
       retries: 20
       start_period: 120s
-    networks:
-      - vault
-
-  # ── Streamlit operator console ───────────────────────────────────────────────
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: vault-rag-app
-    restart: unless-stopped
-    ports:
-      - "8501:8501"
-    volumes:
-      - ./data:/app/data
-      - ./eval/results:/app/eval/results
-    environment:
-      # API keys
-      - GROQ_API_KEY=${GROQ_API_KEY}
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
-      # Services — use Docker service names, not localhost
-      - GENERATION_API_BASE=http://litellm:4000/v1
-      - GENERATION_MODEL=${GENERATION_MODEL:-qwen/qwen3-32b}
-      - OLLAMA_API_BASE=http://ollama:11434
-      - EMBED_API_BASE=http://ollama:11434
-      - OLLAMA_EMBED_MODEL=${OLLAMA_EMBED_MODEL:-nomic-embed-text}
-      - QDRANT_URL=http://qdrant:6333
-      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-documents_chunks}
-      # Chunking LLM (ingest time only)
-      - CHUNK_LLM_API_BASE=${CHUNK_LLM_API_BASE:-https://openrouter.ai/api/v1}
-      - CHUNK_LLM_MODEL=${CHUNK_LLM_MODEL:-google/gemma-4-31b-it:free}
-      - CHUNK_MAX_TOKENS=${CHUNK_MAX_TOKENS:-1024}
-      - CHUNK_MIN_TOKENS=${CHUNK_MIN_TOKENS:-256}
-      # Retrieval
-      - RERANKER_MODEL=${RERANKER_MODEL:-cross-encoder/ms-marco-MiniLM-L-6-v2}
-      - RERANKER_DEVICE=cpu
-      - RETRIEVAL_TOP_K=${RETRIEVAL_TOP_K:-100}
-      - RERANK_TOP_N=${RERANK_TOP_N:-10}
-      # VLM figure descriptions
-      - VLM_ENABLED=${VLM_ENABLED:-true}
-      - VLM_PROVIDER=${VLM_PROVIDER:-groq}
-      - VLM_MODEL=${VLM_MODEL:-meta-llama/llama-4-scout-17b-16e-instruct}
-      # OCR — only needed if the GPU profile is also running
-      - OCR_API_BASE=${OCR_API_BASE:-http://localhost:8002}
-      - OCR_MODEL=${OCR_MODEL:-lightonocr-2-1b-ocr-soup}
-      # Observability (optional)
-      - LANGFUSE_HOST=${LANGFUSE_HOST:-}
-      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
-      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
-    depends_on:
-      qdrant:
-        condition: service_started
-      litellm:
-        condition: service_started
-      ollama:
-        condition: service_healthy
     networks:
       - vault
 
@@ -149,6 +128,8 @@ networks:
 volumes:
   qdrant_data:
     name: vault_rag_qdrant
+  redis_data:
+    name: vault_rag_redis
   ollama_data:
     name: vault_rag_ollama
   hf_cache_lightonocr:

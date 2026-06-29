@@ -20,7 +20,7 @@ Vault RAG uses a staged document intelligence pipeline:
 3. Dense and sparse vectors are stored together in Qdrant and fused with reciprocal rank fusion.
 4. A reranker improves precision before generation.
 5. A LangGraph ReAct agent can issue multiple searches for multi-document questions.
-6. Streamlit exposes ingestion, chat, document inspection, retrieved chunks, and evaluation results.
+6. A Next.js chat UI exposes ingestion, chat, document inspection, retrieved chunks, and evaluation results — talking to the agent over a FastAPI backend.
 7. Slack provides a query-only surface for end users.
 
 ## Evaluation
