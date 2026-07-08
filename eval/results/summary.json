@@ -1,45 +1,67 @@
 {
-  "question_count": 82,
+  "question_count": 109,
   "vector_retrieval_metrics": {
     "scope": "PDF/OCR questions only (Qdrant dense search)",
-    "question_count": 53,
-    "hit_at_5": 0.9433962264150944,
-    "hit_at_10": 0.9622641509433962,
-    "mrr": 0.8292949354518372,
-    "evidence_recall_at_10": 0.908805031446541,
-    "evidence_recall_at_20": 0.9371069182389938
+    "question_count": 74,
+    "hit_at_5": 0.9594594594594594
   },
   "structured_retrieval_metrics": {
     "scope": "Excel/CSV questions (DuckDB-served, not Qdrant)",
     "question_count": 21,
-    "answer_accuracy": 0.47619047619047616
+    "answer_accuracy": 0.7619047619047619
   },
   "unanswerable_metrics": {
-    "question_count": 8,
-    "correct_refusal_rate": 1.0
+    "question_count": 14,
+    "correct_refusal_rate": 0.7857142857142857
   },
   "agent_answer_metrics": {
-    "correctness": 0.7073170731707317,
-    "faithfulness": 1.0,
-    "answer_relevancy": 1.0
+    "correctness": 0.8192660550458716,
+    "faithfulness": 0.7948717948717948,
+    "answer_relevancy": 0.8394495412844036
   },
-  "judge_breakdown": {
-    "exact_match_fallback": 49,
-    "exact_match_shortcircuit": 31,
-    "custom_llm_judge": 2
+  "correctness_by_question_type": {
+    "cross_document_compare": {
+      "count": 20,
+      "correctness": 0.875
+    },
+    "ocr_extraction": {
+      "count": 25,
+      "correctness": 0.74
+    },
+    "table_lookup": {
+      "count": 16,
+      "correctness": 0.8125
+    },
+    "numeric_reasoning": {
+      "count": 4,
+      "correctness": 0.5
+    },
+    "numeric_lookup": {
+      "count": 6,
+      "correctness": 0.8333333333333334
+    },
+    "figure_grounding": {
+      "count": 3,
+      "correctness": 0.6666666666666666
+    },
+    "table_grounding": {
+      "count": 3,
+      "correctness": 1.0
+    },
+    "negation_check": {
+      "count": 5,
+      "correctness": 1.0
+    },
+    "single_doc_factoid": {
+      "count": 17,
+      "correctness": 0.8411764705882353
+    },
+    "unanswerable": {
+      "count": 10,
+      "correctness": 0.9
+    }
   },
-  "question_breakdown": {
-    "cross_document_compare": 17,
-    "ocr_extraction": 25,
-    "table_lookup": 16,
-    "numeric_lookup": 3,
-    "figure_grounding": 3,
-    "table_grounding": 3,
-    "negation_check": 3,
-    "single_doc_factoid": 4,
-    "unanswerable": 7,
-    "numeric_reasoning": 1
-  },
-  "answer_result_file": "/home/karvanitis/vault-rag/eval/results/answer_results.jsonl",
-  "retrieval_result_file": "/home/karvanitis/vault-rag/eval/results/retrieval_results.jsonl"
+  "decomposition": "disabled by default (EVAL_ENABLE_DECOMPOSITION=1 to re-enable) \u2014 ablation showed it net-hurts cross-document comparisons and was never used by the live app (api.py) anyway",
+  "judge": "gpt-4o-mini",
+  "generation_model": "qwen/qwen3-32b (OpenRouter)"
 }

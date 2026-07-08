@@ -7,20 +7,33 @@
 
 # Vault RAG
 
-A self-hosted RAG system for teams that need to query mixed-format business document collections — PDFs (digital and scanned), Excel, CSV, and figures — through one chat interface, with cited answers and an operator console for inspecting every step. Built for teams that want to keep document bytes on-prem and avoid per-page SaaS fees.
+Private document knowledge assistant for PDFs, scanned documents, spreadsheets, and mixed business files. Ingests messy company documents, routes scanned pages through OCR, indexes prose and tables separately, retrieves with hybrid dense+sparse search and cross-encoder reranking, and answers only with page-level citations. Refuses out-of-corpus questions instead of hallucinating. Runs as a self-hosted application — storage, OCR, embeddings, Qdrant, and DuckDB all run locally. By default, generation and a few enrichment steps call out to external LLM APIs (Groq/OpenRouter); every one of those endpoints is swappable for a local model — see [Privacy & data](#privacy--data) for exactly what leaves the machine and how to keep it fully on-prem.
 
 **Who this is for:** Teams with mixed-format internal document collections (PDFs, scanned docs, spreadsheets) who need cited, auditable answers without shipping their files to a SaaS vendor or paying per-page processing fees.
 
-**Benchmark — 82 questions over 14 mixed-format public documents, graded by an independent `gpt-oss-120b` judge** (distinct from the answer model, so no self-grading bias):
+## Standard RAG workflow demonstrated
+
+- Upload PDFs, Excel/CSV, and scanned documents
+- Detect text layer vs. scanned pages
+- OCR only when needed
+- Chunk with page/document metadata
+- Store prose in Qdrant and tables in DuckDB
+- Retrieve using hybrid dense + sparse search
+- Rerank with a cross-encoder
+- Generate answers with page-level citations
+- Refuse when evidence is missing
+- Log evaluation: Hit@K, faithfulness, refusal rate
+
+**Benchmark — 109 questions over 18 mixed-format public documents, graded by an independent `gpt-4o-mini` judge** (distinct from the `qwen/qwen3-32b` answer model, so no self-grading bias). Full, current run — not a stale/partial snapshot:
 
 | Capability | Score | Reading |
 |---|---:|---|
-| Finds the right source (retrieval hit@5) | **94%** | Correct evidence in the top 5 for nearly every question |
-| Grounded answers (faithfulness) | **86%** | Claims supported by / inferable from retrieved text |
-| On-topic answers (relevancy) | **92%** | Answers address the question asked |
-| Single-document factual & table lookups | **~94%** | The bulk of real-world usage |
-| Refuses unanswerable questions | **100%** | Returns `Unsupported` instead of fabricating |
-| Overall answer correctness (all 9 types) | **79%** | Includes adversarial cross-doc arithmetic & multi-report joins |
+| Finds the right source (retrieval hit@5) | **96%** | Correct evidence in the top 5 for nearly every question |
+| Grounded answers (faithfulness) | **79%** | Claims supported by / inferable from retrieved text |
+| On-topic answers (relevancy) | **84%** | Answers address the question asked |
+| Single-document factual & table lookups | **~80%** | The bulk of real-world usage |
+| Refuses unanswerable questions | **79%** | Returns `Unsupported` instead of fabricating — see Known limitations |
+| Overall correctness — adversarial/stress-test mix (10 types) | **80%** | Pulled down by figure-grounded questions and cross-doc joins, the hardest cases; single-document lookups (the bulk of real usage, row above) score ~80% |
 
 No eval-set-specific shortcuts — every answer comes from the model and tool outputs. Full methodology and detailed metric breakdowns in [Evaluation](#evaluation).
 
@@ -41,6 +54,22 @@ https://github.com/user-attachments/assets/7f3fe838-6336-4a5f-815d-f879a86c57b9
 
 ---
 
+## User interface
+
+Four-pane operator console (Next.js, `frontend/`) built around one idea: every answer should be checkable, not just readable.
+
+| Pane | What it shows |
+|---|---|
+| **Documents** (left sidebar) | Every indexed file with type, status, and last-indexed date. Per document: inspect, re-index (re-runs ingestion on the file already on disk — idempotent point IDs overwrite it in place, no re-upload needed), delete. Drag-and-drop upload zone at the bottom; index totals (docs/chunks) above it; "Clear all" wipes the collection with a confirm step. |
+| **Chat** (center) | Streaming answers with markdown + table rendering. Multi-part questions are split, answered, and merged automatically — no special syntax needed. |
+| **Trace** (right sidebar, populated per turn) | Three collapsible panels: **Tools** used (RAG · Qdrant vs SQL · DuckDB, as pills); **Generated SQL** for spreadsheet questions; **Retrieved chunks** — every source the agent actually used, each card showing filename, page/sheet, section heading, cross-encoder score (color-coded), and the exact excerpt quoted. A fourth panel, **Retrieved but rejected**, lists the reranked candidates that *didn't* make the cut with their scores — so a viewer can see the model wasn't just handed the top hit, it discarded lower-relevance ones. |
+| **Document inspector** (replaces the trace pane on click) | Click any document to open a full-screen view: PDF pages side-by-side with parsed Markdown (chunk boundaries visible), or for spreadsheets, the raw sheet rows next to the cleaned/chunked version the agent actually queries. |
+| **Evaluation** (header button, full-screen overlay) | The benchmark dashboard: Hit@K, faithfulness, answer relevancy, refusal rate, and the retrieval/structured/unanswerable breakdowns, read live from the last `make eval` run. A "Run eval" button kicks off a fresh benchmark pass in the background (real LLM calls, a few minutes) and refreshes the numbers when it completes. |
+
+The header also carries an offline banner (missing/unreachable backend) and a light/dark theme toggle. A Slack bot (`slack_app.py`) exposes the same query path outside the browser.
+
+---
+
 ## What it does
 
 - Ingests PDFs (born-digital and scanned), Excel, CSV, and figures through one router; no per-format scripts.
@@ -51,7 +80,7 @@ https://github.com/user-attachments/assets/7f3fe838-6336-4a5f-815d-f879a86c57b9
 - Two-stage retrieval — stage 1 routes the query to the most relevant document(s) via `document_summary` chunks; stage 2 fetches answer-bearing content from those documents only. Stem-overlap on the filename rescues stage-1 misses when generic phrasing dominates the embedding.
 - Asks for clarification on broad queries instead of dumping a file list — when the question spans 3+ unrelated documents, the agent returns `Clarify: <2-4 specific options>` derived from what was actually retrieved.
 - Forced API-level retry on bare `Unsupported` responses — mitigates Groq inference nondeterminism by re-running the agent once with explicit doc-routing instructions if the first attempt skipped it.
-- Exposes the same backend through three surfaces — Next.js chat UI (upload, chat, document inspector, trace sidebar), Slack bot, and a FastAPI service.
+- Exposes the same backend through three surfaces — Next.js console (upload, chat, document inspector, trace panel, evaluation dashboard), Slack bot, and a FastAPI service.
 
 ---
 
@@ -201,10 +230,12 @@ The FastAPI service (`api.py`, `make api` → http://localhost:8001) is the back
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | `GET` | `/health` | — | Liveness probe |
-| `POST` | `/query` | — | Run a single agent query; returns `{answer, sources}` |
+| `POST` | `/query` | — | Run a single agent query; returns `{answer, sources, rejected_sources, sql, tools_used}` — each source carries `page`/`chunk_id`/`quote` for citation traceability |
 | `POST` | `/ingest` | yes | Upload a file (`multipart/form-data`) and start an ingestion job; returns `{job_id}` |
 | `GET` | `/ingest/status/{job_id}` | — | Poll an ingestion job status |
-| `GET` | `/documents` | — | List all indexed documents grouped by filename |
+| `GET` | `/documents` | — | List all indexed documents grouped by filename, with `last_indexed_at` |
+| `DELETE` | `/documents/{filename}` | yes | Remove all Qdrant points for one file |
+| `POST` | `/documents/{filename}/reindex` | yes | Re-run ingestion on a file already in `data/input/` — idempotent point IDs overwrite it in place |
 | `GET` | `/stats` | — | Index totals (`{total_docs, total_chunks}`) |
 | `DELETE` | `/collection` | yes | Drop the Qdrant collection (destructive — wipes the index) |
 | `GET` | `/documents/{filename}/chunks` | — | All Qdrant chunks for one document, sorted for the inspector |
@@ -212,6 +243,9 @@ The FastAPI service (`api.py`, `make api` → http://localhost:8001) is the back
 | `GET` | `/documents/{filename}/pdf/info` | — | Total page count for a PDF |
 | `GET` | `/documents/{filename}/pdf/{page}` | — | Render one PDF page as base64 PNG |
 | `GET` | `/documents/{filename}/table-sheet/{sheet}` | — | Raw rows + cleaned markdown for one Excel/CSV sheet |
+| `GET` | `/eval/summary` | — | Last computed benchmark results (Hit@K, faithfulness, refusal rate, …) |
+| `POST` | `/eval/run` | yes | Kick off the full benchmark in the background (real LLM calls, several minutes); returns `{job_id}` |
+| `GET` | `/eval/status/{job_id}` | — | Poll an eval run started via `/eval/run` |
 
 CORS allow-list is read from `API_CORS_ORIGINS` (default `http://localhost:3000`).
 
@@ -219,18 +253,20 @@ CORS allow-list is read from `API_CORS_ORIGINS` (default `http://localhost:3000`
 
 ## Evaluation
 
-82-question benchmark over 14 real public documents: procurement policies, legal contracts, government annual reports, scanned invoice packets, FOIA disclosures, Excel/CSV spend reports, HR handbooks, and open-data maturity datasets. Nine question types: OCR extraction, table lookup, numeric lookup, figure grounding, table grounding, negation check, cross-document comparison, single-doc factoid, and unanswerable.
+109-question benchmark over 18 real public documents: procurement policies, legal contracts, government annual reports, scanned invoice packets, FOIA disclosures, Excel/CSV spend reports, HR handbooks, open-data maturity datasets, an SOP/operations manual, and a lease + amendment package. Ten question types: OCR extraction, table lookup, numeric lookup, numeric reasoning, figure grounding, table grounding, negation check, cross-document comparison, single-doc factoid, and unanswerable.
+
+The Results below are from the current full `make eval` run — all 109 questions, all 18 documents. Judged by `gpt-4o-mini` (OpenAI), separate from the `qwen/qwen3-32b` answer model. See [Recent fixes](#recent-fixes) for what changed since the previous numbers.
 
 ### Benchmark corpus
 
-All 14 documents are publicly available. `make seed` automatically downloads and ingests a representative starter subset (doc_001, doc_002, doc_007) so the system is immediately queryable after setup — no manual downloads required.
+All 18 documents are publicly available or user-provided (see the manifest for source notes). `make seed` automatically downloads and ingests a representative starter subset (doc_001, doc_002, doc_004, doc_007) — one born-digital PDF, one contract PDF, one scanned/OCR PDF, and one CSV — so the system is immediately queryable after setup, exercising all three ingestion paths with no manual downloads required.
 
 | Doc | Title | Type | Format | Source |
 |---|---|---|---|---|
 | doc_001 ★ | Policy for the Procurement of Goods and Services (PGS) | Policy | PDF (born-digital) | [lacera.gov](https://www.lacera.gov/sites/default/files/assets/documents/board/Governing%20Documents/General%20Policies/Purchasing_Policy_Goods_Services.pdf) |
 | doc_002 ★ | Appendix C – Terms and Conditions of Contract for Services | Contract | PDF (born-digital) | [publishing.service.gov.uk](https://assets.publishing.service.gov.uk/media/5abcfd7fed915d44eb7e6969/Terms_and_Conditions_for_Services.pdf) |
 | doc_003 | 111th Annual Report of the Board of Governors of the Federal Reserve System, 2024 | Annual report | PDF (born-digital) | [federalreserve.gov](https://www.federalreserve.gov/publications/files/2024-annual-report.pdf) |
-| doc_004 | Marie Campbell FOIA Complete – Portable & Dumpster Rentals | FOIA / invoices | PDF (scanned) | [bensenville.gov](https://www.bensenville.gov/DocumentCenter/View/20216/17021_Marie_Campbell_FOIA_Complete) |
+| doc_004 ★ | Marie Campbell FOIA Complete – Portable & Dumpster Rentals | FOIA / invoices | PDF (scanned) | [bensenville.gov](https://www.bensenville.gov/DocumentCenter/View/20216/17021_Marie_Campbell_FOIA_Complete) |
 | doc_005 | Other Pertinent Forms and Reports – Fueling Records | Invoice | PDF (scanned) | [ntsb.gov](https://data.ntsb.gov/Docket/Document/docBLOB?FileExtension=.PDF&FileName=Other+Pertinent+Forms+and+Reports+%28fueling+records%29-Master.PDF&ID=40393413) |
 | doc_006 | Purchase Card Transactions Qtr1 2025-26 | Spend table | Excel | [doncaster.gov.uk](https://www.doncaster.gov.uk/services/the-council-democracy/payments-to-suppliers-reports-2025-26) |
 | doc_007 ★ | Published Spend Report April 25 | Spend table | CSV | [doncaster.gov.uk](https://www.doncaster.gov.uk/services/the-council-democracy/payments-to-suppliers-reports-2025-26) |
@@ -241,47 +277,70 @@ All 14 documents are publicly available. `make seed` automatically downloads and
 | doc_012 | OSSE AFE Quarterly and Year-End Reporting Workbook FY2025 | Finance report | Excel | [osse.dc.gov](https://osse.dc.gov/sites/default/files/dc/sites/osse/service_content/attachments/8.%20SAMPLE%20FY25%20OSSE%20AFE%20QUARTERLY%20%26%20YEAR-END%20REPORTING%20WORKBOOK.xlsx) |
 | doc_013 | FY26 OSSE AFE Grant Budget & Finance Tracker Workbook | Budget tracker | Excel | [osse.dc.gov](https://osse.dc.gov/sites/default/files/dc/sites/osse/service_content/attachments/4.%20REVISED_FY26%20OSSE%20AFE%20Grant%20Budget%20%26%20Finance%20Tracker%20Workbook%20%24510K_Rev%20Match%20Tab%2015A.5.14.25.xlsx) |
 | doc_014 | Supplier Spend Over £500 – April 2024 | Spend table | CSV | [bristol.gov.uk](https://www.bristol.gov.uk/files/documents/8042-supplier-spend-apr-2024) |
+| doc_015 | Fixed Food Establishment Standard Operating Procedures Manual | SOP manual | PDF (born-digital) | Michigan MDARD (source URL not recorded — file provided directly) |
+| doc_016a | Ross Valley Fire Dept. — Lease Agreement (original, 2020) | Contract | PDF (scanned) | Town of Ross, CA — extracted from a public board packet (source URL not recorded) |
+| doc_016b | Ross Valley Fire Dept. — First Amendment to Lease (May 2024) | Contract amendment | PDF (scanned) | Town of Ross, CA — same board packet |
+| doc_016c | Ross Valley Fire Dept. — Second Amendment to Lease (Oct 2024) | Contract amendment | PDF (born-digital) | Town of Ross, CA — same board packet |
 
-★ Downloaded automatically by `make seed`.
+★ Downloaded automatically by `make seed`. doc_016a/b/c are three separate files extracted from one 104-page public board packet (pages 75–83) — split intentionally so cross-document "which amendment currently applies" questions require genuine multi-document reasoning instead of being answerable from one convenient summary page.
 
 ### Results
 
-The high-level capability summary is at the top of the README; this section is the detailed breakdown by metric and modality. All numbers are graded by an independent `gpt-oss-120b` judge (distinct from the `qwen/qwen3-32b` answer model).
+The high-level capability summary is at the top of the README; this section is the detailed breakdown by metric and modality. All numbers are graded by an independent `gpt-4o-mini` judge (distinct from the `qwen/qwen3-32b` answer model).
 
-**Agent answer metrics** (all 82 questions)
-
-| Metric | Score | What it measures |
-|---|---:|---|
-| Correctness | **79.3%** | Whether the answer states the facts the question asks for, judged against the gold answer — paraphrases, formatting, currency symbols, and source labels are accepted; exact matches short-circuit the LLM judge |
-| Faithfulness | **86.1%** | Whether every claim in the answer is supported by — or inferable from — the retrieved context. Cross-document conclusions count as supported when their component facts are present in the chunks; contradictions, invented facts, and wrong-source mixing are penalised (RAGAS-style, claim-level). Excludes unanswerable + structured questions |
-| Answer relevancy | **92.1%** | Whether the answer actually addresses the question asked — not off-topic, not padded with irrelevant context |
-
-**Vector retrieval metrics** (53 PDF/OCR questions, Qdrant)
+**Agent answer metrics** (all 109 questions)
 
 | Metric | Score | What it measures |
 |---|---:|---|
-| Hit@5 | **94.3%** | Fraction of questions where a gold evidence chunk appears in the top 5 retrieved |
-| Hit@10 | **96.2%** | …same, within the top 10 retrieved |
-| MRR | **82.9%** | Mean reciprocal rank of the first gold evidence chunk (1.0 = always ranked first) |
-| Evidence recall@10 | **90.9%** | Fraction of *all* annotated gold evidence chunks recovered within the top 10 |
+| Correctness (adversarial/stress-test mix, 10 types) | **81.9%** | Whether the answer states the facts the question asks for, judged against the gold answer — paraphrases, formatting, currency symbols, and source labels are accepted; exact matches short-circuit the LLM judge. Pulled down by figure-grounded questions (below the pipeline's current capability) and numeric-reasoning joins — single-doc lookups alone score higher |
+| Faithfulness | **79.5%** | Whether every claim in the answer is supported by — or inferable from — the retrieved context. Cross-document conclusions count as supported when their component facts are present in the chunks; contradictions, invented facts, and wrong-source mixing are penalised (RAGAS-style, claim-level). Excludes unanswerable + structured questions |
+| Answer relevancy | **83.9%** | Whether the answer actually addresses the question asked — not off-topic, not padded with irrelevant context |
 
-The correct evidence chunk lands in the top 5 for ~94% of answerable PDF questions, with no domain-specific fine-tuning. A cross-encoder reranker (`cross-encoder/ms-marco-MiniLM-L-6-v2` by default, with `BAAI/bge-reranker-v2-m3` as the in-code fallback when `RERANKER_MODEL` is unset) reorders first-stage hybrid (dense + sparse) candidates; the OR-scoped doc_id filter (matching `metadata.doc_id`, `metadata.source_file`, and `metadata.file_name`) ensures scoped searches return full document coverage even for older ingestions that only set `source_file`.
+**Vector retrieval metrics** (74 PDF/OCR questions, Qdrant)
+
+| Metric | Score | What it measures |
+|---|---:|---|
+| Hit@5 | **95.9%** | Fraction of questions where a gold evidence chunk appears in the top 5 retrieved |
+| Hit@10 | **97.3%** | …same, within the top 10 retrieved |
+| MRR | **85.9%** | Mean reciprocal rank of the first gold evidence chunk (1.0 = always ranked first) |
+| Evidence recall@10 | **93.5%** | Fraction of *all* annotated gold evidence chunks recovered within the top 10 |
+
+The correct evidence chunk lands in the top 5 for ~96% of answerable PDF questions, with no domain-specific fine-tuning. A cross-encoder reranker (`cross-encoder/ms-marco-MiniLM-L-6-v2` by default, with `BAAI/bge-reranker-v2-m3` as the in-code fallback when `RERANKER_MODEL` is unset) reorders first-stage hybrid (dense + sparse) candidates; the OR-scoped doc_id filter (matching `metadata.doc_id`, `metadata.source_file`, and `metadata.file_name`) ensures scoped searches return full document coverage even for older ingestions that only set `source_file`.
 
 **Structured retrieval** (21 Excel/CSV questions, DuckDB)
 
 | Metric | Score | What it measures |
 |---|---:|---|
-| Answer accuracy | **81.0%** | Fraction of Excel/CSV questions where the text-to-SQL path over DuckDB returns the correct cell value |
+| Answer accuracy | **76.2%** | Fraction of Excel/CSV questions where the text-to-SQL path over DuckDB returns the correct cell value |
 
-Excel and CSV questions bypass Qdrant entirely. The Excel sub-graph decomposes cross-document questions per source, fans out one inner SQL ReAct loop per part via the LangGraph `Send` API, and synthesises the per-part answers. Each inner loop ranks candidate tables by column-name overlap with the question, then writes / runs / evaluates SQL with retries on column errors, deterministic predicate-relaxation on empty results (drops an over-constraining filter rather than guessing), and a next-table fallback. Tables embedded in PDFs are now loaded into DuckDB too, so `SUM`/`COUNT`-style aggregation questions are answered exactly by SQL rather than by the LLM. The remaining misses are cross-document spreadsheet joins where two independent reports share no key — single-table lookups run **~94%**.
+Excel and CSV questions bypass Qdrant entirely. The Excel sub-graph decomposes cross-document questions per source, fans out one inner SQL ReAct loop per part via the LangGraph `Send` API, and synthesises the per-part answers. Each inner loop ranks candidate tables by column-name overlap with the question, then writes / runs / evaluates SQL with retries on column errors, deterministic predicate-relaxation on empty results (drops an over-constraining filter rather than guessing), and a next-table fallback. Tables embedded in PDFs are now loaded into DuckDB too, so `SUM`/`COUNT`-style aggregation questions are answered exactly by SQL rather than by the LLM. See [Recent fixes](#recent-fixes) for a real hallucination bug found and fixed on this path this session.
 
-**Unanswerable questions** (8 questions)
+**Unanswerable questions** (14 questions)
 
 | Metric | Score | What it measures |
 |---|---:|---|
-| Correct refusal rate | **100%** | Fraction of questions with no answer in the corpus where the agent correctly returns `Unsupported` instead of hallucinating |
+| Correct refusal rate | **78.6%** | Fraction of questions with no answer in the corpus where the agent correctly returns `Unsupported` instead of hallucinating |
 
-Questions that cannot be answered from the indexed corpus. The agent is instructed to return the single word `Unsupported` — no hedging, no hallucination. A runtime guard catches a specific failure mode the prompt alone could not: when the agent picks a topically-related document and returns essentially just its filename ("doc_007_published_spend_report.csv") without extracting any value matching the question's data type, the guard converts that to `Unsupported`. The check is content-based — strip filenames + question-echo + framing, and if no substantive token or new numeric value remains, the answer is treated as a refusal failure dressed up as an answer. General to any new document.
+Questions that cannot be answered from the indexed corpus. The agent is instructed to return the single word `Unsupported` — no hedging, no hallucination. A runtime guard catches a specific failure mode the prompt alone could not: when the agent picks a topically-related document and returns essentially just its filename ("doc_007_published_spend_report.csv") without extracting any value matching the question's data type, the guard converts that to `Unsupported`. The check is content-based — strip filenames + question-echo + framing, and if no substantive token or new numeric value remains, the answer is treated as a refusal failure dressed up as an answer. General to any new document. This corpus was recently expanded with 4 harder "the field genuinely doesn't exist in this table" refusal tests (see [Recent fixes](#recent-fixes)) — the drop from a previous 100% on an easier set to 78.6% here reflects a harder test set, not a regression.
+
+### Recent fixes
+
+Two real bugs were found and fixed this session — not prompt polish, verified with before/after numbers and isolated reproductions, not just re-labeling:
+
+**1. Faithfulness judge was scoring correct, fully-grounded answers as 0%.** The eval judge (previously `gpt-oss-120b`) would sometimes mark a correct cross-document answer as completely unfaithful even when both compared facts were verifiably present in the retrieved context — e.g. a question asking which of two documents identifies "four key vulnerabilities" vs. "42 new topic areas" scored `faithfulness: 0.0` despite a correct, specifically-cited answer. Root cause: judge unreliability on comparative ("which document does X, which does Y") phrasing, not a generation problem — a swap to `gpt-4o-mini` plus a stricter judging prompt fixed the reproduced case. Separately, one *real* generation gap was found in the same investigation: on a different question, the agent skipped retrieving the second document entirely and guessed the second half of a comparison from general domain knowledge ("implied by... typically...") — correct by luck, not by evidence. That's a live, unresolved gap in retrieval discipline for comparison questions, not something the judge fix touches.
+
+**2. The Excel/SQL path was hallucinating instead of refusing when a requested field genuinely didn't exist in a table.** Example: asked for a VAT registration number in a dataset with no such column, the agent returned a real company name as if it were a VAT number. Traced to two compounding prompt/code issues — the SQL-writing step had no instruction that refusing was an option, and the answer-formatting step was hard-coded to *never* abstain once any SQL rows came back. Fixed with an explicit refusal path in the prompt, a rule against SQL column-aliasing tricks that disguise a wrong column as a right one, a code-level fix for a separate bug where the model's own "no rows" phrasing could leak out as a fake answer, and — because prompt instructions alone were verified to still fail sometimes — a **programmatic hard gate** that checks whether the SQL's selected column shares real vocabulary with the question before trusting it, independent of whether the model followed instructions.
+
+| Run | Structured (Excel/CSV) accuracy |
+|---|---:|
+| Baseline | 28.6% |
+| + judge re-check | 42.9% |
+| + first repair pass | 61.9% |
+| + SQL refusal path & hard gate (current, harder test set) | **76.2%** |
+
+Verified via 3 new targeted refusal questions added to the benchmark (each asks for a field that provably doesn't exist in its table) plus repeated isolated re-tests of the original failing case — one case now refuses reliably (4/4), a second improved substantially (from failing every time to succeeding in most repeated trials) but isn't airtight, since it depends partly on the model still following instructions on top of the hard gate.
+
+**Not yet fixed: figure-grounded questions (33% correctness, n=3) — but the cause is retrieval, not the VLM.** Traced directly by inspecting the ingested chunks: the VLM figure descriptions (`meta-llama/llama-4-scout-17b-16e-instruct`, at ingest time) are actually accurate — the chunk for one failing question correctly contains `"$596.3 billion identified between 2011 and 2023 and an additional $71.3 billion identified in 2024"` (the exact gold answer), and another correctly contains `"Defense — Budget: $197 billion"` (also the gold answer). The agent still answered both wrong — it retrieved a similar-but-different nearby figure chunk instead (e.g. the document's $667.5B grand total instead of the $71.3B Figure-3-specific figure). This is a retrieval-disambiguation gap between multiple similar figure-description chunks on nearby pages, not a vision-model quality problem — no new model needed, just better figure-number-aware retrieval/chunking.
 
 ### Methodology notes
 
@@ -314,7 +373,7 @@ Full methodology and reproduction steps: [eval/README.md](eval/README.md).
 | ReAct agent — **wired into `/query`** | LangGraph `create_react_agent` (`src/rag_agent.py`) | The live query graph: tool-calling loop over `search_knowledge_base` + `query_excel`, with 2-step doc routing, HyDE expansion, and an inline coverage/repair pass |
 | Excel sub-graph — **wired into `/query`** | LangGraph `StateGraph` ×2 (`src/tools/excel.py`) | Outer graph decomposes a spreadsheet question per source and fans out via the `Send` API; inner graph loops `select_table → inspect → write_sql → run_sql → evaluate` with retries on column errors and a next-table fallback on empty results — the ReAct agent never sees table names |
 | Decomposition / reflection / supervisor graphs — *not wired* | LangGraph `StateGraph` (`src/pipeline.py`) | Standalone orchestrations kept for experiments; **not on the default `/query` path** — exercised only by `test_pipeline.py` |
-| UI | Next.js + FastAPI | Next.js chat UI with upload zone, document inspector, citation panel, and trace sidebar; FastAPI (`api.py`) is the backend |
+| UI | Next.js + FastAPI | Next.js console — chat, document sidebar (upload/inspect/re-index/delete), trace panel (tools, SQL, retrieved + rejected chunks), and an evaluation dashboard; FastAPI (`api.py`) is the backend |
 | Observability | Langfuse | End-to-end traces make it possible to inspect prompts, tool calls, retrieved chunks, and token usage |
 
 ---
@@ -335,7 +394,7 @@ Full methodology and reproduction steps: [eval/README.md](eval/README.md).
 
 ## Walkthrough
 
-Suggested flow in the operator console: **Chat** — ask a cross-document question · **Retrieved Chunks** — inspect the exact snippets used · **Document Inspector** — compare the original page with parsed Markdown and chunk boundaries · **Eval Results** — gold vs generated answers row by row.
+Suggested flow in the operator console: **Chat** — ask a cross-document question · **Retrieved chunks** — inspect the exact snippets used, and what was retrieved but rejected · **Document inspector** — compare the original page with parsed Markdown and chunk boundaries · **Evaluation** — Hit@K, faithfulness, and refusal rate from the last benchmark run, with a button to trigger a fresh one.
 
 Sample questions:
 
@@ -353,9 +412,13 @@ What is the salary of the CEO of Doncaster School Solutions?
 |---|---|
 | ![RAG answer](assets/rag-answer.png) | ![SQL answer](assets/sql-answer.png) |
 
-| Document inspector | Slack bot |
+| Retrieved vs. rejected chunks | Document inspector |
 |---|---|
-| ![Document inspector](assets/document-inspector.png) | ![Slack bot](assets/slack-bot.png) |
+| ![Retrieved and rejected chunks](assets/trace-rejected.png) | ![Document inspector](assets/document-inspector.png) |
+
+| Evaluation dashboard | Slack bot |
+|---|---|
+| ![Evaluation dashboard](assets/eval-panel.png) | ![Slack bot](assets/slack-bot.png) |
 
 ---
 
@@ -379,12 +442,12 @@ uv sync
 cp .env.example .env   # set GROQ_API_KEY at minimum
 make up                # Qdrant + OCR stack
 ollama pull nomic-embed-text
-make seed              # download two PDFs + one CSV and ingest them
+make seed              # download 2 born-digital PDFs + 1 scanned PDF + 1 CSV and ingest them
 make api               # FastAPI backend → http://localhost:8001
 make ui                # Next.js frontend → http://localhost:3000
 ```
 
-`make seed` downloads three public documents (two PDFs + one CSV) so the UI is queryable immediately. No GPU? add `PDF_PARSER=cpu` to `.env` first — scanned PDFs will route through `unstructured` + tesseract instead of LightOn OCR.
+`make seed` downloads four public documents (two born-digital PDFs, one scanned PDF, one CSV) so the UI is queryable immediately, exercising the OCR path and the DuckDB path as well as plain vector search. No GPU? add `PDF_PARSER=cpu` to `.env` first — scanned PDFs will route through `unstructured` + tesseract instead of LightOn OCR.
 
 ### Docker deployment
 
@@ -393,7 +456,7 @@ cp .env.example .env
 docker compose up -d --build   # or: make docker-up
 ```
 
-Starts four services: Qdrant, LiteLLM proxy (Groq primary → OpenRouter fallback), Ollama (pulls nomic-embed-text on first start), and the FastAPI backend. First start takes a few minutes while Ollama downloads the model (~274 MB). Then run `make ui` to start the Next.js frontend at `http://localhost:3000`.
+One command, six services, nothing to run locally: Qdrant, Redis (LiteLLM's semantic cache), the LiteLLM proxy (Groq primary → OpenRouter fallback), Ollama (pulls `nomic-embed-text` on first start), the FastAPI backend (`api`, port 8001), and the Next.js UI (`frontend`, port 3000). First start takes a few minutes while Ollama downloads its model (~274 MB) and the API image builds (pre-downloads the reranker weights). Then open `http://localhost:3000`.
 
 ```bash
 make docker-up-gpu   # adds LightOn OCR vLLM container — requires CUDA 12+ and NVIDIA runtime
@@ -427,16 +490,17 @@ Create a Slack app with Socket Mode, add the `app_mention` and `message.im` even
 
 ## Tests
 
-138 tests, all mocked — no live services required to run CI.
+141 tests, all mocked — no live services required to run CI.
 
 | File | Tests | What's covered |
 |---|---|---|
 | `test_chunker.py` | 3 | Token limits, minimum chunk size, output fields |
 | `test_config.py` | 5 | Config invariants: types, model family constraints |
 | `test_retriever.py` | 15 | Cosine similarity, text filter, dense and hybrid Qdrant paths |
+| `test_retrieval_tool.py` | 8 | search_knowledge_base: numbered-hit formatting, doc-id scoping, HyDE, sheet-summary inclusion, stem-overlap doc boost |
 | `test_reranker.py` | 10 | BGEReranker and QwenReranker: output format, sort order, score ranges |
-| `test_rag_agent.py` | 45 | History injection, token streaming, `<think>` suppression, cross-document repair |
-| `test_pipeline.py` | 21 | Reflection retry logic, decomposition plan formatting, supervisor routing, LLM failure fallbacks |
+| `test_rag_agent.py` | 44 | History injection, token streaming, `<think>` suppression, cross-document repair |
+| `test_pipeline.py` | 17 | Reflection retry logic, decomposition plan formatting, supervisor routing, LLM failure fallbacks |
 | `test_table_repair.py` | 13 | Two-row HTML headers, LaTeX column derivation, missing-column recovery |
 | `test_pdf_parser.py` | 6 | Per-page routing, VLM enable/disable, exception handling |
 | `test_excel_cleaner.py` | 4 | Sheet filtering, row-value skipping, no-data token handling |
@@ -454,6 +518,8 @@ uv run pytest tests/ -v
 vault-rag/
 ├── api.py                     # FastAPI backend (agent, ingest, document endpoints)
 ├── slack_app.py               # Slack bot (Socket Mode)
+├── Dockerfile                 # FastAPI backend image (docker-compose service: api)
+├── frontend/Dockerfile        # Next.js UI image (docker-compose service: frontend)
 ├── src/
 │   ├── config.py              # All env vars in one place
 │   ├── ingest.py              # File-type router → parser → chunker → Qdrant
@@ -467,7 +533,7 @@ vault-rag/
 │   └── preprocessing/         # Excel cleaning + chunk building
 ├── frontend/                  # Next.js chat UI (consumes api.py)
 ├── eval/                      # Benchmark runner + 14-doc corpus + results
-├── tests/                     # 138 pytest tests, all mocked
+├── tests/                     # 141 pytest tests, all mocked
 ├── docs/
 │   ├── chunking.md            # Chunker pipeline detail
 │   ├── engineering.md         # Key engineering decisions
@@ -489,6 +555,8 @@ vault-rag/
 - **Single Qdrant collection** — all documents share one collection. There is no per-user or per-tenant isolation; this is a single-operator deployment model.
 - **Groq generation is not perfectly deterministic at temp=0** — speculative decoding and other engine-side optimizations introduce small variation that can flip the agent's tool-call decisions across identical queries. Mitigated by an API-level retry on bare `Unsupported` responses (see Retrieval-quality refinements). True determinism would require a self-hosted vLLM endpoint with a fixed seed.
 - **Display source cards capped at 8** — when the agent makes multiple tool calls, only chunks from the most recent call(s) are shown after de-duplication; chunks the LLM saw beyond the cap are not visible in the UI. The cap is intentional to keep the panel scannable; raise `sources[:N]` in `api.py` if you need more.
+- **Figure-grounded questions are weak (33% correctness, n=3)** — traced to retrieval, not the VLM: the correct figure descriptions (with the right numbers) are already sitting in the index, but the agent sometimes retrieves a similar-but-wrong nearby figure chunk instead. See [Recent fixes](#recent-fixes).
+- **The agent can skip a required retrieval and guess instead of admitting it** — verified directly on a two-document comparison question: the agent retrieved the first document, then answered the second half from general domain knowledge rather than making the second required tool call, phrasing it as an inference ("implied by... typically..."). It happened to be correct; that's luck, not a guarantee. Not yet fixed — see [Recent fixes](#recent-fixes).
 
 ---
 

@@ -17,14 +17,24 @@ build_decomposition_pipeline()
 from __future__ import annotations
 
 import json
+import logging
 import operator
 import re
 from typing import Annotated, Any
 
+logger = logging.getLogger(__name__)
+
 from langgraph.graph import END, StateGraph
 from typing_extensions import TypedDict
 
-from src.config import GENERATION_API_BASE, GENERATION_MODEL, GROQ_API_KEY
+from src.config import (
+    FREE_LLM_API_KEY,
+    GENERATION_API_BASE,
+    GENERATION_MODEL,
+    GROQ_API_KEY,
+    LITELLM_MASTER_KEY,
+    OPENROUTER_API_KEY,
+)
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -177,7 +187,24 @@ def build_decomposition_pipeline(
 
     from src.rag_agent import ask_agent  # noqa: PLC0415
 
-    _client = OpenAI(base_url=generation_api_base, api_key=GROQ_API_KEY or "none")
+    # API key resolution keyed on the actual base URL — see the identical fix in
+    # build_rag_agent() (src/rag_agent.py) and _llm_call() (src/llm_utils.py).
+    # This call site was missed by both earlier fixes: it hardcoded GROQ_API_KEY
+    # regardless of generation_api_base, so decomposition silently 401'd and fell
+    # back to sub_questions = [question] (single-hop) whenever GENERATION_API_BASE
+    # pointed anywhere but Groq — e.g. the current OpenRouter config.
+    _base_for_key = generation_api_base.lower()
+    if "localhost:4000" in _base_for_key or "127.0.0.1:4000" in _base_for_key:
+        _decompose_api_key = LITELLM_MASTER_KEY or "EMPTY"
+    elif "localhost:3011" in _base_for_key or "127.0.0.1:3011" in _base_for_key:
+        _decompose_api_key = FREE_LLM_API_KEY or "EMPTY"
+    elif "openrouter.ai" in _base_for_key:
+        _decompose_api_key = OPENROUTER_API_KEY or "EMPTY"
+    elif "groq.com" in _base_for_key:
+        _decompose_api_key = GROQ_API_KEY or "EMPTY"
+    else:
+        _decompose_api_key = GROQ_API_KEY or LITELLM_MASTER_KEY or "EMPTY"
+    _client = OpenAI(base_url=generation_api_base, api_key=_decompose_api_key)
 
     _SYSTEM = (
         "You are a question decomposer for a document retrieval system. "
@@ -201,22 +228,44 @@ def build_decomposition_pipeline(
                 temperature=0,
                 max_tokens=512,
             )
-            raw = resp.choices[0].message.content or ""
-            # Strip thinking tags (Qwen3 with extended thinking enabled)
-            raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
-            # Strip accidental markdown fences
-            raw = re.sub(r"^```[a-z]*\n?|```$", "", raw, flags=re.MULTILINE).strip()
-            sub_questions: list[str] = json.loads(raw)
-            if not isinstance(sub_questions, list) or not sub_questions:
-                sub_questions = [question]
         except Exception:
+            # A real API failure (auth, network, rate limit) — not a legitimate
+            # single-hop decision. Log loudly so a wrong key or dead endpoint
+            # can't silently degrade every multi-hop question to single-hop again.
+            logger.exception(
+                "Decomposer LLM call failed — falling back to single-hop for: %s",
+                question,
+            )
             sub_questions = [question]
+        else:
+            raw = ""
+            try:
+                raw = resp.choices[0].message.content or ""
+                # Strip thinking tags (Qwen3 with extended thinking enabled)
+                raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+                # Strip accidental markdown fences
+                raw = re.sub(
+                    r"^```[a-z]*\n?|```$", "", raw, flags=re.MULTILINE
+                ).strip()
+                sub_questions = json.loads(raw)
+                if not isinstance(sub_questions, list) or not sub_questions:
+                    sub_questions = [question]
+            except Exception:
+                # Model returned malformed JSON — a real decomposer bug, still
+                # worth knowing about, but distinct from an API-layer failure.
+                logger.warning(
+                    "Decomposer returned unparseable output, treating as single-hop: %s",
+                    raw,
+                )
+                sub_questions = [question]
 
         if len(sub_questions) > 1:
             plan = "\n".join(f"{i + 1}. {q}" for i, q in enumerate(sub_questions))
             formatted = (
                 f"Answer the following question by working through each sub-question in order "
-                f"and calling the appropriate search tools for each one:\n\n"
+                f"and calling the appropriate search tools for each one. For each sub-question, "
+                f"retrieve and state the specific fact or value it asks for — identifying which "
+                f"document it comes from is not a complete answer on its own:\n\n"
                 f"{plan}\n\n"
                 f"Original question (use this for your final answer): {question}"
             )

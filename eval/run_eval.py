@@ -227,6 +227,13 @@ def _custom_judge_answer(
         "Do not require exact wording; values under matching field labels count as support. "
         "Do not penalize missing citations. Penalize only claims that CONTRADICT the context, introduce "
         "facts ABSENT from the context, or mix values across the wrong sources.\n"
+        "- HEDGED/INFERRED CLAIMS ARE UNFAITHFUL: if the answer justifies a claim with language like "
+        "'implied by', 'the absence of X suggests', 'typically involves', 'is likely', or otherwise "
+        "reasons from general/domain knowledge rather than quoting or restating something actually in "
+        "the RETRIEVED CONTEXT, that claim is NOT supported — score it unfaithful (low score) even if "
+        "the conclusion happens to match the expected answer. A guess that turns out right is still a "
+        "guess. Only score a comparative claim faithful when BOTH compared facts are explicitly present "
+        "in the RETRIEVED CONTEXT (directly stated or a clear paraphrase), not when one side is inferred.\n"
         "- answer_relevancy: score whether ACTUAL ANSWER directly addresses the QUESTION. "
         "Concise direct answers are relevant.\n\n"
         f"QUESTION:\n{question['question']}\n\n"
@@ -236,22 +243,49 @@ def _custom_judge_answer(
     )
 
     client = openai.OpenAI(base_url=judge_base_url, api_key=judge_api_key)
-    response = client.chat.completions.create(
-        model=judge_model_name,
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a strict but fair evaluation judge. Output valid JSON only.",
-            },
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0,
-        max_tokens=220,
-        response_format={"type": "json_object"},
-    )
-    parsed = _extract_json_scores(response.choices[0].message.content or "")
+    # Retry transient rate limits AND malformed-JSON responses (the shared free-tier
+    # judge endpoint has sustained exhaustion windows, and separately sometimes
+    # returns a truncated/non-JSON body despite response_format=json_object) before
+    # letting the caller fall back to the much cruder exact-match scorer — either
+    # failure mode silently degrades a whole question's score to token-overlap
+    # matching instead of the semantic judge, for reasons unrelated to the actual
+    # answer quality.
+    last_exc: Exception | None = None
+    parsed: dict[str, Any] | None = None
+    for attempt, delay in enumerate((0, 3, 8)):
+        if delay:
+            import time
+
+            time.sleep(delay)
+        try:
+            response = client.chat.completions.create(
+                model=judge_model_name,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a strict but fair evaluation judge. Output valid JSON only.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0,
+                # Reasoning models (gpt-oss-120b and similar) spend completion tokens
+                # on a reasoning trace BEFORE emitting the JSON answer — 220 tokens
+                # was consumed entirely by reasoning, so content came back null every
+                # time (finish_reason="length"), not because of a malformed response.
+                # Verified directly: the same prompt with max_tokens=220 produced
+                # content=null after 317 reasoning tokens; this budget covers both.
+                max_tokens=900,
+                response_format={"type": "json_object"},
+            )
+        except openai.RateLimitError as exc:
+            last_exc = exc
+            continue
+        parsed = _extract_json_scores(response.choices[0].message.content or "")
+        if parsed:
+            break
+        last_exc = RuntimeError("custom judge returned invalid JSON")
     if not parsed:
-        raise RuntimeError("custom judge returned invalid JSON")
+        raise last_exc  # noqa: B904 — re-raise after exhausting retries
 
     exact_score = _exact_match_score(normalized_answer, gold_answer)
     correctness = _clamp_score(parsed.get("correctness"), exact_score)
@@ -276,7 +310,72 @@ QA_PAIRS_DIR = EVAL_DIR / "data/qa_pairs"
 RESULTS_DIR = EVAL_DIR / "results"
 ANSWER_RESULTS_PATH = RESULTS_DIR / "answer_results.jsonl"
 RETRIEVAL_RESULTS_PATH = RESULTS_DIR / "retrieval_results.jsonl"
+RAW_ANSWERS_PATH = RESULTS_DIR / "raw_answers.jsonl"
 SUMMARY_PATH = RESULTS_DIR / "summary.json"
+FAILURES_PATH = RESULTS_DIR / "failures.md"
+
+# Failure-category heuristics keyed on question_type, used only to give a human
+# a starting point in failures.md — not a scoring signal.
+_FAILURE_CATEGORY_BY_TYPE = {
+    "cross_document_compare": "cross-document reasoning",
+    "numeric_lookup": "numeric extraction",
+    "table_lookup": "table/spreadsheet lookup",
+    "table_grounding": "table/spreadsheet lookup",
+    "ocr_extraction": "OCR/scanned-page extraction",
+    "figure_grounding": "figure/chart grounding",
+    "negation_check": "negation handling",
+    "single_doc_factoid": "single-document factoid",
+    "unanswerable": "false positive (should have refused)",
+}
+
+
+def _accuracy_by_type(answer_rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Per-question-type count + mean correctness, for the eval breakdown table."""
+    by_type: dict[str, list[float]] = {}
+    for row in answer_rows:
+        qtype = row.get("question_type") or "unknown"
+        score = row.get("correctness")
+        if score is not None:
+            by_type.setdefault(qtype, []).append(score)
+    return {
+        qtype: {"count": len(scores), "correctness": sum(scores) / len(scores)}
+        for qtype, scores in sorted(by_type.items())
+    }
+
+
+def _render_failures_md(
+    answer_rows: list[dict[str, Any]], threshold: float = 0.5
+) -> str:
+    """Render a markdown table of every question scoring below threshold, for manual triage."""
+    failures = [
+        r
+        for r in answer_rows
+        if (r.get("correctness") if r.get("correctness") is not None else 1.0)
+        < threshold
+    ]
+    lines = [
+        "# Eval failures — auto-generated by `make eval`, do not hand-edit\n",
+        f"{len(failures)} of {len(answer_rows)} questions scored below {threshold} correctness.\n",
+        "| qa_id | type | category | correctness | question | gold | predicted |",
+        "|---|---|---|---:|---|---|---|",
+    ]
+    for r in failures:
+        qtype = r.get("question_type") or "unknown"
+        category = _FAILURE_CATEGORY_BY_TYPE.get(qtype, qtype)
+        question = (
+            (r.get("question") or "").replace("|", "\\|").replace("\n", " ")[:120]
+        )
+        gold = (r.get("gold_answer") or "").replace("|", "\\|").replace("\n", " ")[:100]
+        predicted = (
+            (r.get("predicted_answer") or "")
+            .replace("|", "\\|")
+            .replace("\n", " ")[:100]
+        )
+        score = r.get("correctness")
+        lines.append(
+            f"| {r['qa_id']} | {qtype} | {category} | {score:.2f} | {question} | {gold} | {predicted} |"
+        )
+    return "\n".join(lines) + "\n"
 
 
 def _strip_doc_ids(question: str) -> str:
@@ -359,6 +458,22 @@ def normalize_unsupported(text: str) -> str:
     return text
 
 
+_DATE_SLASH_DMY = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b")
+_DATE_ISO = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
+
+
+def _canonicalize_dates(text: str) -> str:
+    """Rewrite DD/MM/YYYY and YYYY-MM-DD dates to a single ISO-without-separators
+    form (YYYYMMDD) so the same date in either format tokenizes identically for
+    _exact_match_score's numeric-token comparison. Without this, '29/04/2025' and
+    '2025-04-29' are the same date but compare as different token sets — a real
+    false-negative found evaluating table_lookup questions (source data stores
+    dates as ISO, but gold answers were authored in DD/MM/YYYY)."""
+    text = _DATE_SLASH_DMY.sub(lambda m: f"{m.group(3)}{m.group(2)}{m.group(1)}", text)
+    text = _DATE_ISO.sub(lambda m: f"{m.group(1)}{m.group(2)}{m.group(3)}", text)
+    return text
+
+
 def _exact_match_score(predicted: str, gold: str) -> float:
     """Heuristic correctness fallback when the LLM judge is unavailable.
 
@@ -367,10 +482,16 @@ def _exact_match_score(predicted: str, gold: str) -> float:
     Returns 0.5 for partial overlap (≥50%) or when all numeric tokens are present.
     Returns 0.0 otherwise.
     """
-    p = predicted.lower().strip()
-    g = gold.lower().strip()
+    p = _canonicalize_dates(predicted.lower().strip())
+    g = _canonicalize_dates(gold.lower().strip())
     if not g:
         return 1.0 if not p else 0.0
+    # A "Clarify: ..." response is a deferral, not a commitment to an answer — even
+    # when the right value happens to be one of several candidates it lists, that's
+    # not the same as confidently answering. None of this corpus's gold answers are
+    # themselves a Clarify response, so any Clarify prediction is a miss here.
+    if p.startswith("clarify:"):
+        return 0.0
     if p == g or g in p or p in g:
         return 1.0
     gold_tokens = set(re.findall(r"\w+", g))
@@ -710,12 +831,10 @@ def evaluate_answer(
     }
 
 
-def run(
-    category_filter: str | None = None,
-    qa_files: list[str] | None = None,
-) -> dict[str, Any]:
-    """Run the full-agent benchmark and write per-question results plus a summary."""
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+def _load_questions_for_run(
+    category_filter: str | None, qa_files: list[str] | None
+) -> list[dict[str, Any]]:
+    """Shared question-loading logic for generate_answers() and run()."""
     if qa_files:
         questions = []
         for f in qa_files:
@@ -729,6 +848,23 @@ def run(
         questions = load_questions(QA_PAIRS_DIR)
     if category_filter:
         questions = [q for q in questions if q.get("question_type") == category_filter]
+    return questions
+
+
+def generate_answers(
+    category_filter: str | None = None,
+    qa_files: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Phase 1: run the full agent on every question and save raw predicted answers.
+
+    No judge calls here — this only exercises retrieval + generation, so it can
+    be run and inspected independently of whether the judge is working. Writes
+    eval/results/retrieval_results.jsonl (no LLM involved) and
+    eval/results/raw_answers.jsonl (qa_id, question, gold_answer, predicted
+    answer, retrieved context — everything judge_answers() needs).
+    """
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    questions = _load_questions_for_run(category_filter, qa_files)
 
     retrieval_rows = [evaluate_retrieval(question) for question in questions]
     RETRIEVAL_RESULTS_PATH.write_text(
@@ -740,24 +876,31 @@ def run(
     reflection_pipeline = build_reflection_pipeline(agent)
     decomposition_pipeline = build_decomposition_pipeline(agent)
 
-    answer_rows: list[dict[str, Any]] = []
+    raw_rows: list[dict[str, Any]] = []
 
     for idx, question in enumerate(questions, start=1):
         query = question["question"]
         print(f"[{idx}/{len(questions)}] {question['qa_id']} — {query[:80]}")
 
-        # Multi-hop PDF/cross-doc questions go through decomposition so the agent gets
-        # an explicit sub-question plan. Excel cross-doc questions are excluded — the
-        # SQL sub-agent handles multiple tables natively in one call, and decomposition
-        # would just add an extra gpt-4o-mini call that competes with the eval judge TPM.
+        # Decomposition is opt-in, off by default. api.py never uses it — production
+        # traffic always goes through the plain ReAct agent (stream_agent) below. An
+        # on/off ablation on the cross-document bucket (same judge, same code, only
+        # this flag differed) showed decomposition net-hurts: it tends to answer only
+        # one half of two-part comparison questions, where the plain agent's own
+        # multi-tool-call loop naturally covers both. Set EVAL_ENABLE_DECOMPOSITION=1
+        # to re-run that experiment; default matches what real users get.
         evidence_doc_ids = {
             ev.get("doc_id", "")
             for ev in question.get("evidence", [])
             if ev.get("doc_id")
         }
-        is_multihop = not _looks_excel(query) and (
-            len(evidence_doc_ids) > 1
-            or question.get("question_type", "").startswith("cross")
+        is_multihop = (
+            bool(os.getenv("EVAL_ENABLE_DECOMPOSITION"))
+            and not _looks_excel(query)
+            and (
+                len(evidence_doc_ids) > 1
+                or question.get("question_type", "").startswith("cross")
+            )
         )
 
         retrieved_contexts: list[str] = []
@@ -817,18 +960,72 @@ def run(
             except Exception as exc:
                 print(f"  [WARN] forced retry failed: {exc}")
 
-        answer_eval = evaluate_answer(question, answer, retrieved_contexts)
-        answer_rows.append(
+        raw_rows.append(
             {
                 "qa_id": question["qa_id"],
+                "question_type": question.get("question_type"),
                 "question": query,
                 "gold_answer": question.get("gold_answer"),
-                "predicted_answer": answer_eval.pop("clean_answer", answer),
-                **answer_eval,
+                "evidence": question.get("evidence") or [],
+                "predicted_answer": answer,
+                "retrieved_contexts": retrieved_contexts,
             }
         )
 
-        # Pace requests to stay under the eval judge TPM limit (200k/min on gpt-4o-mini).
+        RAW_ANSWERS_PATH.write_text(
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in raw_rows),
+            encoding="utf-8",
+        )
+
+    print(f"\nGenerated {len(raw_rows)}/{len(questions)} answers -> {RAW_ANSWERS_PATH}")
+    print("Run judge_answers() (or `--phase judge`) next to score them.")
+    return raw_rows
+
+
+def judge_answers(raw_answers_path: Path = RAW_ANSWERS_PATH) -> dict[str, Any]:
+    """Phase 2: judge previously-generated answers and write the final summary.
+
+    Reads raw_answers.jsonl (from generate_answers()) and retrieval_results.jsonl
+    (written alongside it, no judge needed for that file) — does not touch the
+    agent or Qdrant at all, only the judge model.
+    """
+    raw_rows = [
+        json.loads(line)
+        for line in raw_answers_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    retrieval_rows = [
+        json.loads(line)
+        for line in RETRIEVAL_RESULTS_PATH.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    answer_rows: list[dict[str, Any]] = []
+    for idx, raw in enumerate(raw_rows, start=1):
+        print(f"[{idx}/{len(raw_rows)}] judging {raw['qa_id']}")
+        question = {
+            "question": raw["question"],
+            "question_type": raw.get("question_type"),
+            "gold_answer": raw.get("gold_answer"),
+            "evidence": raw.get("evidence") or [],
+        }
+        answer_eval = evaluate_answer(
+            question, raw["predicted_answer"], raw.get("retrieved_contexts") or []
+        )
+        answer_rows.append(
+            {
+                "qa_id": raw["qa_id"],
+                "question_type": raw.get("question_type"),
+                "question": raw["question"],
+                "gold_answer": raw.get("gold_answer"),
+                "gold_evidence": raw.get("evidence") or [],
+                "predicted_answer": answer_eval.pop(
+                    "clean_answer", raw["predicted_answer"]
+                ),
+                **answer_eval,
+            }
+        )
+        # Pace requests to stay under the eval judge TPM limit.
         time.sleep(6)
 
     ANSWER_RESULTS_PATH.write_text(
@@ -882,7 +1079,7 @@ def run(
     )
 
     summary = {
-        "question_count": len(questions),
+        "question_count": len(raw_rows),
         "vector_retrieval_metrics": {
             "scope": "PDF/OCR questions only (Qdrant dense search)",
             "question_count": len(vector_rows),
@@ -917,14 +1114,29 @@ def run(
             else None,
         },
         "judge_breakdown": judge_breakdown,
-        "question_breakdown": dict(Counter(q["question_type"] for q in questions)),
+        "question_breakdown": dict(Counter(r.get("question_type") for r in raw_rows)),
+        "correctness_by_question_type": _accuracy_by_type(answer_rows),
         "answer_result_file": str(ANSWER_RESULTS_PATH),
         "retrieval_result_file": str(RETRIEVAL_RESULTS_PATH),
     }
     SUMMARY_PATH.write_text(
         json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
+    FAILURES_PATH.write_text(_render_failures_md(answer_rows), encoding="utf-8")
     return summary
+
+
+def run(
+    category_filter: str | None = None,
+    qa_files: list[str] | None = None,
+) -> dict[str, Any]:
+    """Run the full benchmark end-to-end: generate every answer, then judge all of them.
+
+    Prefer generate_answers() + judge_answers() separately when you want to
+    inspect raw answers before spending judge-model calls on them.
+    """
+    generate_answers(category_filter=category_filter, qa_files=qa_files)
+    return judge_answers()
 
 
 if __name__ == "__main__":
@@ -939,11 +1151,27 @@ if __name__ == "__main__":
     parser.add_argument(
         "--qa-files", nargs="+", default=None, help="Run only these QA JSON files"
     )
-    args = parser.parse_args()
-    print(
-        json.dumps(
-            run(category_filter=args.category, qa_files=args.qa_files),
-            ensure_ascii=False,
-            indent=2,
-        )
+    parser.add_argument(
+        "--phase",
+        choices=["generate", "judge", "full"],
+        default="full",
+        help=(
+            "generate: run the agent and save raw answers only (no judge calls). "
+            "judge: score an existing raw_answers.jsonl. "
+            "full: both, in sequence (default)."
+        ),
     )
+    args = parser.parse_args()
+
+    if args.phase == "generate":
+        generate_answers(category_filter=args.category, qa_files=args.qa_files)
+    elif args.phase == "judge":
+        print(json.dumps(judge_answers(), ensure_ascii=False, indent=2))
+    else:
+        print(
+            json.dumps(
+                run(category_filter=args.category, qa_files=args.qa_files),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
