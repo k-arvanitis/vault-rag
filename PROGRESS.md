@@ -1,7 +1,70 @@
 # vault-rag — Progress & Plan
 
 Single source of truth. Update this at the start of every session.
-Last updated: 2026-07-08
+Last updated: 2026-07-09
+
+---
+
+## Session 2026-07-09 — attempted the two README "known limitations", both inconclusive/failed
+
+User asked to fix the two scariest-for-customers gaps the README documents honestly:
+figure-grounded questions being weak, and the agent sometimes skipping a required
+retrieval and guessing.
+
+**Figure-grounding (`doc_008_qa__qa_4`, Figure 4 / $197B Defense budget) — fix attempted,
+verified NOT working, same failure mode as the doc_001 front-matter attempt.** Root cause
+confirmed directly: chunk 17 (page 16) genuinely contains "Defense — Budget: $197 billion"
+correctly ingested and correctly labeled "Figure 4:" in its content (the earlier session's
+figure-caption fix did apply here) — but its auto-generated embedding context was stale,
+generated before this session's numeric-specificity prompt rules existed, and generic:
+"describes the updated financial benefits and budget allocation... with a focus on mission
+achievements," never naming Figure 4 or the $197B figure. Regenerated context with the
+current `CHUNK_CONTEXT_PROMPT`, re-embedded, re-upserted chunk 17 in place. New context
+*still* didn't name the specific figure/number (the LLM summarized the chunk's opening
+paragraph about a $599.5B→$596.3B recalculation instead of the FIGURE_START breakdown).
+Verified scoped against all 8 `doc_008_qa` questions — **no change**: qa_4 still returns
+`Unsupported`, chunk 17 still never enters the retrieval candidate pool, no regressions on
+the other 7. Second consecutive failure of "regenerate chunk context, re-embed" as a fix
+technique this session (after doc_001's front-matter) — the earlier session's claimed win
+on Figure 3 (`qa_3`) may have been driven more by the figure-caption-in-content fix than by
+context-text quality; context regeneration alone does not reliably move dense-retrieval
+ranking. Not resolved.
+
+**Skip-retrieval-and-guess on comparison questions — real code-level fix implemented
+(not another prompt patch), verification inconclusive.** Given three prompt-only attempts
+already failed this session for similar retrieval-discipline issues, went straight to a
+mechanical fix instead: `api.py`'s `_answer()` (the actual production `/query` handler —
+confirmed decomposition and reflection pipelines are *not* wired into production; this
+function is the real code path) already has a proven retry-on-bare-Unsupported mechanism.
+Added a second, parallel check: if the question matches a comparison pattern (`compare`,
+`versus`, `which document... and which`, etc.) and the retrieved sources span only one
+distinct file, force one retry with an explicit instruction to search the second
+document/topic before finalizing — mirrors the existing working retry pattern rather than
+adding new instruction text to a prompt block. Testing required standing up the actual API
+server (`uvicorn`, tmux `api_test`, port 8001) since this logic lives outside the eval
+harness entirely (`eval/run_eval.py` calls `stream_agent` directly, bypassing `route_question`
+and multi-part-query splitting — a real, separate finding: **the eval harness does not
+exercise the same code path production traffic does**, so eval numbers may not fully predict
+live-app behavior on this class of question). Test question ("which document refers to
+employee policies and which to supplier payments") returned a bare `Unsupported` end-to-end
+via the API — a different failure mode than the eval harness's version of this question
+(which answers both halves, one wrong), routed to a third, unrelated document (`doc_009`)
+entirely. This didn't exercise the new comparison-retry code path at all (that only fires
+on a *non*-Unsupported answer with single-source coverage). **Fix code is in place and
+believed sound, but not cleanly verified — inconclusive, not confirmed working.** Needs a
+retest with a case that reproduces the original "confidently answers half from general
+knowledge" symptom specifically, ideally through the same production endpoint.
+
+**Honest overall status on both README-flagged gaps: still open.** Real attempts were made
+at both, using techniques different from (and more promising than) the three failed
+prompt-only patches earlier in the session, but neither is confirmed fixed. README's
+"Known limitations" section should not be changed to claim either is resolved.
+
+**Not committed.** `api.py` already has ~110 lines of pre-existing uncommitted changes from
+before this session (Langfuse tracing, `/eval/run` endpoints) that aren't understood/reviewed
+here — left alone per the same caution flagged earlier in this session. The comparison-retry
+addition sits on top of that diff, uncommitted, so the user can review both together rather
+than have this session silently commit through unrelated pending work.
 
 ---
 
