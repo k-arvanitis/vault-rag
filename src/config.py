@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     doc_min_score: float = 0.01
     max_chunk_chars: int = 1500
     max_table_chars: int = 3000
-    max_tool_results: int = 8
+    max_tool_results: int = 12
     max_chars_per_table_chunk: int = 6000
 
     # Table ingestion

@@ -5,6 +5,70 @@ Last updated: 2026-07-09
 
 ---
 
+## Session 2026-07-09, part 2 — figure-grounding root cause actually found (mechanism, not fixed)
+
+Advisor pushed back on the "just try another fix" pattern from part 1 and named one decisive,
+cheap diagnostic that had never been run: where does chunk 17 (the Figure 4 / $197B chunk) rank
+in **raw** retrieval, before any of the two failed prompt/context-regen attempts muddy the picture.
+
+**Finding 1 — chunk 17 is not a retrieval-embedding problem.** Direct Qdrant query (dense+sparse
+RRF fusion, `top_k=100`, both doc-scoped and full-corpus): chunk 17 ranks **#1 of 100** post-fusion
+using the literal eval question text. So the embedding is fine — this rules out the "diffuse
+figure-block embedding" theory both prior sessions' fixes assumed.
+
+**Finding 2 — the cross-encoder reranker (`bge-reranker-v2-m3`) drops it to rank #10 of 100**,
+with a strongly negative relevance score (-0.74), despite it being the fusion-rank-1 candidate
+and containing the literal answer text. This is the real mechanism: the reranker judges this
+chunk's dense financial-recalculation prose as low-relevance to the question, even though the
+figure/number it needs is embedded in that same chunk.
+
+**Finding 3 — a fix for exactly this ("Fix 1" in `src/tools/retrieval_tool.py` line ~805,
+pre-existing, from an earlier session) already forces `_rerank_top_n = max(_rerank_top_n, 12)`
+for single-document-scoped queries — specifically to rescue reranker-ranked-10th-ish chunks like
+this one. It still doesn't work: the actual tool call for `qa_4` returned only **7** chunks
+total to the agent, none of which was chunk 17, and the chunk set didn't even overlap with the
+rerank ordering computed offline (chunks 10/1/7/16/15/9/23 returned vs. 18/6/8/3/25/26/16/127/5/17
+computed offline — only chunk 16 in common).
+
+**Finding 4 (the real blocker for next session) — the offline diagnostic and the live tool call
+are not comparable.** The live ReAct agent formulates its own `search_knowledge_base` query
+text/arguments; it does not necessarily pass the literal question. Every diagnostic this session
+and prior sessions (context regeneration, prompt strengthening, and now the rank check) implicitly
+assumed the retrieval query equals the eval question text. `raw_answers.jsonl` doesn't log the
+actual tool-call arguments, so this couldn't be confirmed directly this session — but it's the
+only explanation that fits: rank-1/rank-10 offline vs. a completely different, lower-ranked chunk
+set actually returned live. **This is why three straight fix attempts (2 context-regen, 1
+"Fix 1"-style rerank-window widening) all failed identically** — they were all patching a
+retrieval-time ranking problem while the actual live query text was never captured or verified.
+
+**Action taken:** bumped `max_tool_results` 8 → 12 in `src/config.py` (the global cap that
+`min(rerank_top_n, MAX_TOOL_RESULTS)` enforces in `retrieval_tool.py:467` — a real, previously
+undiscovered global ceiling, separate from the doc-scoped "Fix 1" override). Verified via scoped
+eval (`doc_008_qa`, `doc_001_procurement_policy_qa`, `doc_015_food_sop_manual_qa`,
+`doc_006_purchase_card_transactions_q1_2025_26_qa`, `doc_003_doc_008_cross_document_qa`, n=~20):
+**no regressions**, figure_grounding 2/3 correct (same as before — qa_4 still `Unsupported`).
+Keeping the bump since it's a legitimate generalized ceiling raise for non-doc-scoped queries
+with zero measured downside, but it does **not** fix qa_4 — that requires the real next-session
+task below, not another blind patch attempt.
+
+**Next session, in order:**
+1. Instrument `_make_unified_tool` (or the ReAct agent's tool-call logging) to actually log the
+   `query`/`doc_id` arguments the agent passes to `search_knowledge_base`, per call, into
+   `raw_answers.jsonl` or a sidecar log. Currently invisible.
+2. Re-run qa_4 with that instrumentation on, capture the literal live query text.
+3. Only then decide whether the fix is: (a) query-formulation prompting so the agent preserves
+   figure/number keywords from the question, or (b) a fallback pass that re-embeds using the raw
+   question verbatim when the agent's own paraphrase yields low-confidence results.
+4. Do **not** attempt another context-regeneration or reranker-window fix without first doing (1)
+   — that diagnostic gap is why the last three attempts (this session and prior) all looked
+   plausible and all failed the same way.
+
+Not committing anything unverified. Committing the `max_tool_results` bump alone (harmless,
+regression-free, real if modest generalized improvement); qa_4 and the figure-grounding gap
+remain open, README "Known limitations" unchanged.
+
+---
+
 ## Session 2026-07-09 — attempted the two README "known limitations", both inconclusive/failed
 
 User asked to fix the two scariest-for-customers gaps the README documents honestly:
