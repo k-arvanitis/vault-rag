@@ -5,6 +5,55 @@ Last updated: 2026-07-09
 
 ---
 
+## Session 2026-07-09, part 3 — comparison-retry fix verified live, partial win + new deeper bug found
+
+Backlog item 1 (finish/verify the `api.py` comparison-retry fix from part 1). Started the
+real API server (tmux `api_test2`, port 8001) and tested through the actual `/query` endpoint,
+since `eval/run_eval.py` doesn't exercise this code path.
+
+**Bug found in the fix itself: `_COMPARISON_RE` never matched realistic phrasing.** It required
+literal `which document/file/report ... and which`. Test question ("Between the Rosemont HR
+policy manual and the OSSE AFE budget tracker, which defines employment rules and which tracks
+financial data?") didn't match at all — the retry never fired, and the agent returned a
+confident, fully-worded two-part answer sourced entirely from `doc_010` (8/8 chunks), silently
+inventing the doc_013 half from general knowledge about what a "budget tracker" does. This is
+the exact failure mode the fix was supposed to catch, un-caught, because of a regex gap.
+
+**Broadened the regex** (`between .+ and\b`, `which .+ and which\b` added) and re-verified live:
+retry now fires correctly, makes a real second `search_knowledge_base` call, and does retrieve
+`doc_013` evidence this time. The agent's final synthesis then honestly returned `Unsupported`
+rather than fabricating "tracks financial data" — worse-looking on paper (a refusal vs. a fluent
+answer) but the actually-desired outcome: no more confident cross-document guessing. Committed
+as an isolated commit (`f610a64`) on top of `api.py`'s pre-existing ~110 unrelated uncommitted
+lines, same isolation pattern used for the earlier `max_tool_results` commit.
+
+**New, deeper bug found while testing a second case (`doc_001`/`doc_002`, "Comparing the LACERA
+procurement policy and the Government Property Agency services contract terms, which document
+specifies a deadline...").** This question *does* match the comparison regex, but
+`_split_multi_part_query` (upstream of `_answer()`, unrelated code) splits it into two
+sub-questions before `_COMPARISON_RE` ever sees it. Each split half loses the "Comparing X and Y"
+framing entirely, so the comparison-retry check never triggers per-sub-question, and one split
+half free-associated on the word "deadline" and confidently answered from **doc_003** (a Fed
+Reserve annual report — completely unrelated to either LACERA or the Government Property Agency).
+This is a materially worse failure than "answers from general knowledge": a specific, confident,
+wrong-document citation. **Not fixed tonight** — this is a real interaction between two
+independent pre-existing subsystems (query splitting, comparison-retry) that needs its own
+investigation, not a quick patch. Flagged for next session:
+1. Either run `_COMPARISON_RE` against the *original* unsplit question and pass a comparison
+   flag/instruction down into each split sub-question's `_answer()` call, or
+2. Skip splitting entirely when the question matches `_COMPARISON_RE` (comparison questions are
+   inherently two-part already; splitting may be actively counterproductive for this class).
+
+**Honest net assessment:** the regex fix is a real, verified, generalized improvement for
+comparison questions that reach `_answer()` unsplit — confirmed change from silent fabrication
+to either correct grounding or honest refusal. It does **not** close the "skip retrieval and
+guess" gap for split comparison questions, and can occasionally make that specific sub-case look
+worse (wrong-document citation) — though this second failure mode was already present before
+tonight's change and is caused by the splitter, not by `_COMPARISON_RE`. README's "Known
+limitations" section stays as-is; this gap is not resolved.
+
+---
+
 ## Session 2026-07-09, part 2 — figure-grounding root cause actually found (mechanism, not fixed)
 
 Advisor pushed back on the "just try another fix" pattern from part 1 and named one decisive,
