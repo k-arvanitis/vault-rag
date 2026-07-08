@@ -5,6 +5,105 @@ Last updated: 2026-07-08
 
 ---
 
+## Session 2026-07-08, part 2 — deep-dive on why gains were small; honest answer
+
+User pushback after the full-run report: +2.3 correctness / +0.9 faithfulness is a small
+gain for the time spent — asked whether the model is the bottleneck, whether the eval set
+is representative, why refusal isn't 100%, why structured accuracy sits at 76%. Investigated
+every non-1.0 answer in the four weakest question types by hand (zero new OpenRouter spend,
+used data already collected). Honest findings:
+
+**The model is not the bottleneck.** Every failure traced to a root cause landed on: broken
+eval ground truth, judge-scoring noise, or a specific retrieval/indexing gap — never bad
+reasoning from Qwen3-32B. In two structured-bucket cases the agent's "which transaction —
+give me a date or number" response was the *correct* behavior for a genuinely ambiguous
+question and got marked wrong for it.
+
+**Structured/Excel 76.2% (n=21, 5 wrong) — mostly broken eval labels, verified against the
+raw spreadsheet directly:**
+- `doc_006_...qa_1` — "Google Ads2372193163" matches **7 rows** with different NET amounts;
+  question gives no disambiguating date/transaction-number. Gold picked row 2 arbitrarily.
+- `doc_006_...qa_3` — "Asda Groceries Online" matches **363 rows**. Same problem.
+- `doc_006_...qa_6` — gold's own evidence quote is for supplier "687 - Wilmington", not
+  "Trainline" as the question asks. The gold label doesn't match its own question.
+- `doc_006_doc_007_...qa_5` — judge-scoring noise: identical predicted text to a prior run,
+  scored 1.0 then 0.5. Not a real difference.
+- `doc_006_doc_007_...qa_2` — the one genuine pipeline failure in this bucket (real
+  "Unsupported" when doc_006 data likely exists) — not investigated further this session.
+
+True ceiling here, net of bad labels and noise, is closer to ~90-95%, not 76%.
+
+**Real bug found and NOT yet fixed — refusal isn't 100% because of a document-scope
+violation.** `doc_015_food_sop_manual_qa__qa_5` asks "the SOP manual's policy on vacation"
+(doc_015 = a food-safety SOP, correctly has zero vacation content, gold=Unsupported).
+Retrieval correctly found nothing in doc_015 — but instead of refusing, the agent answered
+using doc_010's (an unrelated HR handbook) real vacation-policy content and labeled it
+"The SOP manual outlines...". Confident cross-document misattribution, not a hallucination
+from model knowledge. No check currently verifies that an answer's cited source actually
+matches the document a question names. **Not fixed this session** — flagged as higher-risk
+than the front-matter fix below (harder to reliably detect "which doc did the question
+name"); do only if the front-matter fix pattern is cheap to extend.
+
+**doc_006 eval labels — fixed (2026-07-08, later same session).** Per user request, fixed
+rather than removed the 3 broken structured-bucket questions found earlier:
+- `qa_1`: added `on 2025-04-01` to disambiguate "Google Ads2372193163" (was 7 matching rows).
+- `qa_3`: added date + department to disambiguate "Asda Groceries Online" (was 363 rows).
+- `qa_6`: was completely broken — gold evidence was for supplier "687 - Wilmington", not
+  "Trainline" as the question asked. Replaced with a real Trainline row (verified unique via
+  date+department), fixed `row_ref` (29 → 28) and the evidence quote to match.
+Not re-run against the full corpus (per user: no more full-eval reruns needed right now) —
+these are label corrections, verifiable independently whenever the corpus is next scored.
+
+**doc_015 refusal bug — fix attempted, verified NOT working (2026-07-08, later same
+session).** Strengthened the existing `DOCUMENT IDENTITY CHECK` rule in `ABSTENTION_BLOCK`
+(`src/prompts.py`) to explicitly forbid answering with another document's real content while
+describing it as the named document's, and to require outputting `Unsupported` if a second
+search still finds nothing in the named document. Verified scoped against the full
+`doc_015_food_sop_manual_qa.json` (13 questions, no regressions on the other 12) —
+**qa_5 still fails identically**, word-for-word the same wrong answer as before the prompt
+change. Confirms the pattern from every other fix attempt this session (C2/A/B, the
+front-matter fix): **prompt-only rules do not reliably override retrieval bringing back
+wrong-document content.** The Excel hallucination bug earlier in the project only got fixed
+with a programmatic hard gate (`_column_matches_question` in `src/tools/excel.py`), not
+prompt text alone — this bug needs the same category of fix: a code-level check comparing a
+retrieved chunk's `file=`/doc_id against the question's named document before allowing an
+answer to use it, not another prompt instruction. **Not implemented this session** — three
+consecutive prompt-only attempts failing identically is a strong enough signal to stop
+trying that approach here; a real fix is a small code change in the retrieval/answering
+path, tracked as a TODO, not a further prompt patch.
+
+**Real bug found, root-caused, fix attempted, fix verified NOT working —
+`doc_001`'s entire front-matter (title, authorizing manager, issue date, review date) is
+invisible to retrieval, costing 4 of 5 questions on that document.** Root cause (confirmed
+directly against Qdrant, not guessed): the chunks (index 2 and 4) **are** correctly indexed
+— this is not a missing-embedding bug. Their auto-generated `CHUNK_CONTEXT_PROMPT` context
+line was dominated by describing a decorative LACERA logo image (from the VLM figure
+description) instead of naming the actual facts sitting right next to it in the same chunk
+("Authorizing Manager: Ricki Contreras", "Original Issue Date: December 15, 2005"). Added a
+rule to `CHUNK_CONTEXT_PROMPT` (`src/prompts.py`) instructing it to name textual facts over
+describing decorative images when both appear in one chunk. Regenerated context for chunks
+2/4, re-embedded, re-upserted in place (same pattern as the C2/A2 patches). **Verified
+scoped against all 5 doc_001 questions — no change**: qa_1/3/4/5 still fail identically,
+chunk 4 still never enters the retrieval candidate pool at all. The context-text rewrite
+improved wording but didn't move dense-embedding similarity enough to matter. **The real fix
+needs to be retrieval-side** (e.g. forced-include of a document's first N chunks when a
+question asks about the document itself/its metadata — already flagged as a TODO item from
+2026-07-03, now with much stronger evidence: costs 4 full questions on one document, not
+just "title is hard"). Not attempted this session — scope/risk tradeoff, same caution as
+A2's rollout.
+
+**Reframing the session's own headline honestly, per the same self-correction:** the
+decompose-off default (this session's main lever) was a *non-lever* — decomposition was
+never in production and was already effectively off via the API-key bug, so disabling it
+just confirmed the existing baseline behavior. The +2.3 correctness / +0.9 faithfulness came
+from *last* session's C1/Excel/judge fixes finally landing in a clean measured run, not from
+anything new done today. The front-matter retrieval gap found just now is plausibly a bigger
+single lever (+~4 points, 4 questions on one document alone) than everything else touched
+this session — but it needs a retrieval-architecture fix, not a prompt patch, and is not
+done.
+
+---
+
 ## Session 2026-07-08 — decomposition was eval-only, silently broken, and net-harmful
 
 **Headline finding: the decomposition pipeline (`build_decomposition_pipeline` in

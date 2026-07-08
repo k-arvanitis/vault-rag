@@ -70,9 +70,12 @@ ANSWERING_BLOCK = """When answering:
 - Each retrieved passage is prefixed with [N] file=<filename>. For multi-document questions, use the file= label to match each answer value to its correct source — do not mix values from different files.
 - If retrieved table rows are shown as "Relevant table rows", use the field labels to select the requested cell value exactly.
 - For multi-part questions, answer each part on its own line with a brief source label (e.g. "Source A: <value>. Source B: <value>."). Only mark a part Unsupported if that part's value is absent.
+- **CROSS-DOCUMENT COMPARE — NEVER BLANKET-REFUSE**: for a "compare X and Y" or "which document does A, which does B" question, if you retrieved relevant content from both documents, you MUST report what each document actually says — one line per document — even if neither passage uses the exact comparative wording the question implies. Do not output a bare "Unsupported" just because no single passage states the comparison in one sentence; paraphrasing two separately-retrieved facts into a compare answer is not the same as inferring an unstated fact.
 - **TIME-SCOPED NUMBERS**: when the question specifies an exact date or time qualifier, report only the number explicitly paired with that exact date in the retrieved text. Do NOT report numbers paired with a different date, even if both appear in the same passage.
 - **MULTI-NUMBER DISAMBIGUATION**: when a passage contains multiple numbers with different descriptors, read the question to identify which descriptor it asks about, then report only the number paired with that descriptor. Never report the first number you see.
+- **CUMULATIVE VS. INCREMENTAL**: when a passage gives a cumulative/total figure alongside a smaller incremental or "additional" component (e.g. "$667.5 billion total, including $596.3 billion identified previously and an additional $71.3 billion identified in 2024"), and the question asks for the additional/newest/this-period amount, report the incremental component — never the cumulative total, even though it appears first or is the headline figure.
 - Markdown headings (lines starting with #) in the retrieved text are document titles — quote them exactly when asked for a title.
+- **DOCUMENT TITLE VS. SECTION HEADING**: when asked for "the title of the document," use only the document-level title — the Document Summary chunk's file description, or the cover-page heading on page 1. Never use a numbered or lettered section heading found deeper in the document (e.g. "V. Purchasing and Contracting Policy", "Section 3: ...") as the document's title, even if it is the most prominent heading in the retrieved passage.
 - Never perform arithmetic. If a sum or average is not pre-computed in the source, list the raw values and note the calculation is unavailable.
 - **VERBATIM VALUES**: when stating a specific number, rate, date, or named quantity, copy it exactly as it appears in the source. Preserve original formatting — do not normalize fractions, units, or date formats.
 - **SHEET COUNT QUESTIONS**: when asked whether a document contains one sheet or multiple sheets, count the number of distinct sheet_summary chunks returned for that document. If more than one, answer "No" (it has multiple sheets).
@@ -86,7 +89,7 @@ ABSTENTION_BLOCK = """ABSTENTION RULE (CRITICAL — follow exactly):
 - This applies unconditionally to: personal phone numbers, home addresses, passwords, login credentials, government ID numbers (SSN, passport), GPS coordinates, salaries or pay of named individuals, and any other detail not present verbatim in the retrieved text.
 - Do not use your general knowledge to fill gaps — if it is not in the retrieved text, output: Unsupported. Only answers explicitly stated in the retrieved passages are valid.
 - **FILENAMES AND INTERNAL PATHS are not answers**: if the retrieved text only contains a filename or a file path, do not return that as the answer value — output: Unsupported
-- **DOCUMENT IDENTITY CHECK**: when the question asks about a specific document by title or alias, verify the retrieved text's file= label matches that specific document. If the retrieved content is from a different document, do not use it — search again with the correct doc_id.
+- **DOCUMENT IDENTITY CHECK**: when the question asks about a specific document by title or alias, verify the retrieved text's file= label matches that specific document before answering. If the retrieved content is from a different document, do not use it — search again with the correct doc_id. If the second search still returns nothing from the named document, output: Unsupported. Never answer using another document's real content while describing it as if it belongs to the named document — that is a false attribution, not a correct answer, even if the content itself is accurate.
 """
 
 # Citation-rule section of the agent system prompt (compose_system_prompt).
@@ -155,6 +158,25 @@ You are a DuckDB SQL expert. Write ONE SQL SELECT query to answer the question.
 
 ## SQL rules
 - Always double-quote column names: `"Column Name"`.
+- If multiple columns could match a field named in the question (e.g. "Directorate" vs
+  "Department"), select the column whose header is the closer textual match to the exact
+  wording used in the question — do not substitute a similar-sounding column.
+- If NO column in the schema above corresponds to the concept the question asks for (e.g. the
+  question asks for a VAT number, email address, invoice number, or payment method and no such
+  column exists), do NOT substitute a different, unrelated column as a stand-in and do NOT
+  write a query. Output exactly the word NONE instead — guessing a wrong-but-real-looking
+  column is worse than admitting the data isn't here.
+- A column that is merely in the same GENERAL AREA is not a match. "Transaction Number" or
+  "Reference Number" is NOT the same thing as "Invoice Number" — an invoice number is issued by
+  a vendor on an invoice document; a transaction/reference number is an internal record ID.
+  "Merchant Category" is NOT the same thing as "Payment Method" — a category classifies what was
+  bought; a payment method is how it was paid (cash, card, bank transfer). Only use a column if
+  it is the SAME real-world fact the question asks for, not merely a nearby or related one. When
+  genuinely unsure whether two labels mean the same thing, output NONE rather than guess.
+- Never rename a column with `AS "<the concept asked about>"` to make an unrelated column look
+  like a match (e.g. `SELECT "Merchant Category" AS "Payment Method"`). Aliasing does not change
+  what the underlying data actually is — if the rule above says output NONE, output NONE, not a
+  renamed column.
 - Use ILIKE for ALL string filters — VARCHAR columns often have trailing whitespace.
 - Special chars in ILIKE patterns (*, ?, &, /, +) are treated as literals — no escaping.
 - Dates stored as `'YYYY-MM-DD'`. Rewrite any date in the question to that format.
@@ -199,7 +221,10 @@ Read the rows above. Extract the answer.
 
 RULES (follow EXACTLY):
 1. The rows have at least one row of data → ALWAYS output a value, never abstain.
-2. Multiple data rows → use the FIRST data row. Never refuse because of multiple rows.
+2. Multiple data rows → pick the row that best matches the question's own filters/context
+   (e.g. "most recent" → latest date; a specific date/ID mentioned → the matching row).
+   Only if nothing in the question distinguishes between rows, use the FIRST data row.
+   Never refuse because of multiple rows.
 3. Multiple fields asked → "Field1=value; Field2=value".
 4. Single field asked → output the value alone (no field name, no units).
 5. Copy values verbatim (e.g. 99.99 not "$99.99", text values exactly).
@@ -226,6 +251,8 @@ CHUNK_CONTEXT_PROMPT = """\
 You are generating retrieval context for one chunk of a larger document.
 Write exactly one concise sentence (max 30 words) that describes the main topic, entities, and purpose of this chunk.
 Be specific to THIS chunk only — do not summarize the whole document and do not use generic filler.
+If the chunk states a specific numeric deadline, time limit, threshold, or count (e.g. "30 days", "three months", "$500 limit"), name that number and what it applies to — do not omit it in favor of vaguer language like "prompt" or "timely". Two chunks in the same document can state different numeric limits for different topics, and this sentence is the only signal that tells them apart at retrieval time.
+If the chunk contains a [FIGURE_START]...[FIGURE_END] block describing a logo, decorative image, or generic graphic alongside real textual facts (a title, a name, a date, a policy number), the sentence must name those textual facts — never summarize the decorative image instead. A logo description is background noise; the surrounding text is what retrieval needs to find.
 Use the document context solely to disambiguate the chunk (e.g. to name the document, its subject, or the section this chunk sits in); the sentence must still describe this chunk's own content.
 Use these chunk-specific hints when relevant:
 - heading_hint: {heading_hint}

@@ -1,7 +1,7 @@
 [
   {
     "qa_id": "qa_1",
-    "question": "What is the NET Amount for the row with supplier Google Ads2372193163?",
+    "question": "What is the NET Amount for the supplier Google Ads2372193163 on 2025-04-01?",
     "gold_answer": "402.89",
     "answer_type": "short_text",
     "question_type": "table_lookup",
@@ -55,7 +55,7 @@
   },
   {
     "qa_id": "qa_3",
-    "question": "What is the Purchase of Expenditure for the transaction with supplier Asda Groceries Online?",
+    "question": "What is the Purchase of Expenditure for the supplier Asda Groceries Online on 2025-04-01 in RESIDENTIAL& INSPIRING FUTURES?",
     "gold_answer": "CATERING",
     "answer_type": "short_text",
     "question_type": "table_lookup",
@@ -136,7 +136,7 @@
   },
   {
     "qa_id": "qa_6",
-    "question": "What is the Purchase of Expenditure for the Trainline transaction?",
+    "question": "What is the Purchase of Expenditure for the supplier Trainline on 2025-04-01 in RESIDENTIAL& INSPIRING FUTURES?",
     "gold_answer": "STAFF TRAVEL EXPENSES",
     "answer_type": "short_text",
     "question_type": "table_lookup",
@@ -151,8 +151,8 @@
         "doc_id": "doc_006",
         "evidence_type": "sheet_row",
         "sheet_name": "DataAnalysis",
-        "row_ref": "29",
-        "quote": "Transaction Date: 2025-04-01; Directorate: CHILDREN,YOUNG PEOPLE&FAMILIES; Department: RESIDENTIAL& INSPIRING FUTURES; NET Amount: 55.29; Supplier Name: 687 - Wilmington; Purchase of Expenditure: EQUIPMENT; Merchant Category: Retail"
+        "row_ref": "28",
+        "quote": "Transaction Date: 2025-04-01; Directorate: CHILDREN,YOUNG PEOPLE&FAMILIES; Department: RESIDENTIAL& INSPIRING FUTURES; NET Amount: 61.59; Supplier Name: Trainline; Purchase of Expenditure: STAFF TRAVEL EXPENSES; Merchant Category: Transport"
       }
     ],
     "metadata": {
@@ -209,6 +209,25 @@
         "quote": "Transaction Date: 2025-04-01; Directorate: ADULTS, WELLBEING AND CULTURE; Department: ADULT SOCIAL CARE-CARE&SUPPORT; NET Amount: 99.99; Supplier Name: Cash Converters Yorkshir; Purchase of Expenditure: OTHER SERVICES; Merchant Category: Service Provider"
       }
     ],
+    "metadata": {
+      "modality_focus": "table",
+      "requires_ocr": false,
+      "requires_table_reasoning": true
+    }
+  },
+  {
+    "qa_id": "qa_9",
+    "question": "What is the invoice number for the transaction with the highest NET Amount in the purchase card transactions dataset?",
+    "gold_answer": "Unsupported",
+    "answer_type": "numeric",
+    "question_type": "numeric_reasoning",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_006"
+    ],
+    "gold_evidence": [],
     "metadata": {
       "modality_focus": "table",
       "requires_ocr": false,
