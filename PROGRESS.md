@@ -5,6 +5,48 @@ Last updated: 2026-07-09
 
 ---
 
+## Session 2026-07-09, part 4 — overnight customer-appeal backlog (items 2-3)
+
+Per the user's Upwork/portfolio-readiness backlog (Google Drive sync, source drawer,
+feedback queue, auth, WhatsApp connector, README reframe), working through it in priority
+order overnight, with Drive OAuth and a real login system explicitly scoped OUT for tonight
+(security-sensitive, needs the user present) per an earlier AskUserQuestion in this session.
+
+**Item 2 — clickable inline source citations (done, committed `68dcba7`).** Added a
+`SourceDrawer` under each assistant chat message: numbered chips matching the existing `[N]`
+citation convention, click to expand the quote/section/page inline — so a non-technical user
+can verify an answer without opening the trace sidebar. Verified via `tsc --noEmit` (clean) and
+a live query against the real API (response shape matches the `Source` type exactly). **Caveat
+found and worth flagging**: this component reads `source.quote`, a field that only exists on
+`Source` in `api.py`/`api.ts`'s *pre-existing uncommitted* changes (Langfuse/eval-endpoint work
+from before this session), not in the git history at the time of the `68dcba7` commit. The
+working tree is fine (both pieces are present together on disk), but if someone checked out
+`68dcba7` in isolation, `tsc` would fail on that one field. Not worth rewriting history to fix;
+noting it here so it's not a mystery later. No real browser/visual check was possible in this
+headless environment — `tsc` and the Next.js dev server compile were the available checks.
+
+**Item 3 — feedback queue (done, committed `00588d4`).** Thumbs up/down under each answer, a
+reason dropdown on thumbs-down (wrong source / hallucinated / should have refused / missing
+document / other), and an admin "Feedback queue" panel (same modal pattern as the existing
+Evaluation panel) with per-item actions: mark correct source, add to eval set, dismiss. Backend
+is `src/feedback_store.py`, a small JSON-file store (no new DB — appropriate at this scale per
+repo convention of no premature infrastructure), config path centralized in `FEEDBACK_PATH`
+(`src/config.py`). Three new endpoints in `api.py`: `POST /feedback`, `GET /feedback`,
+`PATCH /feedback/{id}`. Verified live end-to-end (submit → list → resolve, all three round-
+tripped correctly through the real API), plus 3 unit tests in `tests/test_feedback_store.py`
+(pytest, no external services, matches repo convention) — all pass. **"Add to eval set" only
+tags the record for a human to triage** — it does not auto-write into
+`eval/data/qa_pairs/`, since a real gold answer still needs human judgment; documenting this so
+nobody expects it to actually grow the eval corpus unattended.
+
+Both items isolated cleanly from `api.py`/`config.py`/`api.ts`/`page.tsx`'s pre-existing ~110+
+lines of unrelated uncommitted work (Langfuse tracing, `/eval/run` endpoints, reindex endpoint,
+chunk_id tracking) using the same reset-to-HEAD-then-reapply pattern established earlier this
+session for the `max_tool_results` and comparison-retry commits — that unrelated work is still
+sitting uncommitted in the working tree, untouched, for the user's own review.
+
+---
+
 ## Session 2026-07-09, part 3 — comparison-retry fix verified live, partial win + new deeper bug found
 
 Backlog item 1 (finish/verify the `api.py` comparison-retry fix from part 1). Started the
