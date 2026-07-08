@@ -49,6 +49,7 @@ export default function ChatPanel({ onToast, resetSignal = 0, onTrace }: Props) 
         id: nextId(),
         role: "assistant",
         content: data.answer,
+        sources: data.sources ?? [],
       };
       setMessages((prev) => [...prev, assistantMsg]);
       onTrace?.({

@@ -1,12 +1,15 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import { type Source } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 export interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
+  sources?: Source[];
 }
 
 interface Props {
@@ -16,6 +19,46 @@ interface Props {
 
 function LoadingPill() {
   return <div className="h-2 w-12 animate-pulse rounded-full bg-ink-200" />;
+}
+
+/** Numbered citation chips under an assistant message; click one to expand its
+ * page/row evidence inline, so a non-technical user doesn't need the trace panel. */
+function SourceDrawer({ sources }: { sources: Source[] }) {
+  const [openIdx, setOpenIdx] = useState<number | null>(null);
+
+  return (
+    <div className="mt-2 flex flex-wrap items-start gap-1.5">
+      {sources.map((s, i) => {
+        const basename = s.filename.split("/").pop() ?? s.filename;
+        const open = openIdx === i;
+        return (
+          <div key={i} className={open ? "w-full" : undefined}>
+            <button
+              onClick={() => setOpenIdx(open ? null : i)}
+              className={cn(
+                "inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-[10px] transition-colors",
+                open
+                  ? "border-brand bg-brand/10 text-brand-dark"
+                  : "border-ink-200 text-ink-500 hover:bg-ink-100"
+              )}
+            >
+              [{i + 1}] {basename}
+              {s.page != null && ` · p.${s.page}`}
+            </button>
+            {open && (
+              <div className="mt-1 rounded-md border border-ink-200 bg-surface px-3 py-2 text-[11px] leading-relaxed text-ink-600">
+                {s.section && <p className="mb-1 font-medium text-ink-700">{s.section}</p>}
+                <p className="whitespace-pre-wrap">{s.quote || s.excerpt || "—"}</p>
+                {s.location && (
+                  <p className="mt-1 font-mono text-[10px] text-ink-400">{s.location}</p>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 export default function MessageList({ messages, streaming }: Props) {
@@ -61,6 +104,9 @@ export default function MessageList({ messages, streaming }: Props) {
               <div className="prose-ui rounded-xl rounded-bl-sm border border-ink-200 bg-surface px-4 py-2 text-sm text-ink-800">
                 <ReactMarkdown>{msg.content}</ReactMarkdown>
               </div>
+              {msg.sources && msg.sources.length > 0 && (
+                <SourceDrawer sources={msg.sources} />
+              )}
             </div>
           </div>
         )
