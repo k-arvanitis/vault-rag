@@ -5,6 +5,39 @@ Last updated: 2026-07-09
 
 ---
 
+## Session 2026-07-09, part 7 — caught and fixed a real regression from the isolation process
+
+Ran the full test suite as a final check before ending the overnight session — **166 tests
+failed to collect** (`ImportError: cannot import name 'FREE_LLM_API_KEY' from 'src.config'`).
+Root cause: the reset-to-HEAD-then-reapply isolation pattern used all session to keep commits
+clean (see parts 4-6) was done correctly for most files, but the "restore the pre-existing
+pending content afterward" step was **skipped for `api.py` and `src/config.py` after the item-3
+(feedback queue) commit** — meaning every commit since (`b2c2a19`, `016e6cc`, plus this session's
+doc commits) was made against a working tree that was silently missing ~110 lines of
+pre-existing, unrelated, already-uncommitted work (Langfuse tracing, `/eval/run` + `/eval/summary`
++ `/eval/status` endpoints, the reindex endpoint, `chunk_id`/`quote`/`last_indexed_at`/
+`rejected_sources` fields, and two config fields `FREE_LLM_API_KEY`/`POST_GENERATION_VERIFY_ENABLED`
+that `src/llm_utils.py` actually imports at module load time — which is why it broke test
+collection outright rather than failing quietly).
+
+**Fixed**: restored both files from the last known-good backup taken before the item-3 isolation
+(`/tmp/.../api_pending3.py`), re-inserted this session's legitimately-committed additions
+(conversation endpoints in `api.py`; `feedback_path`/`conversation_path`/`max_tool_results` in
+`config.py`) on top, verified the resulting diff against `git show HEAD` matches exactly the
+expected pending set (no duplicates, nothing missing), then re-ran the full suite: **166 passed**.
+Live-server smoke test confirmed every endpoint family responds (`/docs`, `/stats`,
+`/eval/summary`, `/feedback`, `/conversations`) and `tsc --noEmit` is clean.
+
+**Lesson for next time this reset-and-reapply pattern is used**: after every commit made this
+way, immediately run the full test suite (not just `ruff`/`tsc` on the touched files) before
+moving to the next task — `ruff`/`tsc` only check the files they're pointed at, and this
+regression was invisible to both since the missing import was in a file (`src/config.py`)
+that looked syntactically fine on its own; it only broke a *different* file's import at
+collection time. This should have been the very first check after committing part 4's
+conversation-history work, not deferred to the end of the whole session.
+
+---
+
 ## Session 2026-07-09, part 6 — backlog items 5-8 closed out
 
 **Item 5 — Google Drive sync (scaffold only, committed `016e6cc`), per the explicit scope
