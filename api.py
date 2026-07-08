@@ -484,6 +484,50 @@ async def resolve_feedback_endpoint(feedback_id: str, req: FeedbackResolveReques
         raise HTTPException(status_code=404, detail="Feedback not found") from None
 
 
+class ConversationSaveRequest(BaseModel):
+    id: str | None = None
+    messages: list[dict]
+
+
+@app.post("/conversations")
+async def save_conversation_endpoint(req: ConversationSaveRequest):
+    """POST /conversations — create or update a saved conversation."""
+    from src.conversation_store import save_conversation
+
+    return save_conversation(req.id, req.messages)
+
+
+@app.get("/conversations")
+async def list_conversations_endpoint():
+    """GET /conversations — list saved conversations (metadata only), newest first."""
+    from src.conversation_store import list_conversations
+
+    return list_conversations()
+
+
+@app.get("/conversations/{conversation_id}")
+async def get_conversation_endpoint(conversation_id: str):
+    """GET /conversations/{id} — return one saved conversation with its full messages."""
+    from src.conversation_store import get_conversation
+
+    try:
+        return get_conversation(conversation_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Conversation not found") from None
+
+
+@app.delete("/conversations/{conversation_id}")
+async def delete_conversation_endpoint(conversation_id: str):
+    """DELETE /conversations/{id} — remove a saved conversation."""
+    from src.conversation_store import delete_conversation
+
+    try:
+        delete_conversation(conversation_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Conversation not found") from None
+    return {"status": "deleted"}
+
+
 class QueryRequest(BaseModel):
     question: str
 

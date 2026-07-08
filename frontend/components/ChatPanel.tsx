@@ -2,7 +2,7 @@
 
 import { useRef, useState, useCallback, useEffect } from "react";
 import { Send, Loader2, SquarePen } from "lucide-react";
-import { queryDocuments } from "@/lib/api";
+import { queryDocuments, saveConversation } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import MessageList, { type Message } from "./MessageList";
 
@@ -17,20 +17,47 @@ interface Props {
   onToast: (msg: string, variant?: "error") => void;
   resetSignal?: number;
   onTrace?: (trace: Trace | null) => void;
+  initialMessages?: Message[];
+  initialConversationId?: string | null;
+  onConversationSaved?: (id: string) => void;
 }
 
-export default function ChatPanel({ onToast, resetSignal = 0, onTrace }: Props) {
-  const [messages, setMessages] = useState<Message[]>([]);
+export default function ChatPanel({
+  onToast,
+  resetSignal = 0,
+  onTrace,
+  initialMessages,
+  initialConversationId = null,
+  onConversationSaved,
+}: Props) {
+  const [messages, setMessages] = useState<Message[]>(initialMessages ?? []);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
+  const [conversationId, setConversationId] = useState<string | null>(initialConversationId);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (resetSignal > 0) {
       setMessages([]);
+      setConversationId(null);
       onTrace?.(null);
     }
   }, [resetSignal, onTrace]);
+
+  const persist = useCallback(
+    async (allMessages: Message[]) => {
+      try {
+        const saved = await saveConversation(conversationId, allMessages);
+        if (!conversationId) {
+          setConversationId(saved.id);
+          onConversationSaved?.(saved.id);
+        }
+      } catch {
+        // Best-effort — a failed save shouldn't interrupt the chat itself.
+      }
+    },
+    [conversationId, onConversationSaved]
+  );
 
   const send = useCallback(async () => {
     const question = input.trim();
@@ -51,7 +78,11 @@ export default function ChatPanel({ onToast, resetSignal = 0, onTrace }: Props) 
         content: data.answer,
         sources: data.sources ?? [],
       };
-      setMessages((prev) => [...prev, assistantMsg]);
+      setMessages((prev) => {
+        const next = [...prev, assistantMsg];
+        persist(next);
+        return next;
+      });
       onTrace?.({
         sources: data.sources ?? [],
         sql: data.sql ?? [],
@@ -62,11 +93,12 @@ export default function ChatPanel({ onToast, resetSignal = 0, onTrace }: Props) 
     } finally {
       setStreaming(false);
     }
-  }, [input, streaming, onToast, onTrace]);
+  }, [input, streaming, onToast, onTrace, persist]);
 
   const newConversation = useCallback(() => {
     if (streaming) return;
     setMessages([]);
+    setConversationId(null);
     setInput("");
     onTrace?.(null);
     textareaRef.current?.focus();

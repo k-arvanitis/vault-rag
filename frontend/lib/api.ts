@@ -219,6 +219,48 @@ export async function resolveFeedback(id: string, action: string, note?: string)
   });
 }
 
+export interface ConversationMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  sources?: Source[];
+}
+
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  message_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Conversation extends ConversationSummary {
+  messages: ConversationMessage[];
+}
+
+export async function saveConversation(
+  id: string | null,
+  messages: ConversationMessage[]
+): Promise<Conversation> {
+  return request<Conversation>("/conversations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id, messages }),
+  });
+}
+
+export async function listConversations(): Promise<ConversationSummary[]> {
+  return request<ConversationSummary[]>("/conversations");
+}
+
+export async function getConversation(id: string): Promise<Conversation> {
+  return request<Conversation>(`/conversations/${id}`);
+}
+
+export async function deleteConversation(id: string): Promise<void> {
+  await fetch(`${BASE_URL}/conversations/${id}`, { method: "DELETE" });
+}
+
 export async function checkHealth(): Promise<boolean> {
   try {
     const res = await fetch(`${BASE_URL}/stats`, { signal: AbortSignal.timeout(3000) });
