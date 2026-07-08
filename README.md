@@ -11,6 +11,22 @@ Private document knowledge assistant for PDFs, scanned documents, spreadsheets, 
 
 **Who this is for:** Teams with mixed-format internal document collections (PDFs, scanned docs, spreadsheets) who need cited, auditable answers without shipping their files to a SaaS vendor or paying per-page processing fees.
 
+### Best fit for client projects
+
+- Internal knowledge-base assistants over PDFs, scanned PDFs, Excel and CSV
+- Cited RAG chatbots with source inspection (click a citation, see the page/row evidence)
+- Feedback loop and conversation history baked into the product, not bolted on after
+- RAG quality audits and retrieval improvement work
+- Self-hosted document Q&A where files should not go to a third-party SaaS vendor
+
+### Not included yet
+
+- Google Drive / cloud-storage sync (planned — see [Known limitations](#known-limitations))
+- WhatsApp connector (Slack bot exists today; a WhatsApp/n8n pattern is the next channel)
+- Production RBAC / multi-tenant workspaces (current auth is a single shared `X-API-Key`)
+- Enterprise SSO
+- Full multi-tenant SaaS billing
+
 ## Standard RAG workflow demonstrated
 
 - Upload PDFs, Excel/CSV, and scanned documents
