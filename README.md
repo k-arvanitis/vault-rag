@@ -503,6 +503,30 @@ Key overrides:
 
 Create a Slack app with Socket Mode, add the `app_mention` and `message.im` event subscriptions, and add `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` to `.env`. Full walkthrough: [docs/SLACK_SETUP.md](docs/SLACK_SETUP.md).
 
+### WhatsApp (via n8n)
+
+There's no built-in WhatsApp integration, and none is planned as a first-class feature — the
+pattern that fits is to run Vault RAG as a plain HTTP backend and let a channel connector own
+the messaging protocol:
+
+```
+WhatsApp Business API / Twilio  →  n8n webhook workflow  →  POST /query  →  Vault RAG
+                                          ↓
+                              cited answer returned to n8n
+                                          ↓
+                        n8n replies to the WhatsApp thread, or
+                        escalates to a human if the answer is `Unsupported`
+```
+
+Concretely: an n8n workflow with a WhatsApp Trigger node, an HTTP Request node calling this
+API's `POST /query` with `{"question": "<message text>"}`, and a Respond node that either sends
+`answer` back to the user or — if `answer` is the literal string `Unsupported` — routes to a
+"needs a human" branch (Slack DM to an on-call channel, a ticket, etc.). The same pattern works
+for any chat surface n8n can connect to (Telegram, Teams, SMS); WhatsApp is called out because
+it matched a specific class of job (`internal knowledge assistant over WhatsApp`) more directly
+than the others. This keeps the channel integration outside Vault RAG's own codebase, consistent
+with the existing Slack bot being a thin client of the same `/query` endpoint.
+
 ---
 
 ## Tests
