@@ -457,6 +457,23 @@ _RETRY_INSTRUCTION = (
     "as the doc_id argument to scope the search to that specific document."
 )
 
+# Detects "compare X and Y" / "which document does A, which does B" style questions —
+# these require evidence from two distinct sources. A prompt rule alone was verified
+# (this session) not to reliably stop the agent from answering half from general
+# knowledge instead of making the second required tool call; this check forces a real
+# second retrieval instead of trusting the model to remember to make it.
+_COMPARISON_RE = re.compile(
+    r"\b(compare|comparing|versus|vs\.?|both .+ and\b|between .+ and\b|which .+ and which)\b",
+    re.IGNORECASE,
+)
+
+_COMPARISON_RETRY_INSTRUCTION = (
+    "\n\nIMPORTANT: This is a retry. This is a two-part comparison question and the "
+    "previous attempt only retrieved evidence from one source. Do NOT answer the other "
+    "part from general knowledge. Make a second search_knowledge_base call scoped to "
+    "the other document or topic named in the question before finalizing your answer."
+)
+
 
 @app.post("/query")
 async def query(req: QueryRequest):
@@ -503,6 +520,12 @@ async def query(req: QueryRequest):
         Groq inference at temp=0 still has small nondeterminism; the agent
         occasionally skips doc-routing on the first attempt and returns
         Unsupported despite the answer existing. The retry forces the protocol.
+
+        A second, separate retry covers a different failure: on a comparison
+        question, the agent sometimes retrieves only one of the two required
+        sources and answers the other half from general knowledge instead of
+        making the second tool call. Detected after the fact by checking how
+        many distinct source files the retrieved chunks actually span.
         """
         route = await loop.run_in_executor(_executor, route_question, question)
         q = routing_directive(route) + question
@@ -511,6 +534,16 @@ async def query(req: QueryRequest):
             r_ans, r_coll, r_trace = await _run_once(q + _RETRY_INSTRUCTION)
             if r_ans.lower() != "unsupported" and r_ans:
                 return r_ans, r_coll, r_trace
+            return ans, coll, trace
+        if _COMPARISON_RE.search(question):
+            n_sources = len({s["filename"] for s in _parse_sources(coll)})
+            if n_sources < 2:
+                r_ans, r_coll, r_trace = await _run_once(
+                    q + _COMPARISON_RETRY_INSTRUCTION
+                )
+                r_sources = len({s["filename"] for s in _parse_sources(r_coll)})
+                if r_ans and r_sources > n_sources:
+                    return r_ans, r_coll, r_trace
         return ans, coll, trace
 
     # Multi-part questions are split and answered one sub-question at a time,
