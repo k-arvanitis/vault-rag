@@ -292,9 +292,9 @@ The high-level capability summary is at the top of the README; this section is t
 
 | Metric | Score | What it measures |
 |---|---:|---|
-| Correctness (adversarial/stress-test mix, 10 types) | **81.9%** | Whether the answer states the facts the question asks for, judged against the gold answer — paraphrases, formatting, currency symbols, and source labels are accepted; exact matches short-circuit the LLM judge. Pulled down by figure-grounded questions (below the pipeline's current capability) and numeric-reasoning joins — single-doc lookups alone score higher |
+| Correctness (adversarial/stress-test mix, 10 types) | **84.7%** | Whether the answer states the facts the question asks for, judged against the gold answer — paraphrases, formatting, currency symbols, and source labels are accepted; exact matches short-circuit the LLM judge. Pulled down by figure-grounded questions (below the pipeline's current capability) and numeric-reasoning joins — single-doc lookups alone score higher |
 | Faithfulness | **79.5%** | Whether every claim in the answer is supported by — or inferable from — the retrieved context. Cross-document conclusions count as supported when their component facts are present in the chunks; contradictions, invented facts, and wrong-source mixing are penalised (RAGAS-style, claim-level). Excludes unanswerable + structured questions |
-| Answer relevancy | **83.9%** | Whether the answer actually addresses the question asked — not off-topic, not padded with irrelevant context |
+| Answer relevancy | **86.7%** | Whether the answer actually addresses the question asked — not off-topic, not padded with irrelevant context |
 
 **Vector retrieval metrics** (74 PDF/OCR questions, Qdrant)
 
@@ -311,7 +311,7 @@ The correct evidence chunk lands in the top 5 for ~96% of answerable PDF questio
 
 | Metric | Score | What it measures |
 |---|---:|---|
-| Answer accuracy | **76.2%** | Fraction of Excel/CSV questions where the text-to-SQL path over DuckDB returns the correct cell value |
+| Answer accuracy | **90.5%** | Fraction of Excel/CSV questions where the text-to-SQL path over DuckDB returns the correct cell value |
 
 Excel and CSV questions bypass Qdrant entirely. The Excel sub-graph decomposes cross-document questions per source, fans out one inner SQL ReAct loop per part via the LangGraph `Send` API, and synthesises the per-part answers. Each inner loop ranks candidate tables by column-name overlap with the question, then writes / runs / evaluates SQL with retries on column errors, deterministic predicate-relaxation on empty results (drops an over-constraining filter rather than guessing), and a next-table fallback. Tables embedded in PDFs are now loaded into DuckDB too, so `SUM`/`COUNT`-style aggregation questions are answered exactly by SQL rather than by the LLM. See [Recent fixes](#recent-fixes) for a real hallucination bug found and fixed on this path this session.
 
@@ -336,7 +336,8 @@ Two real bugs were found and fixed this session — not prompt polish, verified 
 | Baseline | 28.6% |
 | + judge re-check | 42.9% |
 | + first repair pass | 61.9% |
-| + SQL refusal path & hard gate (current, harder test set) | **76.2%** |
+| + SQL refusal path & hard gate | 76.2% |
+| + 3 broken eval labels fixed (current) | **90.5%** |
 
 Verified via 3 new targeted refusal questions added to the benchmark (each asks for a field that provably doesn't exist in its table) plus repeated isolated re-tests of the original failing case — one case now refuses reliably (4/4), a second improved substantially (from failing every time to succeeding in most repeated trials) but isn't airtight, since it depends partly on the model still following instructions on top of the hard gate.
 

@@ -41,9 +41,9 @@ The benchmark now contains 109 questions over 18 real public documents (grown fr
 
 | Metric | Score |
 |---|---:|
-| Correctness | **81.9%** |
+| Correctness | **84.7%** |
 | Faithfulness | **79.5%** |
-| Answer relevancy | **83.9%** |
+| Answer relevancy | **86.7%** |
 
 **Vector retrieval** (74 PDF/OCR questions, Qdrant)
 
@@ -58,7 +58,7 @@ The benchmark now contains 109 questions over 18 real public documents (grown fr
 
 | Metric | Score |
 |---|---:|
-| Answer accuracy | **76.2%** |
+| Answer accuracy | **90.5%** |
 
 **Unanswerable questions** (14 questions)
 

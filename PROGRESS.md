@@ -51,8 +51,21 @@ rather than removed the 3 broken structured-bucket questions found earlier:
 - `qa_6`: was completely broken — gold evidence was for supplier "687 - Wilmington", not
   "Trainline" as the question asked. Replaced with a real Trainline row (verified unique via
   date+department), fixed `row_ref` (29 → 28) and the evidence quote to match.
-Not re-run against the full corpus (per user: no more full-eval reruns needed right now) —
-these are label corrections, verifiable independently whenever the corpus is next scored.
+Verified scoped (all 9 questions in the file, no regressions) — all 3 now pass. Patched the
+3 corrected results directly into `answer_results_full109_merged.jsonl` and recomputed every
+aggregate (cheaper and more honest than re-running the full 109 questions for a 3-question
+fix). New numbers, committed to README/CASE_STUDY/summary.json:
+
+| Metric | Before this fix | After |
+|---|---|---|
+| Structured/Excel accuracy (n=21) | 76.2% | **90.5%** |
+| Overall correctness | 81.9% | **84.7%** |
+| Answer relevancy | 83.9% | **86.7%** |
+| table_lookup (question_type bucket, n=16) | 81.2% | **100%** |
+| Faithfulness | 79.5% | unchanged (these 3 are structured/Excel questions, excluded from faithfulness scoring) |
+
+This is the real, durable fix from this whole deep-dive session — unlike the two prompt-only
+attempts below, which didn't hold up under verification.
 
 **doc_015 refusal bug — fix attempted, verified NOT working (2026-07-08, later same
 session).** Strengthened the existing `DOCUMENT IDENTITY CHECK` rule in `ABSTENTION_BLOCK`

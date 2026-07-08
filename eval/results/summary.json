@@ -8,16 +8,16 @@
   "structured_retrieval_metrics": {
     "scope": "Excel/CSV questions (DuckDB-served, not Qdrant)",
     "question_count": 21,
-    "answer_accuracy": 0.7619047619047619
+    "answer_accuracy": 0.9047619047619048
   },
   "unanswerable_metrics": {
     "question_count": 14,
     "correct_refusal_rate": 0.7857142857142857
   },
   "agent_answer_metrics": {
-    "correctness": 0.8192660550458716,
+    "correctness": 0.846788990825688,
     "faithfulness": 0.7948717948717948,
-    "answer_relevancy": 0.8394495412844036
+    "answer_relevancy": 0.8669724770642202
   },
   "correctness_by_question_type": {
     "cross_document_compare": {
@@ -30,7 +30,7 @@
     },
     "table_lookup": {
       "count": 16,
-      "correctness": 0.8125
+      "correctness": 1.0
     },
     "numeric_reasoning": {
       "count": 4,
@@ -63,5 +63,6 @@
   },
   "decomposition": "disabled by default (EVAL_ENABLE_DECOMPOSITION=1 to re-enable) \u2014 ablation showed it net-hurts cross-document comparisons and was never used by the live app (api.py) anyway",
   "judge": "gpt-4o-mini",
-  "generation_model": "qwen/qwen3-32b (OpenRouter)"
+  "generation_model": "qwen/qwen3-32b (OpenRouter)",
+  "notes": "3 broken/ambiguous eval labels in doc_006 fixed 2026-07-08 (see PROGRESS.md) \u2014 structured accuracy 76.2% -> 90.5%, overall correctness 81.9% -> 84.7%"
 }
