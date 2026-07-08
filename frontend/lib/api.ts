@@ -5,6 +5,7 @@ export interface Document {
   file_type: string;
   chunk_count: number;
   status: "indexed" | "processing" | "failed";
+  last_indexed_at: string | null;
 }
 
 export interface IngestResponse {
@@ -24,14 +25,47 @@ export interface Source {
   location: string;
   page: number | null;
   excerpt: string;
+  quote: string;
+  chunk_id: number | null;
+  score: number | null;
+}
+
+export interface RejectedSource {
+  filename: string;
   score: number | null;
 }
 
 export interface QueryResponse {
   answer: string;
   sources: Source[];
+  rejected_sources?: RejectedSource[];
   sql?: string[];
   tools_used?: string[];
+}
+
+export interface EvalSummary {
+  question_count: number;
+  [key: string]: unknown;
+}
+
+export type FeedbackReason =
+  | "wrong_source"
+  | "hallucinated"
+  | "should_have_refused"
+  | "missing_document"
+  | "other";
+
+export interface Feedback {
+  id: string;
+  question: string;
+  answer: string;
+  rating: "up" | "down";
+  reason: FeedbackReason | null;
+  sources: Source[];
+  status: "open" | "resolved";
+  action: string | null;
+  note: string | null;
+  created_at: string;
 }
 
 export interface Stats {
@@ -133,6 +167,56 @@ export async function deleteDocument(filename: string): Promise<void> {
     method: "DELETE",
   });
   if (!res.ok) throw new Error(`Delete failed (${res.status})`);
+}
+
+export async function reindexDocument(filename: string): Promise<IngestResponse> {
+  return request<IngestResponse>(`/documents/${encodeURIComponent(filename)}/reindex`, {
+    method: "POST",
+  });
+}
+
+export async function getEvalSummary(): Promise<EvalSummary> {
+  return request<EvalSummary>("/eval/summary");
+}
+
+export interface EvalJobStatus {
+  status: "pending" | "running" | "done" | "failed";
+  summary?: EvalSummary;
+  error?: string;
+}
+
+export async function runEval(): Promise<IngestResponse> {
+  return request<IngestResponse>("/eval/run", { method: "POST" });
+}
+
+export async function getEvalStatus(jobId: string): Promise<EvalJobStatus> {
+  return request<EvalJobStatus>(`/eval/status/${jobId}`);
+}
+
+export async function submitFeedback(
+  question: string,
+  answer: string,
+  rating: "up" | "down",
+  reason: FeedbackReason | null,
+  sources: Source[]
+): Promise<Feedback> {
+  return request<Feedback>("/feedback", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question, answer, rating, reason, sources }),
+  });
+}
+
+export async function getFeedback(): Promise<Feedback[]> {
+  return request<Feedback[]>("/feedback");
+}
+
+export async function resolveFeedback(id: string, action: string, note?: string): Promise<Feedback> {
+  return request<Feedback>(`/feedback/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, note: note ?? null }),
+  });
 }
 
 export async function checkHealth(): Promise<boolean> {

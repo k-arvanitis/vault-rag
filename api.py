@@ -444,6 +444,46 @@ async def stats():
     return {"total_docs": len(docs), "total_chunks": len(payloads)}
 
 
+class FeedbackRequest(BaseModel):
+    question: str
+    answer: str
+    rating: str
+    reason: str | None = None
+    sources: list[dict] = []
+
+
+@app.post("/feedback")
+async def submit_feedback(req: FeedbackRequest):
+    """POST /feedback — record a thumbs up/down (with optional reason) on an answer."""
+    from src.feedback_store import add_feedback
+
+    return add_feedback(req.question, req.answer, req.rating, req.reason, req.sources)
+
+
+@app.get("/feedback", dependencies=[Depends(require_api_key)])
+async def get_feedback():
+    """GET /feedback — list all feedback records for the admin queue, newest first."""
+    from src.feedback_store import list_feedback
+
+    return list_feedback()
+
+
+class FeedbackResolveRequest(BaseModel):
+    action: str
+    note: str | None = None
+
+
+@app.patch("/feedback/{feedback_id}", dependencies=[Depends(require_api_key)])
+async def resolve_feedback_endpoint(feedback_id: str, req: FeedbackResolveRequest):
+    """PATCH /feedback/{id} — mark a feedback record resolved with an admin action."""
+    from src.feedback_store import resolve_feedback
+
+    try:
+        return resolve_feedback(feedback_id, req.action, req.note)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Feedback not found") from None
+
+
 class QueryRequest(BaseModel):
     question: str
 

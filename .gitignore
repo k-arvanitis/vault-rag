@@ -29,6 +29,7 @@ eval/results/*.log
 # Data directories (keep .gitkeep markers)
 data/input/*
 data/output/*
+data/feedback.json
 !data/input/.gitkeep
 !data/output/.gitkeep
 

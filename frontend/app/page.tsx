@@ -1,12 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { X } from "lucide-react";
+import { X, FlaskConical, MessageSquareWarning } from "lucide-react";
 import { checkHealth } from "@/lib/api";
 import Sidebar from "@/components/Sidebar";
 import ChatPanel from "@/components/ChatPanel";
 import ToastContainer, { type ToastItem } from "@/components/Toast";
 import InspectorPanel from "@/components/InspectorPanel";
+import EvalPanel from "@/components/EvalPanel";
+import FeedbackPanel from "@/components/FeedbackPanel";
 import ThemeToggle from "@/components/ThemeToggle";
 import TraceSidebar, { type Trace } from "@/components/TraceSidebar";
 
@@ -17,6 +19,8 @@ export default function Home() {
   const [offline, setOffline] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [inspecting, setInspecting] = useState<string | null>(null);
+  const [showEval, setShowEval] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
   const [trace, setTrace] = useState<Trace | null>(null);
 
   const addToast = useCallback((message: string, variant?: "error") => {
@@ -57,7 +61,23 @@ export default function Home() {
             document intelligence
           </span>
         </div>
-        <ThemeToggle />
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowFeedback(true)}
+            className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-ink-500 transition-colors hover:bg-ink-100 hover:text-ink-800"
+          >
+            <MessageSquareWarning className="h-3.5 w-3.5" />
+            Feedback
+          </button>
+          <button
+            onClick={() => setShowEval(true)}
+            className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-ink-500 transition-colors hover:bg-ink-100 hover:text-ink-800"
+          >
+            <FlaskConical className="h-3.5 w-3.5" />
+            Evaluation
+          </button>
+          <ThemeToggle />
+        </div>
       </header>
 
       {offline && (
@@ -91,6 +111,8 @@ export default function Home() {
         )}
       </div>
 
+      {showEval && <EvalPanel onClose={() => setShowEval(false)} />}
+      {showFeedback && <FeedbackPanel onClose={() => setShowFeedback(false)} />}
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );

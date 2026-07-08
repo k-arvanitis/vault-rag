@@ -76,6 +76,9 @@ class Settings(BaseSettings):
     # DuckDB
     duckdb_path: str = ".duckdb/excel_store.duckdb"
 
+    # Feedback queue
+    feedback_path: str = "data/feedback.json"
+
     # Excel sub-agent
     excel_agent_model: str = "gpt-4o-mini"
     excel_agent_api_base: str = "https://api.openai.com/v1"
@@ -148,6 +151,7 @@ VLM_ENABLED: bool = _s.vlm_enabled
 VLM_PROVIDER: str = _s.vlm_provider
 VLM_MODEL: str = _s.vlm_model
 DUCKDB_PATH: str = _s.duckdb_path
+FEEDBACK_PATH: str = _s.feedback_path
 EXCEL_AGENT_MODEL: str = _s.excel_agent_model
 EXCEL_AGENT_API_BASE: str = _s.excel_agent_api_base
 API_CORS_ORIGINS: str = _s.api_cors_origins

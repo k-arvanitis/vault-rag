@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { type Source } from "@/lib/api";
+import { ThumbsUp, ThumbsDown, Check } from "lucide-react";
+import { submitFeedback, type Source, type FeedbackReason } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 export interface Message {
@@ -61,6 +62,85 @@ function SourceDrawer({ sources }: { sources: Source[] }) {
   );
 }
 
+const REASON_OPTIONS: { value: FeedbackReason; label: string }[] = [
+  { value: "wrong_source", label: "Wrong source" },
+  { value: "hallucinated", label: "Hallucinated" },
+  { value: "should_have_refused", label: "Should have refused" },
+  { value: "missing_document", label: "Missing document" },
+  { value: "other", label: "Other" },
+];
+
+/** Thumbs up/down on an answer, with a reason dropdown on thumbs-down — feeds the
+ * admin feedback queue so bad answers surface for review instead of vanishing. */
+function FeedbackWidget({ question, answer, sources }: { question: string; answer: string; sources: Source[] }) {
+  const [rating, setRating] = useState<"up" | "down" | null>(null);
+  const [reason, setReason] = useState<FeedbackReason | "">("");
+  const [submitted, setSubmitted] = useState(false);
+
+  const submit = async (r: "up" | "down", reasonValue: FeedbackReason | null) => {
+    setRating(r);
+    try {
+      await submitFeedback(question, answer, r, reasonValue, sources);
+      setSubmitted(true);
+    } catch {
+      // Feedback is best-effort UI polish — a failed submit shouldn't block chat use.
+    }
+  };
+
+  if (submitted) {
+    return (
+      <p className="mt-1.5 flex items-center gap-1 text-[10px] text-ink-400">
+        <Check className="h-3 w-3" /> Thanks for the feedback
+      </p>
+    );
+  }
+
+  return (
+    <div className="mt-1.5 flex items-center gap-1.5">
+      <button
+        onClick={() => submit("up", null)}
+        aria-label="Good answer"
+        className={cn(
+          "rounded p-1 transition-colors",
+          rating === "up" ? "text-emerald-600" : "text-ink-300 hover:text-ink-600"
+        )}
+      >
+        <ThumbsUp className="h-3.5 w-3.5" />
+      </button>
+      <button
+        onClick={() => setRating(rating === "down" ? null : "down")}
+        aria-label="Bad answer"
+        className={cn(
+          "rounded p-1 transition-colors",
+          rating === "down" ? "text-red-600" : "text-ink-300 hover:text-ink-600"
+        )}
+      >
+        <ThumbsDown className="h-3.5 w-3.5" />
+      </button>
+      {rating === "down" && (
+        <select
+          value={reason}
+          onChange={(e) => {
+            const value = e.target.value as FeedbackReason;
+            setReason(value);
+            submit("down", value);
+          }}
+          className="rounded border border-ink-200 bg-surface px-1.5 py-0.5 text-[10px] text-ink-600"
+        >
+          <option value="" disabled>
+            Why?
+          </option>
+          {REASON_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      )}
+    </div>
+  );
+}
+
 export default function MessageList({ messages, streaming }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -91,7 +171,7 @@ export default function MessageList({ messages, streaming }: Props) {
 
   return (
     <div className="flex-1 space-y-4 overflow-y-auto px-6 py-4">
-      {messages.map((msg) =>
+      {messages.map((msg, i) =>
         msg.role === "user" ? (
           <div key={msg.id} className="flex items-end justify-end">
             <div className="max-w-[70%] whitespace-pre-wrap rounded-xl rounded-br-sm bg-brand px-4 py-2 text-sm text-white">
@@ -107,6 +187,11 @@ export default function MessageList({ messages, streaming }: Props) {
               {msg.sources && msg.sources.length > 0 && (
                 <SourceDrawer sources={msg.sources} />
               )}
+              <FeedbackWidget
+                question={messages[i - 1]?.content ?? ""}
+                answer={msg.content}
+                sources={msg.sources ?? []}
+              />
             </div>
           </div>
         )
