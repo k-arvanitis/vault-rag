@@ -5,6 +5,40 @@ Last updated: 2026-07-09
 
 ---
 
+## Session 2026-07-09, part 5 — commit-hygiene note + item 4 (conversation history)
+
+**Commit-hygiene lapse found and fixed going forward, one instance already committed
+uncleanly.** While isolating item 4's `frontend/lib/api.ts` and `ChatPanel.tsx` changes from
+pre-existing unrelated uncommitted work (the same isolation pattern used all session for
+`api.py`/`config.py`), found that the **item 3 commit (`00588d4`) already contains unrelated
+pre-existing frontend/lib/api.ts lines** (`last_indexed_at`, `quote`/`chunk_id` on `Source`,
+`RejectedSource`, `EvalSummary`, `reindexDocument`, eval-run functions) — isolation was done
+correctly for `api.py` that round but the parallel frontend file was committed as-is by mistake.
+Not rewriting history over it (low value, working tree is consistent); flagging here so it's a
+known fact rather than a surprise later. Caught and correctly avoided the same mistake for
+`ChatPanel.tsx` this round (had slipped in one unrelated `rejected_sources` line, removed before
+commit).
+
+**Item 4 — conversation history (done, committed `b2c2a19`).** Saved conversations, reloadable
+later. `src/conversation_store.py` (JSON-file store, same pattern as `feedback_store.py`,
+`CONVERSATION_PATH` centralized in `src/config.py`), 4 endpoints (`POST`/`GET /conversations`,
+`GET`/`DELETE /conversations/{id}`). `ChatPanel` auto-saves after each answer (fire-and-forget —
+a failed save doesn't interrupt the chat); "New conversation" starts a fresh id. New `History`
+panel (header button, same modal pattern as Evaluation/Feedback) lists saved conversations,
+click to reload into the chat (via a `key`-remount + `initialMessages`/`initialConversationId`
+prop pair on `ChatPanel`, mirroring the existing `resetSignal` pattern), delete to remove.
+Verified live end-to-end (create → list → get → update → delete, all round-tripped correctly),
+plus 5 unit tests in `tests/test_conversation_store.py`, all passing. Full frontend (`tsc
+--noEmit` and Next.js dev server compile) verified clean after every isolation step this round.
+
+Backlog items 2, 3, 4 (source drawer, feedback queue, conversation history) are now done and
+committed. Remaining, per the user's priority order and the earlier scope decision to skip live
+OAuth/auth tonight: item 5 (Drive sync — scaffold only), item 6 (auth — scaffold only), item 7
+(Slack/WhatsApp-via-n8n deployment pattern, docs only), item 8 (customer-facing README sections
++ headline eval reframe).
+
+---
+
 ## Session 2026-07-09, part 4 — overnight customer-appeal backlog (items 2-3)
 
 Per the user's Upwork/portfolio-readiness backlog (Google Drive sync, source drawer,
