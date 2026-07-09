@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     nvidia_api_key: SecretStr = SecretStr("")
     litellm_master_key: SecretStr = SecretStr("")
     openrouter_api_key: SecretStr = SecretStr("")
+    free_llm_api_key: SecretStr = SecretStr("")
     chunk_llm_api_key: SecretStr = SecretStr("")
     openai_api_key: SecretStr = SecretStr("")
     excel_agent_api_key: SecretStr = SecretStr("")
@@ -59,6 +60,12 @@ class Settings(BaseSettings):
     max_table_chars: int = 3000
     max_tool_results: int = 12
     max_chars_per_table_chunk: int = 6000
+
+    # Post-generation grounding check — one extra LLM call per answered (non-
+    # Unsupported) query, verifying the answer is actually supported by the
+    # retrieved context before it's returned. Adds latency/cost; toggle off if
+    # that's not an acceptable tradeoff for a given deployment.
+    post_generation_verify_enabled: bool = True
 
     # Table ingestion
     max_rows_per_chunk: int = 50
@@ -126,6 +133,8 @@ GENERATION_MODEL: str = _s.generation_model
 GROQ_API_KEY: str = _s.groq_api_key.get_secret_value()
 NVIDIA_API_KEY: str = _s.nvidia_api_key.get_secret_value()
 LITELLM_MASTER_KEY: str = _s.litellm_master_key.get_secret_value()
+OPENROUTER_API_KEY: str = _s.openrouter_api_key.get_secret_value()
+FREE_LLM_API_KEY: str = _s.free_llm_api_key.get_secret_value()
 CHUNK_LLM_API_KEY: str = _s.chunk_llm_api_key.get_secret_value()
 EXCEL_AGENT_API_KEY: str = _s.excel_agent_api_key.get_secret_value()
 API_KEY: str = _s.api_key.get_secret_value()
@@ -145,6 +154,7 @@ DOC_MIN_SCORE: float = _s.doc_min_score
 MAX_CHUNK_CHARS: int = _s.max_chunk_chars
 MAX_TABLE_CHARS: int = _s.max_table_chars
 MAX_TOOL_RESULTS: int = _s.max_tool_results
+POST_GENERATION_VERIFY_ENABLED: bool = _s.post_generation_verify_enabled
 MAX_CHARS_PER_TABLE_CHUNK: int = _s.max_chars_per_table_chunk
 MAX_ROWS_PER_CHUNK: int = _s.max_rows_per_chunk
 CHUNK_MAX_TOKENS: int = _s.chunk_max_tokens
