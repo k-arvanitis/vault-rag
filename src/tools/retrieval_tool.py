@@ -19,6 +19,7 @@ scroll API directly for neighbour-chunk fetching.
 from __future__ import annotations
 
 import json
+import os
 import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -37,6 +38,8 @@ from src.retriever import (
     infer_query_chunk_types,
     retrieve,
 )
+
+_RETRIEVAL_DEBUG = bool(os.getenv("RETRIEVAL_DEBUG"))
 
 # ---------------------------------------------------------------------------
 # Scope plan — the routing decision passed from _resolve_scope to _fetch_docs
@@ -783,6 +786,8 @@ def _make_unified_tool(
     def _fetch_docs(query: str, doc_id: str = "") -> str | None:
         """Retrieve, rerank and format knowledge-base chunks for one query; return the formatted block, or None when nothing relevant is found."""
         _last_rejected.clear()
+        if _RETRIEVAL_DEBUG:
+            print(f"[RETRIEVAL_DEBUG] tool call: query={query!r} doc_id={doc_id!r}")
         # Read the current (mutable) size limits and the LLM endpoint.
         max_table_chars = _limits["max_table_chars"]
         max_chunk_chars = _limits["max_chunk_chars"]
@@ -798,6 +803,12 @@ def _make_unified_tool(
         _parallel_doc_ids = scope.parallel_doc_ids
         explicitly_mentioned_doc_ids = scope.explicitly_mentioned_doc_ids
         filter_token = scope.filter_token
+        if _RETRIEVAL_DEBUG:
+            print(
+                f"[RETRIEVAL_DEBUG] resolved scope: retrieval_query={retrieval_query!r} "
+                f"effective_scope={effective_scope!r} filter_token={filter_token!r} "
+                f"chunk_types={chunk_types!r} parallel_doc_ids={_parallel_doc_ids!r}"
+            )
         stage1_doc_ids = scope.stage1_doc_ids
         stem_match_doc_ids = scope.stem_match_doc_ids
 
@@ -1140,6 +1151,17 @@ def _make_unified_tool(
         # like "and/the/of"; cap at 2 to avoid crowding PDF/text chunks.
         top_sheet = [h for h in ranked_sheet_hits if _col_overlap(h) >= 2][:2]
         top_hits = (top_sheet + top_other)[:_rerank_top_n]
+
+        if _RETRIEVAL_DEBUG:
+            returned = [
+                (
+                    (h.get("metadata") or {}).get("source_file")
+                    or (h.get("metadata") or {}).get("file_name"),
+                    (h.get("metadata") or {}).get("chunk_index"),
+                )
+                for h in top_hits
+            ]
+            print(f"[RETRIEVAL_DEBUG] returned {len(top_hits)} chunks: {returned}")
 
         # Expand neighbours and render the final numbered block for the agent.
         return _format_hits(
