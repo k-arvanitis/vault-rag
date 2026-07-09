@@ -26,6 +26,7 @@ load_dotenv(override=True)
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
 
+from src.answer_pipeline import answer_query  # noqa: E402
 from src.config import (  # noqa: E402
     GENERATION_API_BASE,
     GENERATION_MODEL,
@@ -40,7 +41,7 @@ from src.pipeline import (  # noqa: E402
     build_decomposition_pipeline,
     build_reflection_pipeline,
 )
-from src.rag_agent import build_rag_agent, stream_agent  # noqa: E402
+from src.rag_agent import build_rag_agent  # noqa: E402
 from src.retriever import retrieve  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -434,16 +435,6 @@ def strip_think_blocks(text: str) -> str:
     cleaned = re.sub(r"<think>[\s\S]*$", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"^\s*answer\s*:\s*", "", cleaned, flags=re.IGNORECASE)
     return cleaned.strip()
-
-
-_RETRY_INSTRUCTION = (
-    "\n\nIMPORTANT: This is a retry. The previous attempt returned Unsupported. "
-    "You MUST follow the doc-routing protocol strictly: "
-    "(1) call search_knowledge_base with the topic words alone to identify the relevant "
-    "document_summary chunk and read its Document ID (doc_XXX). "
-    "(2) call search_knowledge_base again with the original question, passing that doc_id "
-    "as the doc_id argument to scope the search to that specific document."
-)
 
 
 def normalize_unsupported(text: str) -> str:
@@ -913,18 +904,21 @@ def generate_answers(
                 print(f"  [WARN] decomposition pipeline failed: {exc}")
                 answer = "Unsupported"
         else:
-            # stream_agent collects tool-call chunks for FaithfulnessMetric.
-            # Falls back to reflection on failure.
+            # answer_query is the same routing/retry/multi-part-split pipeline
+            # api.py's /query endpoint uses — sharing it here means a fix
+            # verified live in the app (e.g. the qa_4 pronoun-split fix) also
+            # shows up in this eval run, instead of eval silently measuring a
+            # weaker, unshared code path. Its own routing + unsupported-retry
+            # + comparison-retry replace the old standalone forced-retry block
+            # below (removed: same instruction, but without the routing
+            # directive answer_query's internal retry already applies).
             try:
-                answer_tokens: list[str] = []
-                for token in stream_agent(
-                    agent, query, collected_chunks=retrieved_contexts
-                ):
-                    answer_tokens.append(token)
-                answer = "".join(answer_tokens)
+                result = answer_query(agent, query)
+                answer = result["answer"]
+                retrieved_contexts = result["collected"]
             except Exception as exc:
                 print(
-                    f"  [WARN] stream_agent failed ({type(exc).__name__}): {exc}. Retrying with reflection pipeline."
+                    f"  [WARN] answer_query failed ({type(exc).__name__}): {exc}. Retrying with reflection pipeline."
                 )
                 try:
                     answer = ask_with_reflection(reflection_pipeline, query)
@@ -940,25 +934,6 @@ def generate_answers(
                     answer = reflected
             except Exception as exc:
                 print(f"  [WARN] reflection retry failed: {exc}")
-
-        # Final fallback: forced retry with explicit doc-routing instruction.
-        # Mirrors api.py — Groq nondeterminism at temp=0 occasionally causes the
-        # agent to skip stage-1 routing on first attempt. Only fires for non-multihop
-        # paths (decomposition has its own per-sub-question retry).
-        if not is_multihop and answer.strip().lower() == "unsupported":
-            try:
-                retry_chunks: list[str] = []
-                retry_tokens: list[str] = []
-                for token in stream_agent(
-                    agent, query + _RETRY_INSTRUCTION, collected_chunks=retry_chunks
-                ):
-                    retry_tokens.append(token)
-                retry_answer = "".join(retry_tokens).strip()
-                if retry_answer and retry_answer.lower() != "unsupported":
-                    answer = retry_answer
-                    retrieved_contexts = retry_chunks
-            except Exception as exc:
-                print(f"  [WARN] forced retry failed: {exc}")
 
         raw_rows.append(
             {

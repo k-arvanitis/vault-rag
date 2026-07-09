@@ -37,19 +37,14 @@ from src.config import (  # noqa: E402
     API_KEY,
     GENERATION_API_BASE,
     GENERATION_MODEL,
-    MAX_TOOL_RESULTS,
     QDRANT_COLLECTION,
     QDRANT_URL,
     RERANK_TOP_N,
     RERANKER_MODEL,
     RETRIEVAL_TOP_K,
 )
-from src.file_resolver import (  # noqa: E402
-    resolve_original_name as _resolve_original_name,
-)
 from src.vector_store import _request as _qdrant  # noqa: E402
 from src.vector_store import (  # noqa: E402
-    _stable_id,
     delete_by_file,
     get_chunks_by_file,
     scroll_all_payloads,
@@ -217,147 +212,12 @@ def _payloads_to_docs(payloads: list[dict]) -> list[dict]:
     ]
 
 
-# Chunk header format: "[1] file=name.pdf chunk=5 score=0.8312"
-# or                   "[1] file=name.xlsx sheet=Sheet1 score=0.91"
-_HEADER_RE = re.compile(
-    r"^\[?\d+\]?\s+file=(?P<file>[^\s]+)"
-    r"(?:\s+(?P<loc_key>chunk|sheet|part|repair_query|subquery)=(?P<loc_val>[^\s]+))?"
-    r"(?:\s+score=(?P<score>[^\s]+))?",
-)
-_MD_HEADING_RE = re.compile(r"^#{1,3}\s+(.+)$", re.MULTILINE)
+# _TABLE_MARKER_RE is also used by _split_markdown_pages below.
 _TABLE_MARKER_RE = re.compile(r"\[TABLE_START\]|\[TABLE_END\]")
-_PAGE_MARKER_RE = re.compile(r"<!--\s*PAGE\s+(\d+)")
 
-
-_CALL_BOUNDARY = "---CALL_BOUNDARY---"
-
-# The model sometimes copies a raw retrieved-chunk header line
-# ("[1] file=doc.pdf chunk=2 ...") or a dangling "Sources:" label into its final
-# answer. Strip those whole lines so they never reach the user. Inline citation
-# markers like "[1]" are NOT matched — the pattern requires "file=" after them.
-_LEAKED_HEADER_RE = re.compile(
-    r"^[ \t]*(?:\[\d+\][ \t]+file=\S+.*|sources?[ \t]*:[ \t]*)$",
-    re.MULTILINE | re.IGNORECASE,
-)
-# Inline [N] citation markers — dropped because the answer's numbering does not
-# correspond to the trace panel's, so they would be misleading. The "Retrieved
-# chunks" panel is the source list. Only [N] within the retrieved-chunk range
-# (1..MAX_TOOL_RESULTS) is treated as a citation — a bracketed year like [2024]
-# or any larger number is left alone. List markers like "1." (no brackets) too.
-_INLINE_CITATION_RE = re.compile(r"[ \t]*\[(\d+)\]")
-_BLANK_LINES_RE = re.compile(r"\n{3,}")
-
-
-def _strip_inline_citation(match: re.Match) -> str:
-    """Drop a [N] marker only when N is a plausible retrieved-chunk index."""
-    return "" if 1 <= int(match.group(1)) <= MAX_TOOL_RESULTS else match.group(0)
-
-
-def _strip_leaked_headers(text: str) -> str:
-    """Remove raw chunk-header lines and inline [N] citation markers the LLM
-    echoes into its answer — the trace panel is the source list."""
-    cleaned = _LEAKED_HEADER_RE.sub("", text)
-    cleaned = _INLINE_CITATION_RE.sub(_strip_inline_citation, cleaned)
-    cleaned = _BLANK_LINES_RE.sub("\n\n", cleaned)
-    return cleaned.strip()
-
-
-def _parse_sources(collected: list[str]) -> list[dict]:
-    """Parse collected tool chunks into source cards for the UI.
-
-    Groups chunks by tool call (boundaries marked by `---CALL_BOUNDARY---`) and
-    iterates calls in REVERSE order — later calls are typically scoped/refined
-    and contain the answer-bearing chunks the LLM actually used. This prevents
-    the first broad call's noise chunks from monopolizing the displayed list.
-    """
-    calls: list[list[str]] = [[]]
-    for raw in collected:
-        if raw == _CALL_BOUNDARY:
-            calls.append([])
-        else:
-            calls[-1].append(raw)
-    calls = [c for c in calls if c]
-
-    seen: set[tuple[str, str]] = set()
-    sources: list[dict] = []
-    for call_chunks in reversed(calls):
-        for raw in call_chunks:
-            lines = raw.strip().splitlines()
-            if not lines:
-                continue
-            m = _HEADER_RE.match(lines[0])
-            filename = m.group("file") if m else "unknown"
-            loc_key = m.group("loc_key") or "" if m else ""
-            loc_val = m.group("loc_val") or "" if m else ""
-            score_str = m.group("score") if m else None
-
-            body_lines = lines[1:] if len(lines) > 1 else []
-            body = "\n".join(body_lines).strip()
-
-            page_m = _PAGE_MARKER_RE.search(body)
-            page = int(page_m.group(1)) if page_m else None
-
-            if filename.startswith("eval/data/raw/"):
-                filename = filename[len("eval/data/raw/") :]
-            filename = _resolve_original_name(filename)
-
-            heading_m = _MD_HEADING_RE.search(body[:600])
-            if heading_m:
-                section = heading_m.group(1).strip()
-            elif loc_key == "sheet":
-                section = loc_val
-            else:
-                section = ""
-
-            is_doc_summary = loc_key == "chunk" and loc_val == "-1"
-            is_sheet_summary = loc_key == "sheet" and "Sheet summary:" in body[:200]
-
-            if is_doc_summary:
-                location = "document summary"
-            elif is_sheet_summary:
-                location = f"sheet summary: {loc_val}"
-            elif loc_key == "chunk":
-                location = f"chunk {loc_val}"
-            elif loc_key == "sheet":
-                location = f"sheet: {loc_val}"
-            elif loc_key == "part":
-                location = f"part {loc_val}"
-            else:
-                location = ""
-
-            plain = _TABLE_MARKER_RE.sub("", body)
-            plain = re.sub(r"^#{1,3}\s+.+$", "", plain, flags=re.MULTILINE).strip()
-            excerpt = " ".join(plain.split())[:350]
-
-            score = float(score_str) if score_str else None
-            # 1.0 is the retriever's placeholder for filter/scroll fetches
-            # (doc-routed chunks carry no similarity score) — drop it so the UI
-            # doesn't show a misleading "perfect match" chip.
-            if score == 1.0:
-                score = None
-
-            key = (filename, excerpt[:80])
-            if key in seen:
-                continue
-            seen.add(key)
-            chunk_id = (
-                _stable_id(m.group("file"), loc_val)
-                if m and loc_key == "chunk"
-                else None
-            )
-            sources.append(
-                {
-                    "filename": filename,
-                    "section": section,
-                    "location": location,
-                    "page": page,
-                    "excerpt": excerpt,
-                    "quote": excerpt,
-                    "chunk_id": chunk_id,
-                    "score": round(score, 4) if score else None,
-                }
-            )
-    return sources[:8]
+# Header parsing, leaked-header/citation stripping, and source-card assembly
+# now live in src/answer_pipeline.py (parse_sources / strip_leaked_headers) —
+# shared with eval/run_eval.py so both measure identical behavior.
 
 
 def _resolve_pdf_path(filename: str) -> Path | None:
@@ -592,221 +452,39 @@ class QueryRequest(BaseModel):
     question: str
 
 
-_RETRY_INSTRUCTION = (
-    "\n\nIMPORTANT: This is a retry. The previous attempt returned Unsupported. "
-    "You MUST follow the doc-routing protocol strictly: "
-    "(1) call search_knowledge_base with the topic words alone to identify the relevant "
-    "document_summary chunk and read its Document ID (doc_XXX). "
-    "(2) call search_knowledge_base again with the original question, passing that doc_id "
-    "as the doc_id argument to scope the search to that specific document."
-)
-
-# Detects "compare X and Y" / "which document does A, which does B" style questions —
-# these require evidence from two distinct sources. A prompt rule alone was verified
-# (this session) not to reliably stop the agent from answering half from general
-# knowledge instead of making the second required tool call; this check forces a real
-# second retrieval instead of trusting the model to remember to make it.
-_COMPARISON_RE = re.compile(
-    r"\b(compare|comparing|versus|vs\.?|both .+ and\b|between .+ and\b|which .+ and which)\b",
-    re.IGNORECASE,
-)
-
-_COMPARISON_RETRY_INSTRUCTION = (
-    "\n\nIMPORTANT: This is a retry. This is a two-part comparison question and the "
-    "previous attempt only retrieved evidence from one source. Do NOT answer the other "
-    "part from general knowledge. Make a second search_knowledge_base call scoped to "
-    "the other document or topic named in the question before finalizing your answer."
-)
-
-
 @app.post("/query")
 async def query(req: QueryRequest):
-    """POST /query — answer a question with the RAG agent, splitting multi-part questions and merging the sub-answers."""
-    from src.answer_quality import _is_multi_part_query, _llm_split_subqueries
-    from src.rag_agent import (
-        _get_langfuse,
-        route_question,
-        routing_directive,
-        stream_agent,
-    )
+    """POST /query — answer a question with the RAG agent.
+
+    Routing, retries, and multi-part splitting all live in
+    src/answer_pipeline.answer_query — shared with eval/run_eval.py so both
+    the live app and the benchmark measure the exact same behavior.
+    """
+    from src.answer_pipeline import answer_query
+    from src.rag_agent import _get_langfuse
 
     agent = _get_agent()
     loop = asyncio.get_running_loop()
     lf = _get_langfuse()
     lf_trace = lf.trace(name="query", input=req.question) if lf else None
 
-    async def _run_once(question: str, attempt: str = "initial") -> tuple[str, list[str], dict]:
-        """Run the agent once for a question; return (answer, collected chunks, trace).
-
-        Emits one Langfuse span per tool call actually made (name + retrieved
-        chunk group) plus one span for the attempt itself, so retries show up
-        as distinct, inspectable steps instead of one opaque blob.
-        """
-        collected: list[str] = []
-        tokens: list[str] = []
-        trace_holder: dict = {}
-
-        def _run():
-            """Drive stream_agent in a worker thread, collecting tokens, chunks and trace."""
-            sql_trace: list[str] = []
-            tool_calls: list[str] = []
-            rejected: list[dict] = []
-            for token in stream_agent(
-                agent,
-                question,
-                collected_chunks=collected,
-                sql_trace=sql_trace,
-                tool_calls=tool_calls,
-                rejected_chunks=rejected,
-                trace=lf_trace,
-            ):
-                tokens.append(token)
-            trace_holder["sql"] = sql_trace
-            trace_holder["tools"] = tool_calls
-            trace_holder["rejected"] = rejected
-
-        await loop.run_in_executor(_executor, _run)
-        answer = "".join(tokens).strip()
-
-        if lf_trace is not None:
-            # collected_chunks only gets a "---CALL_BOUNDARY---" per non-excel
-            # tool call (query_excel's result is SQL, not chunks — see
-            # stream_agent's collected_chunks guard) — so only zip against the
-            # non-excel names, or an excel+search mix silently mislabels spans.
-            groups = [
-                g.strip()
-                for g in "\n\n".join(collected).split("---CALL_BOUNDARY---")
-                if g.strip()
-            ]
-            retrieval_names = [t for t in trace_holder["tools"] if t != "query_excel"]
-            for name, group in zip(retrieval_names, groups):
-                lf_trace.span(name=name, input={"question": question}, output=group[:2000])
-            for sql in trace_holder["sql"]:
-                lf_trace.span(name="query_excel", input={"question": question}, output=sql[:2000])
-            lf_trace.span(name=f"attempt:{attempt}", input=question, output=answer)
-
-        return answer, collected, trace_holder
-
-    async def _answer(question: str) -> tuple[str, list[str], dict]:
-        """Answer one question, with a forced retry on a bare Unsupported.
-
-        First resolves the tool deterministically: route_question matches the
-        question against document summaries in Qdrant and, if it lands on a
-        spreadsheet vs a text document, a routing directive is prepended so the
-        agent uses query_excel vs search_knowledge_base accordingly — instead of
-        guessing the tool from question wording.
-
-        Groq inference at temp=0 still has small nondeterminism; the agent
-        occasionally skips doc-routing on the first attempt and returns
-        Unsupported despite the answer existing. The retry forces the protocol.
-
-        A second, separate retry covers a different failure: on a comparison
-        question, the agent sometimes retrieves only one of the two required
-        sources and answers the other half from general knowledge instead of
-        making the second tool call. Detected after the fact by checking how
-        many distinct source files the retrieved chunks actually span.
-        """
-        route = await loop.run_in_executor(_executor, route_question, question)
-        q = routing_directive(route) + question
-        ans, coll, trace = await _run_once(q, attempt="initial")
-        if ans.lower() == "unsupported":
-            r_ans, r_coll, r_trace = await _run_once(
-                q + _RETRY_INSTRUCTION, attempt="unsupported-retry"
-            )
-            if r_ans.lower() != "unsupported" and r_ans:
-                return r_ans, r_coll, r_trace
-            return ans, coll, trace
-        if _COMPARISON_RE.search(question):
-            n_sources = len({s["filename"] for s in _parse_sources(coll)})
-            if n_sources < 2:
-                r_ans, r_coll, r_trace = await _run_once(
-                    q + _COMPARISON_RETRY_INSTRUCTION, attempt="comparison-retry"
-                )
-                r_sources = len({s["filename"] for s in _parse_sources(r_coll)})
-                if r_ans and r_sources > n_sources:
-                    return r_ans, r_coll, r_trace
-        return ans, coll, trace
-
-    # Multi-part questions are split and answered one sub-question at a time,
-    # then merged here deterministically. The agent's single-pass synthesis
-    # intermittently drops a part, so we never rely on it for that — each
-    # sub-question runs on its own and every part is guaranteed in the output.
-    #
-    # Splitting uses the LLM decomposer (_llm_split_subqueries), not a blind
-    # regex slice: a plain string split leaves cross-clause pronouns dangling
-    # ("...which mission achieved X, and what amount did IT achieve?" splits
-    # into a fragment with no antecedent for "it"), which sends that fragment
-    # into its own zero-context agent run and it searches blind. The LLM
-    # decomposer is prompted to keep entity names in every sub-query, so "it"
-    # becomes "the mission with the highest benefits" — verified live on this
-    # exact case. Falls back to the regex splitter only if the LLM call itself
-    # fails (rare; degrades to today's behavior for that one question).
-    #
-    # Comparison questions are the one exception: splitting strips the "Comparing
-    # X and Y" clause that binds each fragment to a specific document, so a
-    # fragment like "what is that deadline" reaches routing with no document
-    # context and can land on a completely unrelated document (verified this
-    # session: doc_003, a Fed Reserve report, for a LACERA/GPA contract-terms
-    # comparison). Keeping the question whole lets _COMPARISON_RE match in
-    # _answer() and its two-source retry actually do its job.
-    parts = (
-        [req.question]
-        if _COMPARISON_RE.search(req.question)
-        else _llm_split_subqueries(req.question, GENERATION_API_BASE, GENERATION_MODEL)
-        if _is_multi_part_query(req.question)
-        else [req.question]
-    )
-    if len(parts) == 1:
-        answer, collected, excel_trace = await _answer(req.question)
-    else:
-        sub_answers: list[str] = []
-        collected = []
-        sql_all: list[str] = []
-        tools_all: list[str] = []
-        rejected_all: list[dict] = []
-        for part in parts:
-            p_ans, p_coll, p_trace = await _answer(part)
-            sub_answers.append(p_ans.strip())
-            collected += p_coll
-            sql_all += p_trace.get("sql") or []
-            tools_all += p_trace.get("tools") or []
-            rejected_all += p_trace.get("rejected") or []
-        # Blank line between parts (a single \n is only a soft break in
-        # markdown); number them so a terse part still reads as its own answer.
-        kept = [a for a in sub_answers if a]
-        answer = (
-            "\n\n".join(f"{i}. {a}" for i, a in enumerate(kept, 1)) or "Unsupported"
-        )
-        excel_trace = {"sql": sql_all, "tools": tools_all, "rejected": rejected_all}
-
-    answer = _strip_leaked_headers(answer)
-    sources = _parse_sources(collected)
-    sql_list = [s for s in (excel_trace.get("sql") or []) if s]
-    kept_filenames = {s["filename"] for s in sources}
-    rejected_sources = []
-    seen_rejected: set[str] = set()
-    for r in excel_trace.get("rejected") or []:
-        name = _resolve_original_name(r.get("filename", "unknown"))
-        if name in kept_filenames or name in seen_rejected:
-            continue
-        seen_rejected.add(name)
-        rejected_sources.append({"filename": name, "score": r.get("score")})
+    result = await loop.run_in_executor(_executor, answer_query, agent, req.question, lf_trace)
 
     if lf_trace is not None:
         lf_trace.span(
             name="retrieval",
-            input={"tools_used": excel_trace.get("tools") or []},
-            output={"sources": sources, "sql": sql_list},
+            input={"tools_used": result["tools"]},
+            output={"sources": result["sources"], "sql": result["sql"]},
         )
-        lf_trace.update(output=answer)
+        lf_trace.update(output=result["answer"])
         lf.flush()
 
     return {
-        "answer": answer,
-        "sources": sources,
-        "rejected_sources": rejected_sources,
-        "sql": sql_list,
-        "tools_used": _tools_used(excel_trace.get("tools") or []),
+        "answer": result["answer"],
+        "sources": result["sources"],
+        "rejected_sources": result["rejected_sources"],
+        "sql": result["sql"],
+        "tools_used": _tools_used(result["tools"]),
     }
 
 
