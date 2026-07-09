@@ -37,12 +37,17 @@ from src.answer_quality import (
     _normalize_unsupported,
     _repair_incomplete_answer,
     _strip_think,
+    _verify_grounded,
 )
 from src.config import (
+    FREE_LLM_API_KEY,
     GENERATION_API_BASE,
     GENERATION_MODEL,
+    GROQ_API_KEY,
     LITELLM_MASTER_KEY,
     MAX_TOOL_RESULTS,
+    OPENROUTER_API_KEY,
+    POST_GENERATION_VERIFY_ENABLED,
     QDRANT_COLLECTION,
     QDRANT_URL,
     RERANK_TOP_N,
@@ -120,6 +125,19 @@ def _is_context_overflow(err_str: str) -> bool:
 
 _TABLE_EXTS = (".xlsx", ".xls", ".csv")
 
+# Questions about a spreadsheet's own title/description/coverage, not its row
+# data — these are answered from the file's document/sheet summary text, never
+# from SQL. See route_question() for why extension-based routing alone can't
+# tell these apart from real data lookups.
+_DOC_METADATA_QUESTION_RE = re.compile(
+    r"\bwhat (?:year|date) is (?:this|the) .*titled\b"
+    r"|\bdocument title\b"
+    r"|\btitle (?:shown|is) at the top\b"
+    r"|\bwhat is (?:being )?recorded\b"
+    r"|\bwhat is this (?:document|dataset|file|spreadsheet|workbook) about\b",
+    re.IGNORECASE,
+)
+
 
 def route_question(
     question: str,
@@ -160,6 +178,17 @@ def route_question(
     top = hits[:3]
     table_votes = sum(1 for h in top if _source(h).lower().endswith(_TABLE_EXTS))
     is_table = table_votes > len(top) - table_votes
+
+    # Exception: a question about the FILE ITSELF (its title, what it records,
+    # what year it covers) is answered by the summary chunk's own text, not by
+    # querying rows — even though the source file is .xlsx/.csv. Row data never
+    # enters Qdrant (only document/sheet summaries do), so every xlsx-sourced hit
+    # here is a summary chunk regardless of question type; extension-based voting
+    # alone can't tell "data question about this file" from "question about this
+    # file" apart. Only override to document modality when the question's own
+    # phrasing is clearly about the document/dataset itself, not a data lookup.
+    if is_table and _DOC_METADATA_QUESTION_RE.search(question):
+        is_table = False
     return {
         "modality": "excel" if is_table else "document",
         "source_file": _source(hits[0]),
@@ -280,24 +309,40 @@ def build_rag_agent(
             )
             ranker = None
 
-    # API key resolution: LiteLLM master key → Groq → OpenAI → dummy
-    # When routing through the LiteLLM proxy the master key is used (if set);
-    # direct-to-provider calls fall back to the provider-specific key.
-    _api_key = (
-        LITELLM_MASTER_KEY
-        or os.getenv("GROQ_API_KEY")
-        or os.getenv("OPENAI_API_KEY")
-        or "EMPTY"
-    )
+    # API key resolution keyed on the actual base URL — LITELLM_MASTER_KEY only
+    # authenticates the LiteLLM proxy itself, so it must not be picked when
+    # generation_api_base points directly at a provider (e.g. temporarily
+    # bypassing the proxy, see .env). Bug found 2026-07-03: this used to pick
+    # LITELLM_MASTER_KEY unconditionally whenever it was set, regardless of
+    # which base URL was actually configured, silently sending the wrong key
+    # to the real provider API. Uses src/config.py's parsed constants, not
+    # os.getenv() — pydantic-settings reads .env directly and does not
+    # populate os.environ, so os.getenv() silently returns None unless
+    # something else already called load_dotenv() in this process.
+    _base_for_key = generation_api_base.lower()
+    if "localhost:4000" in _base_for_key or "127.0.0.1:4000" in _base_for_key:
+        _api_key = LITELLM_MASTER_KEY or "EMPTY"
+    elif "localhost:3011" in _base_for_key or "127.0.0.1:3011" in _base_for_key:
+        _api_key = FREE_LLM_API_KEY or "EMPTY"
+    elif "openrouter.ai" in _base_for_key:
+        _api_key = OPENROUTER_API_KEY or "EMPTY"
+    elif "groq.com" in _base_for_key:
+        _api_key = GROQ_API_KEY or "EMPTY"
+    else:
+        _api_key = GROQ_API_KEY or LITELLM_MASTER_KEY or "EMPTY"
     # Generation LLM, deterministic (temperature 0) and capped at 2048 output tokens.
     logger.info("Building agent prompt_version=%s model=%s", PROMPT_VERSION, model_name)
+    # max_retries is a native ChatOpenAI/OpenAI-client param — retries happen at the
+    # HTTP layer. NOT .with_retry(): that wraps the model in a RunnableRetry, which
+    # create_react_agent can't call .bind_tools() on (AttributeError at agent build).
     llm = ChatOpenAI(
         model=model_name,
         base_url=_to_openai_base(generation_api_base),
         api_key=_api_key,
         temperature=0,
         max_tokens=2048,
-    ).with_retry(stop_after_attempt=3)
+        max_retries=3,
+    )
 
     # Filename -> doc_id lookup used to resolve titles the LLM passes instead of ids.
     doc_registry = _build_doc_registry(qdrant_url, collection)
@@ -399,6 +444,50 @@ def _normalize_final(query: str, answer: str) -> str:
     that are just a filename with no extracted value."""
     answer = _normalize_unsupported(answer)
     if _is_bare_filename_answer(query, answer):
+        return "Unsupported"
+    return answer
+
+
+def _apply_grounding_check(
+    query: str,
+    answer: str,
+    tool_contexts: list[str],
+    api_base: str | None,
+    model_name: str | None,
+    excel_only: bool = False,
+) -> str:
+    """Downgrade to Unsupported if the post-generation grounding check fails.
+
+    No-op when the flag is off, the answer is already Unsupported, there was
+    no retrieved context to check against, the endpoint/model isn't known
+    (e.g. called before the agent's metadata attributes are set), or the answer
+    came only from query_excel.
+
+    The excel_only skip matters: query_excel's tool result is the final
+    extracted VALUE (e.g. "Doncaster Mbc"), not row evidence — there's no prose
+    context to verify a claim like "this supplier matches Department=X and
+    NET Amount=Y" against, since the joining columns never appear in the tool
+    output. Asking the check anyway means the judge sees answer == context
+    verbatim and (correctly, from its perspective) can't confirm the unstated
+    claim, so it says NO — throwing away a demonstrably correct answer.
+    Verified directly: "Doncaster Mbc" / context "Doncaster Mbc" -> NO; the
+    same answer with the actual row ("Department: BUSINESS DONCASTER, NET
+    Amount: 206.0, Supplier Name: Doncaster Mbc") -> YES. The eval's own scorer
+    already exempts Excel questions from faithfulness for the same reason
+    (see run_eval.py's _is_excel_question); this brings the runtime check in
+    line with that.
+    """
+    if (
+        not POST_GENERATION_VERIFY_ENABLED
+        or not answer
+        or answer.strip().lower() == "unsupported"
+        or not tool_contexts
+        or not api_base
+        or not model_name
+        or excel_only
+    ):
+        return answer
+    if not _verify_grounded(query, answer, tool_contexts, api_base, model_name):
         return "Unsupported"
     return answer
 
@@ -518,6 +607,16 @@ def ask_agent(
 
     messages: list[Any] = result.get("messages", [])
 
+    # True when query_excel was the only tool called — see _apply_grounding_check
+    # for why that answer's evidence can't be verified by the grounding check.
+    tool_names_used = {
+        tc["name"]
+        for msg in messages
+        if isinstance(msg, AIMessage) and msg.tool_calls
+        for tc in msg.tool_calls
+    }
+    excel_only = tool_names_used == {"query_excel"}
+
     # Collect every tool result: by call id (for tracing) and as raw contexts;
     # also push split chunks into the caller's retrieved_contexts list if given.
     tool_results: dict[str, str] = {}
@@ -586,6 +685,9 @@ def ask_agent(
         answer = _retrieval_only_answer(query, answer, api_base, model_name)
 
     answer = _normalize_final(query, answer)
+    answer = _apply_grounding_check(
+        query, answer, tool_contexts, api_base, model_name, excel_only=excel_only
+    )
 
     if trace is not None:
         trace.update(output=answer)
@@ -623,6 +725,7 @@ def stream_agent(
     collected_chunks: list[str] | None = None,
     sql_trace: list[str] | None = None,
     tool_calls: list[str] | None = None,
+    rejected_chunks: list[dict] | None = None,
 ) -> Generator[str, None, None]:
     """Stream the agent's final answer token-by-token.
 
@@ -636,6 +739,8 @@ def stream_agent(
         sql_trace: If provided, SQL generated by query_excel is appended to this list.
         tool_calls: If provided, the name of each tool the agent actually invoked
             is appended to this list, in call order (with repeats).
+        rejected_chunks: If provided, reranked-but-not-selected candidates from
+            search_knowledge_base calls are appended to this list (UI-only).
     """
     # Guard: questions with an empty reference slot are unanswerable by construction.
     if _has_empty_reference_placeholder(query):
@@ -688,6 +793,7 @@ def stream_agent(
     _pre_tool_buf: list[str] = []
     _final_buf: list[str] = []
     _tool_contexts: list[str] = []
+    _tool_names_used: set[str] = set()
     _limits: dict = getattr(agent, "_rag_limits", {})
 
     # Stream messages from the agent. Text chunks go to the pre-tool buffer until
@@ -713,12 +819,21 @@ def stream_agent(
                 _tool_used = True
                 _pre_tool_buf.clear()
                 _tool_contexts.append(chunk.content)
+                if chunk.name:
+                    _tool_names_used.add(chunk.name)
                 if tool_calls is not None and chunk.name:
                     tool_calls.append(chunk.name)
                 if sql_trace is not None and chunk.name == "query_excel":
                     artifact = getattr(chunk, "artifact", None)
                     if isinstance(artifact, dict):
                         sql_trace.extend(s for s in (artifact.get("sql") or []) if s)
+                if (
+                    rejected_chunks is not None
+                    and chunk.name == "search_knowledge_base"
+                ):
+                    artifact = getattr(chunk, "artifact", None)
+                    if isinstance(artifact, dict):
+                        rejected_chunks.extend(artifact.get("rejected") or [])
                 # query_excel is a SQL tool, not a retriever — its result is
                 # surfaced via the SQL trace, not the "Retrieved chunks" panel.
                 if collected_chunks is not None and chunk.name != "query_excel":
@@ -828,7 +943,16 @@ def stream_agent(
         )
 
     if answer:
-        yield _normalize_final(query, answer)
+        answer = _normalize_final(query, answer)
+        answer = _apply_grounding_check(
+            query,
+            answer,
+            _tool_contexts,
+            api_base,
+            model_name,
+            excel_only=_tool_names_used == {"query_excel"},
+        )
+        yield answer
 
 
 # The command-line runner lives in rag_cli.py — this module is import-only.

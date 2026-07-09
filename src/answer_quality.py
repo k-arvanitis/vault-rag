@@ -339,6 +339,43 @@ def _is_bare_filename_answer(query: str, answer: str) -> bool:
     return len(substantive) < 2
 
 
+def _verify_grounded(
+    query: str,
+    answer: str,
+    tool_contexts: list[str],
+    api_base: str,
+    model_name: str,
+) -> bool:
+    """Post-generation check: is this answer actually supported by retrieved context?
+
+    One LLM call, binary verdict — not per-claim scoring (that's the eval
+    judge's job, offline). This is the runtime counterpart: catches an answer
+    that isn't grounded in what was actually retrieved before it reaches the
+    user, so the query pipeline can downgrade it to Unsupported instead.
+    Fails open (returns True = "grounded") on any judge error — a broken
+    verifier should not turn every live answer into a refusal.
+    """
+    context = "\n\n".join(ctx.strip() for ctx in tool_contexts if ctx and ctx.strip())
+    if not context:
+        return True
+    context = context[:8000]
+    no_think = "/no_think " if _is_thinking_model(model_name) else ""
+    prompt = (
+        f"{no_think}Question: {query}\n\n"
+        f"Answer: {answer}\n\n"
+        f"Retrieved context:\n{context}\n\n"
+        "Is every factual claim in the Answer supported by — or directly "
+        "inferable from — the Retrieved context above? A claim is supported "
+        "even if worded differently, as long as the facts are present. "
+        "Reply with exactly one word: YES or NO."
+    )
+    try:
+        verdict = _llm_call(prompt, api_base, model_name, max_tokens=10, temperature=0)
+    except Exception:
+        return True
+    return "no" not in verdict.strip().lower()[:3]
+
+
 # ---------------------------------------------------------------------------
 # Query analysis — detect unanswerable, multi-part, and decomposable questions
 # ---------------------------------------------------------------------------
@@ -753,6 +790,29 @@ def _repair_incomplete_answer(
         return repaired
     if _unsupported_count(repaired) < _unsupported_count(answer):
         return repaired
+    # The coverage-check path (source_count >= 2) had no acceptance rule at all:
+    # a confidently-worded but incomplete answer (e.g. only addressing one of two
+    # named documents) with >=2 coincidental sources from UNRELATED documents
+    # would reach here and always fall through to the stale original, even when
+    # _coverage_check correctly flagged it incomplete and repair retrieval found
+    # the actually-missing document. Accept when repair genuinely added a new
+    # source the original didn't have — the same "did we actually gain evidence"
+    # signal already used for the bad-answer branch above.
+    #
+    # But gaining a source isn't enough on its own: verified this breaks a case
+    # where the original was ALREADY fully correct and complete, coverage_check
+    # still (wrongly) flagged it incomplete, and the resulting repair retrieval
+    # pulled in a wrong chunk that overwrote a correct answer with a shorter,
+    # incorrect one. Require the original to have shown some sign it knew it was
+    # incomplete (a hedge phrase, e.g. "does not appear to be referenced") before
+    # trusting a same-or-fewer-source replacement over it — self-admitted gaps are
+    # a much stronger repair-worthy signal than a bare source-count proxy alone.
+    original_admits_gap = any(p in answer.lower() for p in _NOT_PROVIDED_PHRASES) or (
+        "does not appear" in answer.lower() or "do not appear" in answer.lower()
+    )
+    if source_count >= 2 and _context_source_count(repaired_contexts) > source_count:
+        if original_admits_gap or _is_better_multi_answer(repaired, answer):
+            return repaired
     return answer
 
 
