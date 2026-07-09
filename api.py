@@ -622,7 +622,7 @@ _COMPARISON_RETRY_INSTRUCTION = (
 @app.post("/query")
 async def query(req: QueryRequest):
     """POST /query — answer a question with the RAG agent, splitting multi-part questions and merging the sub-answers."""
-    from src.answer_quality import _is_multi_part_query, _split_multi_part_query
+    from src.answer_quality import _is_multi_part_query, _llm_split_subqueries
     from src.rag_agent import (
         _get_langfuse,
         route_question,
@@ -725,6 +725,16 @@ async def query(req: QueryRequest):
     # intermittently drops a part, so we never rely on it for that — each
     # sub-question runs on its own and every part is guaranteed in the output.
     #
+    # Splitting uses the LLM decomposer (_llm_split_subqueries), not a blind
+    # regex slice: a plain string split leaves cross-clause pronouns dangling
+    # ("...which mission achieved X, and what amount did IT achieve?" splits
+    # into a fragment with no antecedent for "it"), which sends that fragment
+    # into its own zero-context agent run and it searches blind. The LLM
+    # decomposer is prompted to keep entity names in every sub-query, so "it"
+    # becomes "the mission with the highest benefits" — verified live on this
+    # exact case. Falls back to the regex splitter only if the LLM call itself
+    # fails (rare; degrades to today's behavior for that one question).
+    #
     # Comparison questions are the one exception: splitting strips the "Comparing
     # X and Y" clause that binds each fragment to a specific document, so a
     # fragment like "what is that deadline" reaches routing with no document
@@ -735,7 +745,7 @@ async def query(req: QueryRequest):
     parts = (
         [req.question]
         if _COMPARISON_RE.search(req.question)
-        else _split_multi_part_query(req.question)
+        else _llm_split_subqueries(req.question, GENERATION_API_BASE, GENERATION_MODEL)
         if _is_multi_part_query(req.question)
         else [req.question]
     )
