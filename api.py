@@ -49,6 +49,7 @@ from src.file_resolver import (  # noqa: E402
 )
 from src.vector_store import _request as _qdrant  # noqa: E402
 from src.vector_store import (  # noqa: E402
+    _stable_id,
     delete_by_file,
     get_chunks_by_file,
     scroll_all_payloads,
@@ -183,11 +184,15 @@ def _payloads_to_docs(payloads: list[dict]) -> list[dict]:
     from collections import defaultdict
 
     counts: dict[str, int] = defaultdict(int)
+    last_indexed: dict[str, str] = {}
     for p in payloads:
         meta = p.get("metadata", {}) or {}
         name = meta.get("source_file") or meta.get("file_name") or ""
         if name:
             counts[name] += 1
+            ts = meta.get("ingested_at") or ""
+            if ts > last_indexed.get(name, ""):
+                last_indexed[name] = ts
     type_map = {
         "pdf": "PDF",
         "xlsx": "Excel",
@@ -206,6 +211,7 @@ def _payloads_to_docs(payloads: list[dict]) -> list[dict]:
             "file_type": type_map.get(Path(name).suffix.lstrip(".").lower(), "File"),
             "chunk_count": count,
             "status": "indexed",
+            "last_indexed_at": last_indexed.get(name) or None,
         }
         for name, count in sorted(counts.items())
     ]
@@ -334,6 +340,11 @@ def _parse_sources(collected: list[str]) -> list[dict]:
             if key in seen:
                 continue
             seen.add(key)
+            chunk_id = (
+                _stable_id(m.group("file"), loc_val)
+                if m and loc_key == "chunk"
+                else None
+            )
             sources.append(
                 {
                     "filename": filename,
@@ -341,6 +352,8 @@ def _parse_sources(collected: list[str]) -> list[dict]:
                     "location": location,
                     "page": page,
                     "excerpt": excerpt,
+                    "quote": excerpt,
+                    "chunk_id": chunk_id,
                     "score": round(score, 4) if score else None,
                 }
             )
@@ -431,6 +444,53 @@ async def list_documents():
     except Exception:
         return []
     return _payloads_to_docs(payloads)
+
+
+@app.get("/eval/summary")
+async def eval_summary():
+    """GET /eval/summary — serve the last computed benchmark results (from `make eval`)."""
+    path = REPO_ROOT / "eval" / "results" / "summary.json"
+    if not path.exists():
+        raise HTTPException(
+            status_code=404, detail="No eval results found. Run `make eval` first."
+        )
+    import json as _json
+
+    return _json.loads(path.read_text())
+
+
+_eval_jobs: dict[str, dict[str, Any]] = {}
+
+
+def _run_eval_sync(job_id: str) -> None:
+    """Run the full benchmark (real LLM calls, several minutes) and write summary.json."""
+    from eval.run_eval import run
+
+    _eval_jobs[job_id]["status"] = "running"
+    try:
+        summary = run()
+        _eval_jobs[job_id].update({"status": "done", "summary": summary})
+    except Exception as exc:
+        _eval_jobs[job_id].update({"status": "failed", "error": str(exc)})
+
+
+@app.post("/eval/run", dependencies=[Depends(require_api_key)])
+async def eval_run():
+    """POST /eval/run — kick off the full benchmark in the background (real LLM calls)."""
+    job_id = str(uuid.uuid4())
+    _eval_jobs[job_id] = {"status": "pending"}
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(_executor, _run_eval_sync, job_id)
+    return {"job_id": job_id, "status": "running"}
+
+
+@app.get("/eval/status/{job_id}")
+async def eval_status(job_id: str):
+    """GET /eval/status — poll a background eval run started via POST /eval/run."""
+    job = _eval_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
 
 
 @app.get("/stats")
@@ -563,10 +623,17 @@ _COMPARISON_RETRY_INSTRUCTION = (
 async def query(req: QueryRequest):
     """POST /query — answer a question with the RAG agent, splitting multi-part questions and merging the sub-answers."""
     from src.answer_quality import _is_multi_part_query, _split_multi_part_query
-    from src.rag_agent import route_question, routing_directive, stream_agent
+    from src.rag_agent import (
+        _get_langfuse,
+        route_question,
+        routing_directive,
+        stream_agent,
+    )
 
     agent = _get_agent()
     loop = asyncio.get_running_loop()
+    lf = _get_langfuse()
+    lf_trace = lf.trace(name="query", input=req.question) if lf else None
 
     async def _run_once(question: str) -> tuple[str, list[str], dict]:
         """Run the agent once for a question; return (answer, collected chunks, trace)."""
@@ -578,16 +645,19 @@ async def query(req: QueryRequest):
             """Drive stream_agent in a worker thread, collecting tokens, chunks and trace."""
             sql_trace: list[str] = []
             tool_calls: list[str] = []
+            rejected: list[dict] = []
             for token in stream_agent(
                 agent,
                 question,
                 collected_chunks=collected,
                 sql_trace=sql_trace,
                 tool_calls=tool_calls,
+                rejected_chunks=rejected,
             ):
                 tokens.append(token)
             trace_holder["sql"] = sql_trace
             trace_holder["tools"] = tool_calls
+            trace_holder["rejected"] = rejected
 
         await loop.run_in_executor(_executor, _run)
         return "".join(tokens).strip(), collected, trace_holder
@@ -646,26 +716,48 @@ async def query(req: QueryRequest):
         collected = []
         sql_all: list[str] = []
         tools_all: list[str] = []
+        rejected_all: list[dict] = []
         for part in parts:
             p_ans, p_coll, p_trace = await _answer(part)
             sub_answers.append(p_ans.strip())
             collected += p_coll
             sql_all += p_trace.get("sql") or []
             tools_all += p_trace.get("tools") or []
+            rejected_all += p_trace.get("rejected") or []
         # Blank line between parts (a single \n is only a soft break in
         # markdown); number them so a terse part still reads as its own answer.
         kept = [a for a in sub_answers if a]
         answer = (
             "\n\n".join(f"{i}. {a}" for i, a in enumerate(kept, 1)) or "Unsupported"
         )
-        excel_trace = {"sql": sql_all, "tools": tools_all}
+        excel_trace = {"sql": sql_all, "tools": tools_all, "rejected": rejected_all}
 
     answer = _strip_leaked_headers(answer)
     sources = _parse_sources(collected)
     sql_list = [s for s in (excel_trace.get("sql") or []) if s]
+    kept_filenames = {s["filename"] for s in sources}
+    rejected_sources = []
+    seen_rejected: set[str] = set()
+    for r in excel_trace.get("rejected") or []:
+        name = _resolve_original_name(r.get("filename", "unknown"))
+        if name in kept_filenames or name in seen_rejected:
+            continue
+        seen_rejected.add(name)
+        rejected_sources.append({"filename": name, "score": r.get("score")})
+
+    if lf_trace is not None:
+        lf_trace.span(
+            name="retrieval",
+            input={"tools_used": excel_trace.get("tools") or []},
+            output={"sources": sources, "sql": sql_list},
+        )
+        lf_trace.update(output=answer)
+        lf.flush()
+
     return {
         "answer": answer,
         "sources": sources,
+        "rejected_sources": rejected_sources,
         "sql": sql_list,
         "tools_used": _tools_used(excel_trace.get("tools") or []),
     }
@@ -706,6 +798,23 @@ async def delete_document(filename: str):
         raise HTTPException(status_code=500, detail=str(exc))
     _get_agent.cache_clear()
     return {"status": "deleted", "filename": filename, "points_deleted": deleted}
+
+
+@app.post("/documents/{filename:path}/reindex", dependencies=[Depends(require_api_key)])
+async def reindex_document(filename: str):
+    """Re-run ingestion on a file already stored in data/input — idempotent point
+    IDs overwrite its existing Qdrant points in place rather than duplicating them."""
+    dest = INPUT_DIR / filename
+    if not dest.exists():
+        raise HTTPException(
+            status_code=404, detail=f"Original file not found: {filename}"
+        )
+    job_id = str(uuid.uuid4())
+    _jobs[job_id] = {"status": "pending", "stage": "parsing", "chunks_created": 0}
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(_executor, _run_ingest_sync, job_id, dest, None)
+    _get_agent.cache_clear()
+    return {"job_id": job_id, "status": "processing"}
 
 
 # ── inspector endpoints ────────────────────────────────────────────────────────
