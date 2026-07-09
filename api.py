@@ -704,8 +704,18 @@ async def query(req: QueryRequest):
     # then merged here deterministically. The agent's single-pass synthesis
     # intermittently drops a part, so we never rely on it for that — each
     # sub-question runs on its own and every part is guaranteed in the output.
+    #
+    # Comparison questions are the one exception: splitting strips the "Comparing
+    # X and Y" clause that binds each fragment to a specific document, so a
+    # fragment like "what is that deadline" reaches routing with no document
+    # context and can land on a completely unrelated document (verified this
+    # session: doc_003, a Fed Reserve report, for a LACERA/GPA contract-terms
+    # comparison). Keeping the question whole lets _COMPARISON_RE match in
+    # _answer() and its two-source retry actually do its job.
     parts = (
-        _split_multi_part_query(req.question)
+        [req.question]
+        if _COMPARISON_RE.search(req.question)
+        else _split_multi_part_query(req.question)
         if _is_multi_part_query(req.question)
         else [req.question]
     )
