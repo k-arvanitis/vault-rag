@@ -5,6 +5,35 @@ Last updated: 2026-07-09
 
 ---
 
+## Session 2026-07-09, part 9 — part 8's figure-grounding diagnosis was wrong; real cause found
+
+Advisor caught this before any more code was written: part 8 below claims qa_4 fails because
+"the agent read chunk 17 and still didn't use it" — a loop-wander/synthesis bug. That's false.
+Confirmed directly: `_is_multi_part_query()` on the qa_4 question returns `True` and splits it
+into `["...which mission achieved the largest total financial benefits", "What amount did it
+achieve?"]`. These run as **two separate agent turns**, each with its own tool-call history.
+Turn 1 ("which mission...") retrieves chunk 17 and correctly answers "Defense" — that's call #1
+in the part-8 trace. Turn 2 ("What amount did **it** achieve?") has no antecedent for "it" —
+it's a fresh run with zero context from turn 1 — so it searches "amount" blind and never
+recovers chunk 17. Calls #2/#3 in the part-8 trace are turn 2's own search attempts, not the
+same agent re-searching after already having the answer.
+
+So this is the same referent-loss bug already fixed for comparison questions (part 8's
+`_COMPARISON_RE` skip-splitting fix), one pattern over: `_is_multi_part_query` splits on "which
+X, and what Y did it Z" the same way it split on "which X and which Y", stripping the pronoun's
+antecedent before the second half ever runs. It does not hit the existing `_COMPARISON_RE`
+bypass because the phrasing is "which... and **what**", not "which... and **which**".
+
+Correcting part 8's conclusion below: this is not "the agent doesn't use evidence it already
+has" — it's a second instance of the splitter breaking cross-clause reference, not a synthesis
+or context-window bug. The fix is the same shape as the comparison one: broaden the splitter
+bypass (or `_COMPARISON_RE` itself) to also skip splitting when the second clause has an
+unresolved pronoun referring back to the first ("it"/"that"/"this" with no local noun). Not
+implemented yet — next session should verify with a live before/after test the same way the
+comparison fix was verified, not just assert it from the regex.
+
+---
+
 ## Session 2026-07-09, part 8 — advisor-directed fixes: one closed, one re-diagnosed correctly
 
 Consulted the advisor specifically on the two open reliability gaps before touching code, per

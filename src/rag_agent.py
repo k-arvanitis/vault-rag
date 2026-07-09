@@ -455,6 +455,7 @@ def _apply_grounding_check(
     api_base: str | None,
     model_name: str | None,
     excel_only: bool = False,
+    trace: Any = None,
 ) -> str:
     """Downgrade to Unsupported if the post-generation grounding check fails.
 
@@ -487,7 +488,14 @@ def _apply_grounding_check(
         or excel_only
     ):
         return answer
-    if not _verify_grounded(query, answer, tool_contexts, api_base, model_name):
+    grounded = _verify_grounded(query, answer, tool_contexts, api_base, model_name)
+    if trace is not None:
+        trace.span(
+            name="grounding-check",
+            input={"answer": answer},
+            output={"grounded": grounded},
+        )
+    if not grounded:
         return "Unsupported"
     return answer
 
@@ -686,10 +694,30 @@ def ask_agent(
 
     answer = _normalize_final(query, answer)
     answer = _apply_grounding_check(
-        query, answer, tool_contexts, api_base, model_name, excel_only=excel_only
+        query,
+        answer,
+        tool_contexts,
+        api_base,
+        model_name,
+        excel_only=excel_only,
+        trace=trace,
     )
 
     if trace is not None:
+        # Token/cost tracking — LangChain attaches usage_metadata to each AIMessage
+        # on non-streaming invoke(); sum across turns for the whole agent run.
+        usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+        for msg in messages:
+            if isinstance(msg, AIMessage) and msg.usage_metadata:
+                for k in usage:
+                    usage[k] += msg.usage_metadata.get(k, 0)
+        trace.generation(
+            name="final-answer",
+            model=getattr(agent, "_generation_model", None),
+            input=query,
+            output=answer,
+            usage=usage if usage["total_tokens"] else None,
+        )
         trace.update(output=answer)
         lf.flush()
 
@@ -726,6 +754,7 @@ def stream_agent(
     sql_trace: list[str] | None = None,
     tool_calls: list[str] | None = None,
     rejected_chunks: list[dict] | None = None,
+    trace: Any = None,
 ) -> Generator[str, None, None]:
     """Stream the agent's final answer token-by-token.
 
@@ -741,6 +770,7 @@ def stream_agent(
             is appended to this list, in call order (with repeats).
         rejected_chunks: If provided, reranked-but-not-selected candidates from
             search_knowledge_base calls are appended to this list (UI-only).
+        trace: Optional Langfuse trace/span to record the grounding-check verdict on.
     """
     # Guard: questions with an empty reference slot are unanswerable by construction.
     if _has_empty_reference_placeholder(query):
@@ -951,6 +981,7 @@ def stream_agent(
             api_base,
             model_name,
             excel_only=_tool_names_used == {"query_excel"},
+            trace=trace,
         )
         yield answer
 

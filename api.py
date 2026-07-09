@@ -635,8 +635,13 @@ async def query(req: QueryRequest):
     lf = _get_langfuse()
     lf_trace = lf.trace(name="query", input=req.question) if lf else None
 
-    async def _run_once(question: str) -> tuple[str, list[str], dict]:
-        """Run the agent once for a question; return (answer, collected chunks, trace)."""
+    async def _run_once(question: str, attempt: str = "initial") -> tuple[str, list[str], dict]:
+        """Run the agent once for a question; return (answer, collected chunks, trace).
+
+        Emits one Langfuse span per tool call actually made (name + retrieved
+        chunk group) plus one span for the attempt itself, so retries show up
+        as distinct, inspectable steps instead of one opaque blob.
+        """
         collected: list[str] = []
         tokens: list[str] = []
         trace_holder: dict = {}
@@ -653,6 +658,7 @@ async def query(req: QueryRequest):
                 sql_trace=sql_trace,
                 tool_calls=tool_calls,
                 rejected_chunks=rejected,
+                trace=lf_trace,
             ):
                 tokens.append(token)
             trace_holder["sql"] = sql_trace
@@ -660,7 +666,19 @@ async def query(req: QueryRequest):
             trace_holder["rejected"] = rejected
 
         await loop.run_in_executor(_executor, _run)
-        return "".join(tokens).strip(), collected, trace_holder
+        answer = "".join(tokens).strip()
+
+        if lf_trace is not None:
+            groups = [
+                g.strip()
+                for g in "\n\n".join(collected).split("---CALL_BOUNDARY---")
+                if g.strip()
+            ]
+            for name, group in zip(trace_holder["tools"], groups):
+                lf_trace.span(name=name, input={"question": question}, output=group[:2000])
+            lf_trace.span(name=f"attempt:{attempt}", input=question, output=answer)
+
+        return answer, collected, trace_holder
 
     async def _answer(question: str) -> tuple[str, list[str], dict]:
         """Answer one question, with a forced retry on a bare Unsupported.
@@ -683,9 +701,11 @@ async def query(req: QueryRequest):
         """
         route = await loop.run_in_executor(_executor, route_question, question)
         q = routing_directive(route) + question
-        ans, coll, trace = await _run_once(q)
+        ans, coll, trace = await _run_once(q, attempt="initial")
         if ans.lower() == "unsupported":
-            r_ans, r_coll, r_trace = await _run_once(q + _RETRY_INSTRUCTION)
+            r_ans, r_coll, r_trace = await _run_once(
+                q + _RETRY_INSTRUCTION, attempt="unsupported-retry"
+            )
             if r_ans.lower() != "unsupported" and r_ans:
                 return r_ans, r_coll, r_trace
             return ans, coll, trace
@@ -693,7 +713,7 @@ async def query(req: QueryRequest):
             n_sources = len({s["filename"] for s in _parse_sources(coll)})
             if n_sources < 2:
                 r_ans, r_coll, r_trace = await _run_once(
-                    q + _COMPARISON_RETRY_INSTRUCTION
+                    q + _COMPARISON_RETRY_INSTRUCTION, attempt="comparison-retry"
                 )
                 r_sources = len({s["filename"] for s in _parse_sources(r_coll)})
                 if r_ans and r_sources > n_sources:
