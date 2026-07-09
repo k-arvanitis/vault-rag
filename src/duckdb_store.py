@@ -86,11 +86,27 @@ _DATE_DMY = re.compile(r"'(\d{1,2})/(\d{1,2})/(\d{4})'")
 _ILIKE_VAL = re.compile(r"(ILIKE\s+'%)([^%']+)(%')", re.IGNORECASE)
 
 
+_STRING_COMPARISON_RE = re.compile(r'"([^"]+)"(\s*(?:ILIKE|=)\s*)\'([^\']*)\'')
+
+
 def _normalize_sql(sql: str) -> str:
     """Rewrite SQL literals before DuckDB execution.
 
     - DD/MM/YYYY → YYYY-MM-DD (dates stored as ISO strings in all ingested tables)
+    - `"Column"` → "Column" (some models wrap ANSI double-quoted identifiers in
+      MySQL-style backticks too; DuckDB rejects the combined form)
+    - "Column" ILIKE/= 'value' → TRIM("Column") ILIKE/= 'value' — several ingested
+      sheets store fixed-width VARCHAR columns with trailing spaces (e.g.
+      "BUSINESS DONCASTER            "); an untrimmed exact/ILIKE match silently
+      returns 0 rows, which then triggers the predicate-relaxation fallback and
+      drops that filter entirely — turning a precise two-column filter into a
+      falsely "ambiguous" match across unrelated rows. Only fires on quoted
+      string literals, so numeric comparisons (NET Amount = 206.0) are untouched.
     """
+    sql = re.sub(r'`"([^"]+)"`', r'"\1"', sql)
+    sql = _STRING_COMPARISON_RE.sub(
+        lambda m: f"TRIM(\"{m.group(1)}\"){m.group(2)}'{m.group(3)}'", sql
+    )
     return _DATE_DMY.sub(
         lambda m: f"'{m.group(3)}-{m.group(2).zfill(2)}-{m.group(1).zfill(2)}'", sql
     )
@@ -112,6 +128,38 @@ def _truncate_ilike(sql: str, chars: int = 1) -> str:
         return m.group(0)
 
     return _ILIKE_VAL.sub(_shorten, sql)
+
+
+# Matches `"Column" ILIKE '%value%'` so both sides can be rewritten together —
+# _ILIKE_VAL only captures the value, not the column it's compared against.
+_ILIKE_COL_VAL = re.compile(r'"([^"]+)"\s+ILIKE\s+\'%([^%\']+)%\'', re.IGNORECASE)
+
+
+def _normalize_special_chars_ilike(sql: str) -> str:
+    """Rewrite ILIKE filters to ignore '&' vs "and" and other punctuation.
+
+    Used as a fallback retry when a 0-row query likely failed because the
+    entity name in the question uses a different conjunction/punctuation style
+    than the stored data (e.g. "Smith & Jones" vs "Smith and Jones" vs
+    "Smith&Jones") — plain ILIKE treats '&' as a literal character, so these
+    never match each other without normalization.
+    """
+
+    def _rewrite(m: re.Match) -> str:
+        column, value = m.group(1), m.group(2)
+
+        def _norm(expr: str) -> str:
+            return (
+                f"regexp_replace(regexp_replace(lower({expr}), '&', ' and ', 'g'), "
+                "'[^a-z0-9]+', '', 'g')"
+            )
+
+        value_norm = re.sub(r"&", " and ", value).lower()
+        value_norm = re.sub(r"[^a-z0-9]+", "", value_norm)
+        quoted_column = '"' + column + '"'
+        return f"{_norm(quoted_column)} ILIKE '%{value_norm}%'"
+
+    return _ILIKE_COL_VAL.sub(_rewrite, sql)
 
 
 # ---------------------------------------------------------------------------
