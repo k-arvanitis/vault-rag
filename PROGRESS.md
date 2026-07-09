@@ -5,6 +5,46 @@ Last updated: 2026-07-09
 
 ---
 
+## Session 2026-07-09, part 10 — eval/live-app divergence closed; found and fixed a real client-caching bug
+
+User's question ("is this a model problem?" / "why not let the agent do it?") led to
+re-checking whether eval could even see tonight's fixes. It couldn't: `eval/run_eval.py`
+called `stream_agent` directly, in-process — never through `api.py`'s `/query` handler,
+where the comparison-retry fix and the qa_4 LLM-splitter fix both lived. A fix verified live
+in the app would not have moved the eval numbers at all.
+
+**Fixed, `5f16ed4`.** Extracted the shared logic — routing, unsupported-retry,
+comparison-retry, LLM-split-and-merge, source-card parsing — into `src/answer_pipeline.py`
+(`answer_query`/`answer_one`/`run_once`/`parse_sources`/`strip_leaked_headers`). `api.py`'s
+`/query` handler and `eval/run_eval.py`'s default generation path both call `answer_query`
+now, so eval measures exactly what the live app does. Verified by calling `answer_query`
+directly (bypassing the full harness, see below) on the same two cases tonight's live
+testing already covered: qa_4 -> Defense/$197B, doc_006/doc_007 qa_1 -> 5239.0/RPS BUSINESS
+HEALTHCARE. Both exact matches.
+
+**Found a real bug while verifying this: `_llm_call` (and the Excel sub-agent's
+`_llm_chat`) created a brand-new `openai.OpenAI()` client on every call.** Harmless at the
+old call volume, but multi-part questions now run 2+ independent sub-question passes, each
+making its own split/repair/grounding-check calls — a full-harness verification run on just
+13 questions stalled at 1/13 with thread count climbing continuously past 30 minutes with
+no sign of leveling off. Fixed, `d6dc519`: `functools.lru_cache`-backed client factory
+(`_get_openai_client` in `src/llm_utils.py`), both call sites updated.
+
+**Known open issue, not fixed tonight:** even after the caching fix, a live run of
+`eval/run_eval.py --phase generate` on the same 2 files was still far slower than expected
+(~7 min/question vs ~15s via a direct `/query` call) and thread count fluctuated
+(82→134→161→137) rather than staying flat — bounded, not runaway, but not understood.
+Suspect candidates, not confirmed: `build_reflection_pipeline`/`build_decomposition_pipeline`
+each build their own separate agent+reranker instance (3x the model-loading/CPU-reranker
+overhead per eval run), or LangChain's streaming ChatOpenAI path. Did not chase further
+tonight — verified correctness directly instead (calling `answer_query` in a standalone
+script, bypassing the harness's per-run overhead), which is a valid check of the *wiring*
+but not of full-harness performance. **Before running the full 109-question eval**, budget
+real time for this (could be hours at the observed per-question rate) or investigate the
+slowdown first — don't assume it'll finish in the time a scoped run of the old harness used to.
+
+---
+
 ## Session 2026-07-09, part 9 — part 8's figure-grounding diagnosis was wrong; real cause found
 
 Advisor caught this before any more code was written: part 8 below claims qa_4 fails because
