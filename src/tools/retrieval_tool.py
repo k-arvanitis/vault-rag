@@ -467,6 +467,10 @@ def _make_unified_tool(
         "rerank_top_n": min(rerank_top_n, MAX_TOOL_RESULTS),
     }
 
+    # Reranked-but-not-selected candidates from the most recent _fetch_docs call —
+    # UI-only, for the "retrieved but rejected" trust panel. Not read by the LLM.
+    _last_rejected: list[dict] = []
+
     def _resolve_scope(query: str, doc_id: str) -> _ScopePlan:
         """Resolve retrieval scope, parallel fan-out, filter token and the
         stage-1 doc-routing boosts from the query."""
@@ -778,6 +782,7 @@ def _make_unified_tool(
     )
     def _fetch_docs(query: str, doc_id: str = "") -> str | None:
         """Retrieve, rerank and format knowledge-base chunks for one query; return the formatted block, or None when nothing relevant is found."""
+        _last_rejected.clear()
         # Read the current (mutable) size limits and the LLM endpoint.
         max_table_chars = _limits["max_table_chars"]
         max_chunk_chars = _limits["max_chunk_chars"]
@@ -1105,6 +1110,30 @@ def _make_unified_tool(
         else:
             top_other = other_hits[:_rerank_top_n]
 
+        if reranked_used:
+            selected_keys = {
+                (
+                    (h.get("metadata") or {}).get("source_file"),
+                    (h.get("metadata") or {}).get("chunk_index"),
+                )
+                for h in top_other
+            }
+            for h in reranked_hits:
+                meta = h.get("metadata") or {}
+                key = (meta.get("source_file"), meta.get("chunk_index"))
+                if key in selected_keys:
+                    continue
+                _last_rejected.append(
+                    {
+                        "filename": meta.get("source_file")
+                        or meta.get("file_name")
+                        or "unknown",
+                        "score": round(float(h.get("rerank_score", 0.0)), 4),
+                    }
+                )
+            _last_rejected.sort(key=lambda r: r["score"], reverse=True)
+            del _last_rejected[3:]
+
         # sheet_summary chunks signal "the relevant sheet has these columns" so the
         # agent can route to the Excel tool — they are not answer-bearing content.
         # Require >=2 token overlap (after stopword filter) to avoid generic matches
@@ -1123,16 +1152,24 @@ def _make_unified_tool(
             max_chunk_chars,
         )
 
-    def search_knowledge_base(query: str, doc_id: str = "") -> str:
-        """Search the knowledge base for relevant documents and tables."""
+    def search_knowledge_base(query: str, doc_id: str = "") -> tuple[str, dict]:
+        """Search the knowledge base for relevant documents and tables.
+
+        Returns (content, artifact). The artifact carries the reranked-but-not-
+        selected candidates for the UI's "retrieved but rejected" trust panel; it
+        rides on the ToolMessage and is not shown to the LLM.
+        """
         # Run the full retrieve/rerank/format pipeline; map None → not-found text.
         result = _fetch_docs(query, doc_id=doc_id)
-        return result if result else "No relevant information found."
+        content = result if result else "No relevant information found."
+        artifact = {"rejected": list(_last_rejected)}
+        return content, artifact
 
     # Wrap the function as a LangChain tool and return it with its limits dict.
     tool = StructuredTool.from_function(
         func=search_knowledge_base,
         name="search_knowledge_base",
+        response_format="content_and_artifact",
         description=(
             "Search unstructured documents (PDFs, reports, policies, handbooks) for "
             "text passages. Input: a focused sub-question. This tool retrieves text — it "

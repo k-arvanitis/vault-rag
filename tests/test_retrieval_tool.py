@@ -83,7 +83,7 @@ class TestRetrievalToolBehavior:
         ])
         with patch.object(retrieval_tool, "retrieve", side_effect=retrieve_fn), \
              patch.object(retrieval_tool, "_fetch_neighbor_chunks", return_value={}):
-            out = _build_tool().func("What is the budget?")
+            out, _artifact = _build_tool().func("What is the budget?")
         assert "[1] file=doc_005_report.pdf chunk=0" in out
         assert "[2] file=doc_005_report.pdf chunk=1" in out
         assert "Alpha content about budgets." in out
@@ -92,7 +92,7 @@ class TestRetrievalToolBehavior:
     def test_no_hits_returns_no_information_message(self):
         with patch.object(retrieval_tool, "retrieve", side_effect=_make_retrieve()), \
              patch.object(retrieval_tool, "_fetch_neighbor_chunks", return_value={}):
-            out = _build_tool().func("anything at all")
+            out, _artifact = _build_tool().func("anything at all")
         assert out == "No relevant information found."
 
     def test_doc_id_argument_scopes_retrieval(self):
@@ -154,7 +154,7 @@ class TestRetrievalToolBehavior:
         )
         with patch.object(retrieval_tool, "retrieve", side_effect=retrieve_fn), \
              patch.object(retrieval_tool, "_fetch_neighbor_chunks", return_value={}):
-            out = _build_tool().func("which supplier had the largest transaction amount?")
+            out, _artifact = _build_tool().func("which supplier had the largest transaction amount?")
         assert "doc_009_spend.xlsx" in out
 
     def test_stem_token_overlap_boosts_doc_from_registry(self):
@@ -167,5 +167,5 @@ class TestRetrievalToolBehavior:
         registry = {"doc_001_procurement_policy": "doc_001"}
         with patch.object(retrieval_tool, "retrieve", side_effect=retrieve_fn), \
              patch.object(retrieval_tool, "_fetch_neighbor_chunks", return_value={}):
-            out = _build_tool(doc_registry=registry).func("procurement policy approval rules")
+            out, _artifact = _build_tool(doc_registry=registry).func("procurement policy approval rules")
         assert "doc_001_procurement_policy.pdf" in out
