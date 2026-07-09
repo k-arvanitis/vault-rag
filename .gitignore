@@ -29,6 +29,7 @@ eval/results/*.log
 # Debugging/ablation snapshots — only the live set (answer_results.jsonl,
 # retrieval_results.jsonl, summary.json, failures.md) is tracked.
 eval/results/*_batch_*.jsonl
+eval/results/*_decomp_on.jsonl
 eval/results/*_before_repair_fixes.*
 eval/results/*_full106_baseline.*
 eval/results/*_full109_merged.jsonl
