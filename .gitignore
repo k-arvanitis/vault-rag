@@ -26,6 +26,18 @@ eval/data/pdfs/
 eval/data/raw/
 eval/financebench.json
 eval/results/*.log
+# Debugging/ablation snapshots — only the live set (answer_results.jsonl,
+# retrieval_results.jsonl, summary.json, failures.md) is tracked.
+eval/results/*_batch_*.jsonl
+eval/results/*_before_repair_fixes.*
+eval/results/*_full106_baseline.*
+eval/results/*_full109_merged.jsonl
+eval/results/*_run2_old_judge_retry.*
+eval/results/run_final_*
+eval/results/raw_answers*.jsonl
+eval/results/raw_answers.json
+eval/results/text2sql_eval.json
+eval/data/qa_pairs_unused/
 # Data directories (keep .gitkeep markers)
 data/input/*
 data/output/*

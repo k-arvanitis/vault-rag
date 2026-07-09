@@ -1,39 +1,50 @@
 # LiteLLM Proxy — Vault RAG gateway
 #
 # Exposes a single OpenAI-compatible endpoint at http://localhost:4000/v1
-# The app sends model name "qwen/qwen3-32b" (GENERATION_MODEL); all three
+# The app sends model name "qwen/qwen3-32b" (GENERATION_MODEL); all four
 # entries share that name, so LiteLLM treats them as one failover chain:
-#   1. Groq       — Qwen3 32B       (primary agent model)
-#   2. Groq       — Llama 3.3 70B   (fallback)
-#   3. NVIDIA NIM — Qwen3 Next 80B  (reasoning fallback, if configured)
+#   1. Local vLLM  — Qwen3 32B AWQ   (primary agent model)
+#   2. Groq        — Qwen3 32B       (fallback)
+#   3. Groq        — Llama 3.3 70B   (fallback, same org as #2 — no protection
+#                                      if Groq itself is down/suspended)
+#   4. OpenRouter   — Qwen3 32B       (real cross-provider fallback)
 #
 # Start with:  make litellm
 #              OR  litellm --config litellm_config.yaml --port 4000
 
 model_list:
-  # ── Primary: Groq Qwen3 32B ──────────────────────────────────────────────
+  # ── Primary: local vLLM Qwen3 32B AWQ ────────────────────────────────────
+  - model_name: qwen/qwen3-32b
+    litellm_params:
+      model: openai/qwen3-32b
+      api_base: http://host.docker.internal:8005/v1
+      api_key: "no-key"
+      max_tokens: 4096
+
+  # ── Fallback #1: Groq Qwen3 32B ──────────────────────────────────────────
   - model_name: qwen/qwen3-32b               # the name your app sends
     litellm_params:
       model: groq/qwen/qwen3-32b
       api_key: os.environ/GROQ_API_KEY
       max_tokens: 4096
 
-  # ── Fallback #1: Groq Llama 3.3 70B ──────────────────────────────────────
+  # ── Fallback #2: Groq Llama 3.3 70B ──────────────────────────────────────
   - model_name: qwen/qwen3-32b               # same name -> automatic fallback
     litellm_params:
       model: groq/llama-3.3-70b-versatile
       api_key: os.environ/GROQ_API_KEY
       max_tokens: 4096
 
-  # ── Fallback #2: NVIDIA NIM ───────────────────────────────────────────────
-  # Qwen3 Next is a reasoning fallback when your NIM key is available.
-  # Uses your existing NVIDIA_API_KEY; endpoint is OpenAI-compatible.
+  # ── Fallback #3: OpenRouter Qwen3 32B ─────────────────────────────────────
+  # Cross-provider fallback — survives a Groq-org-wide outage, unlike #1.
+  # max_tokens is higher than the other tiers because this route can return
+  # reasoning tokens before the final answer; a low cap truncates mid-thought
+  # and yields an empty message.content.
   - model_name: qwen/qwen3-32b               # same name -> third-tier fallback
     litellm_params:
-      model: nvidia_nim/qwen/qwen3-next-80b-a3b-thinking
-      api_base: https://integrate.api.nvidia.com/v1
-      api_key: os.environ/NVIDIA_API_KEY
-      max_tokens: 4096
+      model: openrouter/qwen/qwen3-32b
+      api_key: os.environ/OPENROUTER_API_KEY
+      max_tokens: 8192
 
 router_settings:
   # How many times to retry a failed request before giving up
@@ -57,13 +68,17 @@ litellm_settings:
   success_callback: ["langfuse"]
   # Semantic cache: similar prompts return a cached answer before hitting Groq.
   # Needs the Redis Stack service (vector search) + the cache-embed model above.
-  cache: true
-  cache_params:
-    type: redis-semantic
-    similarity_threshold: 0.85          # lower = more hits, higher staleness risk
-    redis_semantic_cache_embedding_model: ollama/nomic-embed-text  # OLLAMA_API_BASE set in compose
-    redis_url: redis://redis:6379       # passwordless redis on the vault network
-    ttl: 3600                           # seconds before a cached answer expires
+  # Temporarily disabled — this LiteLLM image's redis-semantic cache.disconnect()
+  # raises NotImplementedError during the startup/shutdown lifespan handshake,
+  # crash-looping the container. Already tracked as flaky in TODO_LITELLM.md
+  # ("semantic cache stores but doesn't hit"); re-enable once that's debugged.
+  # cache: true
+  # cache_params:
+  #   type: redis-semantic
+  #   similarity_threshold: 0.85          # lower = more hits, higher staleness risk
+  #   redis_semantic_cache_embedding_model: ollama/nomic-embed-text  # OLLAMA_API_BASE set in compose
+  #   redis_url: redis://redis:6379       # passwordless redis on the vault network
+  #   ttl: 3600                           # seconds before a cached answer expires
 
 general_settings:
   # Optional: protect the proxy with a master key (set LITELLM_MASTER_KEY in .env)

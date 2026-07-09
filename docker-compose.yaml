@@ -121,6 +121,54 @@ services:
       - --gpu-memory-utilization
       - "${LIGHTON_GPU_MEMORY_UTILIZATION:-0.30}"
 
+  # ── FastAPI backend ───────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        RERANKER_MODEL: ${RERANKER_MODEL:-cross-encoder/ms-marco-MiniLM-L-6-v2}
+    container_name: vault-api
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8001}:8001"
+    env_file:
+      - .env
+    environment:
+      # Container-network URLs override the localhost-oriented .env.example defaults.
+      - QDRANT_URL=http://qdrant:6333
+      - GENERATION_API_BASE=http://litellm:4000/v1
+      - OLLAMA_API_BASE=http://ollama:11434
+      - EMBED_API_BASE=http://ollama:11434
+      - OCR_API_BASE=http://lightonocr:8002
+      - API_CORS_ORIGINS=http://localhost:3000
+    volumes:
+      - ./data:/app/data
+      - ./eval:/app/eval
+    depends_on:
+      - qdrant
+      - litellm
+      - ollama
+    networks:
+      - vault
+
+  # ── Next.js chat UI ───────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Browser-facing URL — the host-published api port, not the container name.
+        NEXT_PUBLIC_API_URL: http://localhost:${API_PORT:-8001}
+    container_name: vault-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    networks:
+      - vault
+
 networks:
   vault:
     driver: bridge

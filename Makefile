@@ -5,7 +5,7 @@ endif
 
 .PHONY: up docker-up docker-up-gpu docker-down api ui slack docker-slack-build docker-slack-up litellm seed eval eval-cross test lint
 
-# Backing services in Docker (Qdrant + LiteLLM + Ollama)
+# Full stack in Docker: Qdrant + Redis + LiteLLM + Ollama + API + UI
 docker-up:
 	docker compose up -d --build
 

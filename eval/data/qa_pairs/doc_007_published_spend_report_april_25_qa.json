@@ -214,5 +214,24 @@
       "requires_ocr": false,
       "requires_table_reasoning": true
     }
+  },
+  {
+    "qa_id": "qa_9",
+    "question": "What payment method was used for the transaction with the largest Total in the published spend report?",
+    "gold_answer": "Unsupported",
+    "answer_type": "numeric",
+    "question_type": "numeric_reasoning",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": [
+      "doc_007"
+    ],
+    "gold_evidence": [],
+    "metadata": {
+      "modality_focus": "table",
+      "requires_ocr": false,
+      "requires_table_reasoning": true
+    }
   }
 ]

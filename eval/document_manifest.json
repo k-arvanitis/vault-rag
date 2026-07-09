@@ -121,7 +121,7 @@
   },
   {
     "doc_id": "doc_005",
-    "title": "Other Pertinent Forms and Reports (fueling records) – Customer Invoice",
+    "title": "Other Pertinent Forms and Reports (fueling records) \u2013 Customer Invoice",
     "aliases": [
       "NTSB fueling records",
       "fueling records invoice",
@@ -396,5 +396,119 @@
       "unanswerable"
     ],
     "download_status": "ok"
+  },
+  {
+    "doc_id": "doc_015",
+    "title": "Fixed Food Establishment Standard Operating Procedures Manual",
+    "aliases": [
+      "food SOP manual",
+      "SOP manual",
+      "food establishment SOPs"
+    ],
+    "publisher": "Michigan Department of Agriculture and Rural Development (MDARD)",
+    "source_url": "",
+    "source_page_url": null,
+    "accessed_at": "2026-07-02",
+    "sha256": "c1bcf67cd763f08719d03aa54f584d9cbf14a526d46e83520ecd46f31cad08fa",
+    "file_name": "doc_015_food_sop_manual.pdf",
+    "format": "pdf",
+    "source_type": "public_institution",
+    "parsing_path_expected": "born_digital_pdf",
+    "primary_role": "sop_manual",
+    "modality_tags": [
+      "narrative",
+      "procedure"
+    ],
+    "retrieval_challenges": [
+      "section_lookup",
+      "checklist_lookup"
+    ],
+    "download_status": "user_provided"
+  },
+  {
+    "doc_id": "doc_016a",
+    "title": "Ross Valley Fire Department \u2014 Lease Agreement (Original, 2020)",
+    "aliases": [
+      "original lease",
+      "2020 lease agreement",
+      "Station 18 lease"
+    ],
+    "publisher": "Town of Ross, California",
+    "source_url": "",
+    "source_page_url": null,
+    "accessed_at": "2026-07-02",
+    "sha256": "660cb68aaf0f51ddaf0d62a534ccfba003902f28f3f8b2f041f988d81335cb77",
+    "file_name": "doc_016a_original_lease.pdf",
+    "format": "pdf",
+    "source_type": "public_institution",
+    "parsing_path_expected": "scanned_pdf",
+    "primary_role": "contract",
+    "modality_tags": [
+      "narrative",
+      "legal",
+      "scanned"
+    ],
+    "retrieval_challenges": [
+      "clause_lookup",
+      "superseded_value"
+    ],
+    "download_status": "user_provided"
+  },
+  {
+    "doc_id": "doc_016b",
+    "title": "Ross Valley Fire Department \u2014 First Amendment to Lease Agreement (2024)",
+    "aliases": [
+      "first amendment",
+      "May 2024 lease amendment"
+    ],
+    "publisher": "Town of Ross, California",
+    "source_url": "",
+    "source_page_url": null,
+    "accessed_at": "2026-07-02",
+    "sha256": "1de5a91c311cb1c337a4c24c0259f8ad4e468548968d11b8cb5376c2588246db",
+    "file_name": "doc_016b_first_amendment.pdf",
+    "format": "pdf",
+    "source_type": "public_institution",
+    "parsing_path_expected": "scanned_pdf",
+    "primary_role": "contract_amendment",
+    "modality_tags": [
+      "narrative",
+      "legal",
+      "scanned"
+    ],
+    "retrieval_challenges": [
+      "clause_lookup",
+      "superseded_value",
+      "cross_document_compare"
+    ],
+    "download_status": "user_provided"
+  },
+  {
+    "doc_id": "doc_016c",
+    "title": "Ross Valley Fire Department \u2014 Second Amendment to Lease Agreement (2024)",
+    "aliases": [
+      "second amendment",
+      "October 2024 lease amendment"
+    ],
+    "publisher": "Town of Ross, California",
+    "source_url": "",
+    "source_page_url": null,
+    "accessed_at": "2026-07-02",
+    "sha256": "0d7ca04f85b959173dc3d22286ca3be795d50f3a08f21f437eb917642fd1c7cd",
+    "file_name": "doc_016c_second_amendment.pdf",
+    "format": "pdf",
+    "source_type": "public_institution",
+    "parsing_path_expected": "born_digital_pdf",
+    "primary_role": "contract_amendment",
+    "modality_tags": [
+      "narrative",
+      "legal"
+    ],
+    "retrieval_challenges": [
+      "clause_lookup",
+      "current_applicable_value",
+      "cross_document_compare"
+    ],
+    "download_status": "user_provided"
   }
 ]

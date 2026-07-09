@@ -1,0 +1,282 @@
+[
+  {
+    "qa_id": "qa_1",
+    "question": "According to the Fixed Food Establishment SOP manual, for at least how many seconds must employees rub their hands together with soap when washing hands?",
+    "gold_answer": "10 to 15 seconds",
+    "answer_type": "short_text",
+    "question_type": "single_doc_factoid",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": ["doc_015"],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_015",
+        "quote": "Apply soap and rub hands together for at least 10 to 15 seconds"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "text",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_2",
+    "question": "What should an establishment write on the SOP form if a listed topic is not applicable to their operation?",
+    "gold_answer": "Write \"Not Applicable\" or \"NA\"",
+    "answer_type": "short_text",
+    "question_type": "single_doc_factoid",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": ["doc_015"],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_015",
+        "quote": "If a topic is not applicable to your operations, write \"Not Applicable\" or \"NA\""
+      }
+    ],
+    "metadata": {
+      "modality_focus": "text",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_3",
+    "question": "Who must submit standard operating procedures according to the SOP manual?",
+    "gold_answer": "All new fixed food establishments, except vending locations, and remodeled food establishments that change menu or operation",
+    "answer_type": "short_text",
+    "question_type": "single_doc_factoid",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": ["doc_015"],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_015",
+        "quote": "All new fixed food establishments, except vending locations."
+      },
+      {
+        "doc_id": "doc_015",
+        "quote": "Remodeled food establishments that change menu or operation."
+      }
+    ],
+    "metadata": {
+      "modality_focus": "text",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_4",
+    "question": "Is the Handwashing SOP topic applicable to all fixed food establishments, or only some?",
+    "gold_answer": "Applicable to all fixed food establishments (marked with **)",
+    "answer_type": "short_text",
+    "question_type": "negation_check",
+    "difficulty": "medium",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": ["doc_015"],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_015",
+        "quote": "Topics marked with \"**\" are applicable to all fixed food establishments, regardless of the type of operation, menu, or equipment proposed."
+      }
+    ],
+    "metadata": {
+      "modality_focus": "text",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_5",
+    "question": "What is the SOP manual's policy on employee vacation and paid time off?",
+    "gold_answer": "Unsupported",
+    "answer_type": "short_text",
+    "question_type": "unanswerable",
+    "difficulty": "medium",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": ["doc_015"],
+    "gold_evidence": [],
+    "metadata": {
+      "modality_focus": "text",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_6",
+    "question": "What SOPs apply to all fixed food establishments and must be submitted?",
+    "gold_answer": "Handwashing, personal hygiene, preventing bare hand contact with ready-to-eat foods, employee health, food from approved sources, cleaning and sanitizing food-contact surfaces, and protecting food from contamination.",
+    "answer_type": "short_text",
+    "question_type": "single_doc_factoid",
+    "difficulty": "medium",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": ["doc_015"],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_015",
+        "quote": "What procedures apply to all establishments and must be submitted? Handwashing, Personal hygiene, Preventing bare hand contact with ready-to-eat foods, Employee health, Food from approved sources, Cleaning and sanitizing food contact surfaces (i.e. warewashing), Protecting food from contamination"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "text",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_7",
+    "question": "When is a HACCP plan required in addition to SOPs?",
+    "gold_answer": "A HACCP plan is required when the operation conducts specialized food processes such as smoking food for preservation, curing, reduced oxygen packaging, fermentation, or packaging raw unpasteurized juice.",
+    "answer_type": "short_text",
+    "question_type": "single_doc_factoid",
+    "difficulty": "medium",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": ["doc_015"],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_015",
+        "quote": "A Hazard Analysis and Critical Control Point (HACCP) plan is a written document that outlines the formal procedures for specialized food processes such as smoking food for preservation, curing, reduced oxygen packaging, fermentation, and/or packaging raw unpasteurized juice"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "text",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_8",
+    "question": "What are TCS foods?",
+    "gold_answer": "TCS foods are foods that require time/temperature control to prevent pathogenic microorganism growth or toxin formation. Examples include raw or cooked animal foods, cooked plant foods such as rice or potatoes, cut leafy greens, cut tomatoes, cut melons, raw seed sprouts, and untreated garlic-in-oil mixtures.",
+    "answer_type": "short_text",
+    "question_type": "single_doc_factoid",
+    "difficulty": "medium",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": ["doc_015"],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_015",
+        "quote": "Time/temperature control for safety foods are items that require time/temperature control to prevent growth of pathogenic microorganisms... Examples of TCS foods include, but are not limited to: ... Cut leafy greens, Cut tomatoes or mixtures of tomatoes, Cut melons, Raw seed sprouts, Garlic-in-oil, and other vegetable-in-oil mixtures that are not treated"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "text",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_9",
+    "question": "How long may ready-to-eat TCS food be held under date marking?",
+    "gold_answer": "The date mark must indicate a period not exceeding 7 days from preparation or opening of the commercial package, with the preparation/opening day counted as day 1.",
+    "answer_type": "short_text",
+    "question_type": "numeric_lookup",
+    "difficulty": "medium",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": ["doc_015"],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_015",
+        "quote": "The date mark shall indicate a time period not to exceed 7 days from day of preparation or opening of commercial packaging. The day of preparation or opening of the commercial packaging is considered day 1."
+      }
+    ],
+    "metadata": {
+      "modality_focus": "text",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_10",
+    "question": "What are the required cooling limits for cooked TCS food?",
+    "gold_answer": "Cooked TCS foods must cool from 135°F to 70°F within 2 hours, and from 135°F to 41°F or less within a total of 6 hours.",
+    "answer_type": "short_text",
+    "question_type": "numeric_lookup",
+    "difficulty": "medium",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": ["doc_015"],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_015",
+        "quote": "Cooked TCS foods shall be cooled within 2 hours from 135°F to 70°F; and within a total of 6 hours from 135°F to 41°F or less."
+      }
+    ],
+    "metadata": {
+      "modality_focus": "text",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_11",
+    "question": "What temperature is required when reheating TCS food for hot holding?",
+    "gold_answer": "Cooked, cooled, and reheated TCS food must reach at least 165°F for 15 seconds. Ready-to-eat TCS food from commercial packaging reheated for hot holding must reach at least 135°F.",
+    "answer_type": "short_text",
+    "question_type": "numeric_lookup",
+    "difficulty": "medium",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": ["doc_015"],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_015",
+        "quote": "TCS food that is cooked, cooled, and reheated for hot holding shall be reheated so that all parts of the food reach a temperature of at least 165°F for 15 seconds. TCS ready-to-eat food taken from commercial packaging and reheated for hot holding shall be heated to an internal temperature of at least 135°F."
+      }
+    ],
+    "metadata": {
+      "modality_focus": "text",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_12",
+    "question": "Can TCS food placed on time-only control be returned to hot or cold holding to extend the hold time?",
+    "gold_answer": "No. Once TCS food is placed on time control, it cannot be returned to hot or cold holding to extend the hold time.",
+    "answer_type": "short_text",
+    "question_type": "negation_check",
+    "difficulty": "medium",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": ["doc_015"],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_015",
+        "quote": "Once a TCS food is placed on time control, it cannot be returned to hot or cold holding to extend the hold time."
+      }
+    ],
+    "metadata": {
+      "modality_focus": "text",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_13",
+    "question": "What is the penalty amount for failing to submit SOPs in Michigan?",
+    "gold_answer": "Unsupported",
+    "answer_type": "short_text",
+    "question_type": "unanswerable",
+    "difficulty": "medium",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": ["doc_015"],
+    "gold_evidence": [],
+    "metadata": {
+      "modality_focus": "text",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  }
+]

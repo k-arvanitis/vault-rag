@@ -1,0 +1,259 @@
+[
+  {
+    "qa_id": "qa_1",
+    "question": "What was the annual rent for the first year of the original Ross Valley Fire Department lease (July 2020 through June 2021)?",
+    "gold_answer": "$31,052.08",
+    "answer_type": "short_text",
+    "question_type": "single_doc_factoid",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": ["doc_016a"],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_016a",
+        "quote": "The annual rent for the first year of the term (July 1, 2020 through June 30, 2021) shall be $31,052.08"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "text",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_2",
+    "question": "After the Second Amendment, what is the currently applicable lease expiration date for the Ross Valley Fire Department Station 18 lease?",
+    "gold_answer": "December 31, 2024",
+    "answer_type": "short_text",
+    "question_type": "cross_document_compare",
+    "difficulty": "medium",
+    "requires_cross_document": true,
+    "document_count": 3,
+    "source_document_ids": ["doc_016a", "doc_016b", "doc_016c"],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_016a",
+        "quote": "end on June 30, 2024"
+      },
+      {
+        "doc_id": "doc_016b",
+        "quote": "continues until September 30, 2024"
+      },
+      {
+        "doc_id": "doc_016c",
+        "quote": "continues until December 31, 2024"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "text",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_3",
+    "question": "Did the First Amendment or the Second Amendment change the annual rent amount for the Ross Valley lease?",
+    "gold_answer": "The Second Amendment changed the rent (increased 2.5%, retroactive to July 1, 2024, new annual rent $34,275.68). The First Amendment kept the rent the same as it was on June 30, 2024 — no change.",
+    "answer_type": "short_text",
+    "question_type": "cross_document_compare",
+    "difficulty": "hard",
+    "requires_cross_document": true,
+    "document_count": 2,
+    "source_document_ids": ["doc_016b", "doc_016c"],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_016b",
+        "quote": "the annual rent shall remain the same as the rent in effect on June 30, 2024"
+      },
+      {
+        "doc_id": "doc_016c",
+        "quote": "the annual rent shall increase by 2.5%, applied retroactively to July 1, 2024. The new annual rent is $34,275.68"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "text",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_4",
+    "question": "What annual rent applies during the extension term created by the Second Amendment to the Ross Valley lease?",
+    "gold_answer": "$34,275.68",
+    "answer_type": "short_text",
+    "question_type": "single_doc_factoid",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": ["doc_016c"],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_016c",
+        "quote": "The new annual rent is $34,275.68"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "text",
+      "requires_ocr": false,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_5",
+    "question": "When was the original Ross Valley Fire Department Station 18 lease effective, and for how many years?",
+    "gold_answer": "Effective July 1, 2020, for a four-year term ending June 30, 2024",
+    "answer_type": "short_text",
+    "question_type": "single_doc_factoid",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": ["doc_016a"],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_016a",
+        "quote": "The term of this Lease shall commence on July 1, 2020 (“Lease Commencement Date”), and end on June 30, 2024"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "text",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_6",
+    "question": "What is the square footage of the premises leased by the Ross Valley Fire Department at Station 18?",
+    "gold_answer": "Unsupported",
+    "answer_type": "short_text",
+    "question_type": "unanswerable",
+    "difficulty": "medium",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": ["doc_016a"],
+    "gold_evidence": [],
+    "metadata": {
+      "modality_focus": "text",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_7",
+    "question": "What property or premises does the Ross Valley Fire Department lease concern?",
+    "gold_answer": "A portion of Fire Station 18 at 33 Sir Francis Drake Boulevard in Ross, California, including sleeping areas with bathroom, office space, engine bay, and storage room.",
+    "answer_type": "short_text",
+    "question_type": "single_doc_factoid",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": ["doc_016a"],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_016a",
+        "quote": "a certain portion of the space, consisting of sleeping areas with bathroom, office space, engine bay and storage room (\"the Premises\"), within the Ross Valley Fire Department, Station 18, located at 33 Sir Francis Drake Boulevard, Ross, California"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "text",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_8",
+    "question": "Who are the three parties to the Ross Valley Fire Department lease agreement?",
+    "gold_answer": "The Town of Ross is the Landlord, Ross Valley Paramedic Authority is the Tenant, and Ross Valley Fire Department is the Third Party Beneficiary.",
+    "answer_type": "short_text",
+    "question_type": "single_doc_factoid",
+    "difficulty": "easy",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": ["doc_016a"],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_016a",
+        "quote": "This Lease Agreement (\"Lease\"), effective July 1, 2020, is made by and between the Town of Ross (\"Landlord\"), the Ross Valley Paramedic Authority... (\"Tenant\"), and the Ross Valley Fire Department... (\"Third Party Beneficiary\")"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "text",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_9",
+    "question": "What did the May 2, 2024 amendment do to the Ross Valley Fire Department lease?",
+    "gold_answer": "It extended the lease by three months, moving the termination date from June 30, 2024 to September 30, 2024, with rent unchanged.",
+    "answer_type": "short_text",
+    "question_type": "single_doc_factoid",
+    "difficulty": "medium",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": ["doc_016b"],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_016b",
+        "quote": "the extended term commences on July 1, 2024 (\"Extension Commencement Date\") and continues until September 30, 2024 (\"Extension Term\"). ... the annual rent shall remain the same as the rent in effect on June 30, 2024"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "text",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_10",
+    "question": "Who receives the Ross Valley Fire Department lease rent payments?",
+    "gold_answer": "The rent payments are paid by the Tenant directly to the Third Party Beneficiary (Ross Valley Fire Department), unless the Landlord directs otherwise in writing.",
+    "answer_type": "short_text",
+    "question_type": "single_doc_factoid",
+    "difficulty": "medium",
+    "requires_cross_document": false,
+    "document_count": 1,
+    "source_document_ids": ["doc_016a"],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_016a",
+        "quote": "the lease payment will be made from Tenant direct to the Third-Party Beneficiary, unless otherwise notified by the Landlord in writing"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "text",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  },
+  {
+    "qa_id": "qa_11",
+    "question": "How did the lease term change across the original lease, first amendment, and second amendment?",
+    "gold_answer": "The 2020 lease ended June 30, 2024; the May 2, 2024 first amendment extended it to September 30, 2024; the second amendment extends it again to December 31, 2024.",
+    "answer_type": "short_text",
+    "question_type": "cross_document_compare",
+    "difficulty": "hard",
+    "requires_cross_document": true,
+    "document_count": 3,
+    "source_document_ids": ["doc_016a", "doc_016b", "doc_016c"],
+    "gold_evidence": [
+      {
+        "doc_id": "doc_016a",
+        "quote": "end on June 30, 2024"
+      },
+      {
+        "doc_id": "doc_016b",
+        "quote": "effective as of May 2, 2024... continues until September 30, 2024"
+      },
+      {
+        "doc_id": "doc_016c",
+        "quote": "continues until December 31, 2024"
+      }
+    ],
+    "metadata": {
+      "modality_focus": "text",
+      "requires_ocr": true,
+      "requires_table_reasoning": false
+    }
+  }
+]

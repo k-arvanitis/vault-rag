@@ -1,8 +1,9 @@
 """Download and ingest a starter document set.
 
-Covers both retrieval paths so the demo is immediately queryable:
-  - Vector (Qdrant): two born-digital PDFs for prose and policy queries
-  - SQL (DuckDB):    one CSV for spend filtering and aggregation
+Covers all three ingestion paths so the demo is immediately queryable:
+  - Vector (Qdrant), born-digital: two PDFs for prose and policy queries
+  - Vector (Qdrant), scanned/OCR:  one scanned PDF routed through LightOn OCR
+  - SQL (DuckDB):                  one CSV for spend filtering and aggregation
 
 Run via:  make seed
 """
@@ -45,6 +46,16 @@ SEED_DOCS = [
         "ingest": "table",
         "label": "Doncaster Council spend report (CSV → DuckDB)",
     },
+    {
+        "doc_id": "doc_004",
+        "file_name": "doc_004_marie_campbell_foia.pdf",
+        "url": (
+            "https://www.bensenville.gov/DocumentCenter/View/20216/"
+            "17021_Marie_Campbell_FOIA_Complete"
+        ),
+        "ingest": "pdf",
+        "label": "Bensenville FOIA — scanned invoice packet (PDF, OCR path)",
+    },
 ]
 
 RAW_DIR = Path("eval/data/raw")
@@ -53,6 +64,8 @@ SAMPLE_QUESTIONS = [
     'What is the LACERA policy on sole-source procurement?',
     'Both documents include rules about termination. What are they and how do they differ?',
     'In the Doncaster spend report, list the payments to Arco Limited.',
+    'What is listed on the scanned FOIA invoice packet?',
+    'What is the company dental insurance policy?',  # not in the corpus — should refuse
 ]
 
 
