@@ -85,6 +85,7 @@ export default function ChatPanel({
       });
       onTrace?.({
         sources: data.sources ?? [],
+        rejected_sources: data.rejected_sources ?? [],
         sql: data.sql ?? [],
         tools_used: data.tools_used ?? [],
       });
