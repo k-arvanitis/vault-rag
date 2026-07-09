@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-import os
 import re
 from typing import Callable
 
-from src.config import GROQ_API_KEY, LITELLM_MASTER_KEY
+from src.config import (
+    FREE_LLM_API_KEY,
+    GROQ_API_KEY,
+    LITELLM_MASTER_KEY,
+    OPENROUTER_API_KEY,
+)
 
 
 def _make_groq_llm_fn() -> Callable[[str], str]:
@@ -54,14 +58,21 @@ def _llm_call(
     """Send one prompt to an OpenAI-compatible endpoint; return the reply with <think> blocks stripped."""
     import openai
 
-    # Resolve key: explicit arg → LiteLLM master key → Groq → OpenAI → dummy
-    key = (
-        api_key
-        or LITELLM_MASTER_KEY
-        or os.getenv("GROQ_API_KEY")
-        or os.getenv("OPENAI_API_KEY")
-        or "EMPTY"
-    )
+    # Resolve key: explicit arg wins; otherwise pick by the actual host being
+    # called — LITELLM_MASTER_KEY only authenticates the LiteLLM proxy itself,
+    # so it must not be sent to a real provider being hit directly.
+    _base = api_base.lower()
+    if "localhost:4000" in _base or "127.0.0.1:4000" in _base:
+        _fallback_key = LITELLM_MASTER_KEY
+    elif "localhost:3011" in _base or "127.0.0.1:3011" in _base:
+        _fallback_key = FREE_LLM_API_KEY
+    elif "openrouter.ai" in _base:
+        _fallback_key = OPENROUTER_API_KEY
+    elif "groq.com" in _base:
+        _fallback_key = GROQ_API_KEY
+    else:
+        _fallback_key = GROQ_API_KEY or LITELLM_MASTER_KEY
+    key = api_key or _fallback_key or "EMPTY"
     client = openai.OpenAI(base_url=api_base, api_key=key)
     resp = client.chat.completions.create(
         model=model_name,
