@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import { ChevronDown, ChevronRight, Database, FileText, Wrench } from "lucide-react";
-import { type Source } from "@/lib/api";
+import { type Source, type RejectedSource } from "@/lib/api";
 import SourceCard from "./SourceCard";
 
 export interface Trace {
   sources: Source[];
+  rejected_sources?: RejectedSource[];
   sql: string[];
   tools_used: string[];
 }
@@ -69,7 +70,7 @@ export default function TraceSidebar({ trace }: Props) {
     );
   }
 
-  const { sources, sql, tools_used } = trace;
+  const { sources, sql, tools_used, rejected_sources = [] } = trace;
 
   return (
     <aside className="hidden w-[320px] shrink-0 overflow-y-auto border-l border-ink-200 bg-ink-50 p-3 lg:block">
@@ -116,6 +117,24 @@ export default function TraceSidebar({ trace }: Props) {
                 <SourceCard key={i} source={s} index={i + 1} />
               ))}
             </div>
+          </Panel>
+        )}
+
+        {rejected_sources.length > 0 && (
+          <Panel title="Retrieved but rejected" count={rejected_sources.length} defaultOpen={false}>
+            <ul className="space-y-1.5">
+              {rejected_sources.map((r, i) => (
+                <li key={i} className="flex items-center justify-between gap-2 text-[11px] text-ink-500">
+                  <span className="truncate">{r.filename}</span>
+                  {r.score !== null && (
+                    <span className="shrink-0 font-mono text-[10px] text-ink-400">
+                      {r.score.toFixed(2)}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 text-[10px] text-ink-400">Lower reranker relevance than the sources used above.</p>
           </Panel>
         )}
 
