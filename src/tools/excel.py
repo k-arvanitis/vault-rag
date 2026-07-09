@@ -43,7 +43,13 @@ from src.config import (
     EXCEL_AGENT_API_KEY,
     EXCEL_AGENT_MODEL,
 )
-from src.duckdb_store import DuckDBStore, _normalize_sql, _truncate_ilike
+from src.duckdb_store import (
+    DuckDBStore,
+    _normalize_special_chars_ilike,
+    _normalize_sql,
+    _truncate_ilike,
+)
+from src.llm_utils import _is_thinking_model
 from src.prompts import (
     DECOMPOSE_PROMPT,
     FORMAT_PROMPT,
@@ -127,6 +133,15 @@ def _llm_chat(
     """One-shot chat completion against the configured Excel-agent endpoint."""
     if not EXCEL_AGENT_API_KEY:
         raise RuntimeError("EXCEL_AGENT_API_KEY is not configured")
+    # Thinking models (Qwen3, QwQ, DeepSeek-R1, ...) emit chain-of-thought prose
+    # ahead of the answer unless told not to — suppress it on the first message,
+    # same convention as src/rag_agent.py and src/tools/retrieval_tool.py.
+    if _is_thinking_model(EXCEL_AGENT_MODEL) and messages:
+        first = messages[0]
+        if not first["content"].startswith("/no_think"):
+            messages = [
+                {**first, "content": "/no_think " + first["content"]}
+            ] + messages[1:]
     # Build the client and run a single completion, stripping reasoning tags.
     client = openai.OpenAI(base_url=EXCEL_AGENT_API_BASE, api_key=EXCEL_AGENT_API_KEY)
     resp = client.chat.completions.create(
@@ -244,14 +259,22 @@ def _relax_by_dropping_predicate(store: DuckDBStore, sql: str) -> Any:
     return best
 
 
-def _execute_sql(store: DuckDBStore, sql: str) -> tuple[bool, str, str | None]:
-    """Run SQL and return (ok, formatted_text, single_col_first_value).
+def _execute_sql(
+    store: DuckDBStore, sql: str
+) -> tuple[bool, str, str | None, list[str] | None]:
+    """Run SQL and return (ok, formatted_text, single_col_first_value, ambiguous_values).
 
     - ok=True with rendered table on success (including 0-row results)
     - ok=False with `SQL error: ...` on failure
     - single_col_first_value: the first row's only-cell value when the SQL
       projects exactly one column; None otherwise. Used as a deterministic
       fallback when the format LLM punts on multi-row single-column results.
+    - ambiguous_values: when the SQL projects one column and matched rows carry
+      more than one distinct value for it, the question under-constrains which
+      row is meant (e.g. "the Trainline transaction" matching 44 rows across 5
+      different expense categories) — this lists the distinct values found (up
+      to 8) so the caller can ask for a qualifier instead of picking one at
+      random. None when there's no such ambiguity.
 
     Auto-retries 0-row ILIKE queries with progressively-truncated string filters
     to handle truncated supplier/beneficiary names common in the source data.
@@ -261,7 +284,7 @@ def _execute_sql(store: DuckDBStore, sql: str) -> tuple[bool, str, str | None]:
     try:
         df = store.execute(sql)
     except Exception as exc:
-        return False, f"SQL error: {exc}", None
+        return False, f"SQL error: {exc}", None, None
 
     # On 0 rows, retry with progressively-truncated ILIKE values.
     if df.empty:
@@ -277,6 +300,20 @@ def _execute_sql(store: DuckDBStore, sql: str) -> tuple[bool, str, str | None]:
                 sql = relaxed
                 break
 
+    # Still empty: the filter value's punctuation/conjunction style may not match
+    # the stored data (e.g. "Smith & Jones" vs "Smith and Jones"). Retry with
+    # both sides normalized to ignore '&' vs "and" and other punctuation.
+    if df.empty:
+        normalized = _normalize_special_chars_ilike(sql)
+        if normalized != sql:
+            try:
+                relaxed = store.execute(normalized)
+            except Exception:
+                relaxed = None
+            if relaxed is not None and not relaxed.empty:
+                df = relaxed
+                sql = normalized
+
     # Still empty: the query is likely over-constrained (a value filtered on the
     # wrong column). Drop one predicate at a time and keep the most-specific match.
     if df.empty:
@@ -285,26 +322,33 @@ def _execute_sql(store: DuckDBStore, sql: str) -> tuple[bool, str, str | None]:
             df = relaxed_df
 
     if df.empty:
-        return True, "Query returned 0 rows.", None
+        return True, "Query returned 0 rows.", None, None
     # Aggregate queries (SUM/COUNT/etc.) on a missing key collapse to all-NaN —
     # treat that as an empty match so the agent retries on a different table/filter
     # rather than reporting "NaN" to the user.
     if df.shape == (1, 1) and df.iloc[0, 0] != df.iloc[0, 0]:  # NaN check
-        return True, "Query returned 0 rows.", None
+        return True, "Query returned 0 rows.", None, None
 
-    # Capture the lone cell value for single-column results (deterministic fallback).
+    # Capture the lone cell value for single-column results (deterministic fallback),
+    # and detect genuine ambiguity: multiple rows matched but they disagree on the
+    # one projected value, meaning the question under-constrains which row is meant.
     single_col_first = None
+    ambiguous_values: list[str] | None = None
     if df.shape[1] == 1:
-        first = df.iloc[0, 0]
+        col = df.iloc[:, 0]
+        first = col.iloc[0]
         if first is not None and first == first:  # not NaN
             single_col_first = str(first)
+        distinct = [str(v) for v in col.dropna().unique()]
+        if len(distinct) > 1:
+            ambiguous_values = distinct[:8]
 
     # Render the result table, capping the number of rows shown.
     truncated = len(df) > _ROW_LIMIT
     out = df.head(_ROW_LIMIT).to_string(index=False, max_colwidth=80)
     if truncated:
         out += f"\n… (truncated at {_ROW_LIMIT} rows)"
-    return True, out, single_col_first
+    return True, out, single_col_first, ambiguous_values
 
 
 # ---------------------------------------------------------------------------
@@ -350,6 +394,7 @@ class _SQLState(TypedDict):
     samples: list[dict]
     sql_history: list[tuple[str, str]]  # (sql, result)
     last_single_col_value: str | None  # deterministic fallback when LLM punts
+    last_ambiguous_values: list[str] | None  # distinct values when rows disagree
     attempts: int
     answer: str
     final_sql: str
@@ -363,6 +408,66 @@ def _extract_sql(text: str) -> str | None:
     if text.strip().upper().startswith("SELECT"):
         return text.strip()
     return None
+
+
+# Column-name words too common to signal a real match on their own — two genuinely
+# different real-world fields ("invoice number" vs "transaction number") both contain
+# "number" without meaning the same thing, so it's excluded before checking overlap.
+_GENERIC_COLUMN_WORDS = {
+    "number",
+    "num",
+    "no",
+    "id",
+    "code",
+    "amount",
+    "value",
+    "date",
+    "name",
+    "total",
+    "type",
+    "category",
+    "description",
+    "ref",
+    "reference",
+}
+
+
+def _extract_selected_columns(sql: str) -> list[str]:
+    """Return the column names projected by a SELECT, ignoring AS-aliases and quoting."""
+    m = re.search(r"select\s+(.*?)\s+from\s", sql, re.IGNORECASE | re.DOTALL)
+    if not m:
+        return []
+    columns = []
+    for part in m.group(1).split(","):
+        part = re.split(r"\bAS\b", part.strip(), maxsplit=1, flags=re.IGNORECASE)[
+            0
+        ].strip()
+        part = part.strip('"').strip("'")
+        if (
+            part
+            and part != "*"
+            and not part.upper().startswith(("SUM(", "COUNT(", "AVG(", "MIN(", "MAX("))
+        ):
+            columns.append(part)
+    return columns
+
+
+def _column_matches_question(column_name: str, question: str) -> bool:
+    """Hard gate backing the SQL-writing prompt's column-matching rule: does this
+    column's own wording appear anywhere in the question, ignoring generic words?
+
+    Relying on the LLM to self-police "is this really the same concept" is unreliable
+    (verified: it still substitutes "Merchant Category" for "payment method" about half
+    the time even when explicitly told not to) — this catches the cases where the
+    selected column shares no real vocabulary with what was asked at all.
+    """
+    q_words = set(re.findall(r"[a-z]+", question.lower()))
+    col_words = set(re.findall(r"[a-z]+", column_name.lower())) - _GENERIC_COLUMN_WORDS
+    if not col_words:
+        # Column name is entirely generic words (e.g. bare "Amount", "Date") — too
+        # little signal either way to block on, so don't.
+        return True
+    return bool(col_words & q_words)
 
 
 def _build_inner_graph(store: DuckDBStore) -> Any:
@@ -427,6 +532,18 @@ def _build_inner_graph(store: DuckDBStore) -> Any:
 
         # Extract the SQL from the model output and append it pending execution.
         sql = _extract_sql(raw) or ""
+        # Hard gate: don't trust the model's own judgment that a column matches the
+        # question — verified unreliable (src/prompts.py comment). If none of the
+        # selected columns share real vocabulary with the question, discard the SQL
+        # exactly as if the model had refused, so it flows through the same
+        # retry/next-table/Unsupported path as a genuine no-match.
+        if sql:
+            selected_columns = _extract_selected_columns(sql)
+            if selected_columns and not any(
+                _column_matches_question(col, state["question"])
+                for col in selected_columns
+            ):
+                sql = ""
         return {
             "sql_history": state.get("sql_history", []) + [(sql, "")],
             "attempts": state.get("attempts", 0) + 1,
@@ -443,11 +560,13 @@ def _build_inner_graph(store: DuckDBStore) -> Any:
                 "sql_history": history[:-1]
                 + [(sql, "No SQL extracted from model output.")],
                 "last_single_col_value": None,
+                "last_ambiguous_values": None,
             }
-        ok, result, single_col = _execute_sql(store, sql)
+        ok, result, single_col, ambiguous_values = _execute_sql(store, sql)
         return {
             "sql_history": history[:-1] + [(sql, result)],
             "last_single_col_value": single_col,
+            "last_ambiguous_values": ambiguous_values,
         }
 
     def evaluate(state: _SQLState) -> dict:
@@ -463,6 +582,26 @@ def _build_inner_graph(store: DuckDBStore) -> Any:
             or not last_sql.strip()
             or last_result.startswith("No SQL extracted")
         )
+
+        # Usable result, but rows disagree on the one projected value: the question
+        # under-constrains which row is meant (e.g. "the Trainline transaction"
+        # matches 44 rows across 5 different expense categories). Asking the format
+        # LLM to pick one from a truncated dump of disagreeing rows is exactly how a
+        # confident wrong answer gets produced — short-circuit to a clarification
+        # instead, same "Clarify:" convention the main agent uses for broad questions.
+        ambiguous_values = state.get("last_ambiguous_values")
+        if not is_empty and not is_error and ambiguous_values:
+            values_preview = ", ".join(f'"{v}"' for v in ambiguous_values[:5])
+            return {
+                "answer": (
+                    f"Clarify: multiple different values match this query "
+                    f"({values_preview}"
+                    f"{', …' if len(ambiguous_values) > 5 else ''}) — please add a "
+                    "date, transaction number, or other identifying detail to narrow "
+                    "it to one row."
+                ),
+                "final_sql": last_sql,
+            }
 
         # Usable result: ask the LLM to format it into a natural-language answer.
         if not is_empty and not is_error and last_result.strip():
@@ -482,6 +621,15 @@ def _build_inner_graph(store: DuckDBStore) -> Any:
                 ).strip()
             except Exception:
                 answer = ""
+            # The format LLM occasionally echoes back the internal "no rows" sentinel
+            # phrase as if it were a real answer, even when real rows were passed in —
+            # it's never a legitimate output value, only ever a literal-input pattern
+            # this same prompt asks it to recognize. Bypass the single-column fallback
+            # below: that fallback exists for a genuine false-negative "Unsupported" on
+            # a good column, not for this confusion, and reusing it here would just
+            # resurface the same (likely wrong) column value.
+            if answer.strip().lower() == "query returned 0 rows.":
+                return {"answer": "Unsupported", "final_sql": last_sql}
             # When the SQL projects exactly one column and rows came back, the answer is
             # unambiguous — a punted "Unsupported" from the format LLM is a false negative.
             if (not answer or answer.lower() == "unsupported") and state.get(
@@ -506,6 +654,7 @@ def _build_inner_graph(store: DuckDBStore) -> Any:
                 "attempts": 0,
                 "sql_history": [],
                 "last_single_col_value": None,
+                "last_ambiguous_values": None,
             }
 
         return {"answer": "Unsupported"}
@@ -602,6 +751,7 @@ def _build_outer_graph(store: DuckDBStore) -> Any:
                     "samples": [],
                     "sql_history": [],
                     "last_single_col_value": None,
+                    "last_ambiguous_values": None,
                     "attempts": 0,
                     "answer": "",
                     "final_sql": "",
