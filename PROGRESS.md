@@ -26,11 +26,28 @@ bypass because the phrasing is "which... and **what**", not "which... and **whic
 
 Correcting part 8's conclusion below: this is not "the agent doesn't use evidence it already
 has" — it's a second instance of the splitter breaking cross-clause reference, not a synthesis
-or context-window bug. The fix is the same shape as the comparison one: broaden the splitter
-bypass (or `_COMPARISON_RE` itself) to also skip splitting when the second clause has an
-unresolved pronoun referring back to the first ("it"/"that"/"this" with no local noun). Not
-implemented yet — next session should verify with a live before/after test the same way the
-comparison fix was verified, not just assert it from the regex.
+or context-window bug.
+
+**Fixed, `c942f62`.** Two options were on the table: (a) extend the deterministic
+skip-splitting bypass (cheap, no extra LLM call, same shape as the `_COMPARISON_RE` fix) or
+(b) swap to the LLM-based decomposer (`_llm_split_subqueries`, already existed, used only on a
+fallback path — prompted to preserve entity names in every sub-query). Checked (b)'s actual
+output on the qa_4 question before committing to either: it rewrote "what amount did it
+achieve" into "what amount... was achieved by the mission with the highest benefits" — pronoun
+resolved. Went with (b): eval already showed the fully-unsplit single-agent-run path also fails
+qa_4 (Unsupported, all session), which rules out (a) — routing back to an unsplit run doesn't
+fix anything, it just returns to the already-failing baseline. (b) is also the more principled
+"agentic RAG" answer here: use the model to decompose multi-hop questions into independently
+answerable sub-queries, rather than a string-slice heuristic.
+
+Verified live end-to-end (not just the split text), `POST_GENERATION_VERIFY_ENABLED=false`:
+qa_4 answers Defense/$197B correctly on two separate runs (was Unsupported both times before
+this change). No regression on a self-contained two-clause cross-document question
+(`doc_006_doc_007_cross_document_qa` qa_1 — exact match on both parts, 5239.0 and "RPS BUSINESS
+HEALTHCARE"). Known remaining risk: `_llm_split_subqueries` falls back to the old regex splitter
+if the LLM call itself errors/times out — rare, and degrades to today's already-known behavior
+for that one question, not a new failure mode. README's figure-grounding "known limitation"
+should be reconsidered/removed once the next full eval run confirms this generalizes.
 
 ---
 
