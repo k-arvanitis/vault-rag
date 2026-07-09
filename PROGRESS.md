@@ -5,6 +5,86 @@ Last updated: 2026-07-09
 
 ---
 
+## Session 2026-07-09, part 8 — advisor-directed fixes: one closed, one re-diagnosed correctly
+
+Consulted the advisor specifically on the two open reliability gaps before touching code, per
+the user's request. Also committed a large batch of previously-uncommitted, tested,
+already-working code found while answering "is Langfuse used" (see below) — this is now the
+codebase's actual committed state, not a separate pending pile.
+
+**Comparison + query-splitter interaction — fixed and verified, `004eef3`.** Advisor's call:
+take the "skip splitting" option, not "pass a flag into split fragments" — the latter doesn't
+put the lost document names back into the fragment, so it can't fix the mis-routing. Implemented:
+`api.py`'s `/query` handler now skips `_split_multi_part_query` entirely when `_COMPARISON_RE`
+matches, so the comparison-retry logic in `_answer()` sees the whole question. Verified live,
+before/after, **with `POST_GENERATION_VERIFY_ENABLED=false`** (advisor flagged the grounding
+check as a confound — it's the same comparison-phrasing judgment class that already proved
+unreliable once, so it could mask or fake a result either direction):
+- Before: "Comparing the LACERA procurement policy and the Government Property Agency services
+  contract terms, which document specifies a deadline..." → answered from **doc_003** (a Fed
+  Reserve report, unrelated to either named document).
+- After: correctly answers from doc_002, "within 2 Working Days of receipt" — **exact match to
+  gold**.
+- No regression on the other comparison case from earlier tonight (doc_010/doc_013 budget
+  tracker) — still correctly refuses rather than guessing.
+- Non-comparison multi-part questions are provably unaffected (the change only special-cases
+  when `_COMPARISON_RE` matches, before the existing split logic runs at all).
+
+**Figure-grounding — instrumented, and the instrumentation overturned the working hypothesis.**
+Advisor: don't claim a fix without seeing what the live tool call actually receives and returns;
+every attempt this session (2 context-regen, 1 rerank-window widen, 1 caption-label fix) was
+built on an offline diagnostic that assumed the agent passes the raw question verbatim — it
+doesn't, and the live path also applies `effective_scope`/`filter_token`/`chunk_types` an offline
+`retrieve()` call never exercises. Added `RETRIEVAL_DEBUG=1` (`b3e9de7`) to print the real
+query/doc_id/scope and returned chunks per `search_knowledge_base` call.
+
+**Captured qa_4's live trace and it contradicts the retrieval-ranking story this session was
+built on.** Chunk 17 (containing the literal answer, "Defense... Budget: $197 billion") **was
+retrieved on the agent's very first tool call** — rank 3 of 12 returned chunks. The agent then
+made two more searches ("What amount did it achieve?", "amount"), neither of which returned
+chunk 17 or its neighbor chunk 18 again, and the final answer was still `Unsupported`. **This is
+not a retrieval-ranking bug — the correct chunk reached the agent's context and it still didn't
+use it.** The real mechanism is somewhere in the agent's multi-turn tool-use loop: it apparently
+read chunk 17, extracted "Defense" as the mission, then went hunting for the amount separately
+instead of re-reading the chunk it already had, and gave up. This means:
+- Every fix attempted this session for this gap (context regeneration ×2, rerank-window
+  widening, figure-caption labeling) was solving a problem that wasn't the actual blocker for
+  this question, at least. They may still be good general improvements (the caption fix in
+  particular is a real, sound idea for genuinely rank-marginal figure chunks) — just not proven
+  against the case they were built for, and now demonstrably not why qa_4 fails.
+- Next session's actual next step: instrument the agent's tool-call *history* per turn (which
+  chunks were in context when the final answer was generated, not just what each individual
+  search returned) to see whether chunk 17 is still in context at synthesis time or if it fell
+  out of some working-context window between the first and final turn.
+- Not committing anything as "fixes figure-grounding." README's Known limitations stays as-is —
+  if anything, this deepens the honesty of that section: the gap is closer to "the agent doesn't
+  reliably use evidence it already has" than "retrieval doesn't surface figure chunks," which is
+  a materially different (and arguably more concerning) class of bug for a customer-facing tool.
+
+**Also this session: committed ~500 lines of previously-uncommitted, already-tested code**
+across `llm_utils.py`, `duckdb_store.py`, `pdf_parser.py`, `answer_quality.py`, `rag_agent.py`,
+`retrieval_tool.py`, `excel.py`, `config.py`, `chunker.py`, `api.py`, and 6 matching frontend
+files — found while investigating "is Langfuse actually used" for the user. This was not scope
+creep for its own sake: some of it is functionality the README already describes as fact (the
+SQL column-match hard gate behind the 90.5% structured-accuracy number was uncommitted until
+tonight — a fresh clone could not have reproduced that number before this). Committed in 13
+separate, logically-scoped commits (`db06859` through `6d183b5`), each verified against the full
+166-test suite before moving to the next, after `ruff check .` confirmed none of the pre-existing
+lint issues in *other*, untouched files were mine to fix. Still deliberately left uncommitted:
+`Makefile`, `TODO.md`, `docker-compose.yaml`, `eval/README.md`, `eval/document_manifest.json`,
+`litellm_config.yaml`, `scripts/seed.py`, eval qa-pairs/results snapshots, two stray root-level
+PDFs, and the Docker deployment files — a separate, larger review the user hasn't asked for yet.
+
+**Flagging one thing for before calling the project "done" (advisor's point, not urgent
+tonight):** `MAX_TOOL_RESULTS` (8→12), the grounding check, and the excel hard gate all changed
+what the eval path actually does. The README's headline numbers were measured before some of
+this was in the committed codebase. One clean full 109-question eval run against the
+now-fully-committed code, before finalizing numbers for external use, would confirm they still
+hold (or update them if not) — a reviewer who clones and reruns eval and gets different numbers
+undercuts the "auditable" pitch this project is making.
+
+---
+
 ## Session 2026-07-09, part 7 — caught and fixed a real regression from the isolation process
 
 Ran the full test suite as a final check before ending the overnight session — **166 tests
