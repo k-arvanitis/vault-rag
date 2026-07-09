@@ -16,6 +16,7 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -385,6 +386,7 @@ def chunk_markdown(
         metadata["chunk_index"] = i
         metadata["chunk_size_chars"] = len(chunk.content)
         metadata["token_count"] = chunk.token_count
+        metadata["ingested_at"] = datetime.now(UTC).isoformat()
 
         # Prepend the title/section/subsection headers if the chunk lacks them.
         title = metadata["title"]
