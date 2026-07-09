@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from typing import Callable
 
 from src.config import (
@@ -11,6 +12,21 @@ from src.config import (
     LITELLM_MASTER_KEY,
     OPENROUTER_API_KEY,
 )
+
+
+@lru_cache(maxsize=16)
+def _get_openai_client(base_url: str, api_key: str):
+    """Return a cached OpenAI client per (base_url, api_key) pair.
+
+    _llm_call is invoked many times per question (split decision, repair
+    check, grounding check — once per sub-question when a question is
+    multi-part), and each openai.OpenAI() instantiation opens its own
+    connection pool. Without caching, high call volume (e.g. eval runs)
+    accumulates unclosed clients/threads over a run instead of reusing one.
+    """
+    import openai
+
+    return openai.OpenAI(base_url=base_url, api_key=api_key)
 
 
 def _make_groq_llm_fn() -> Callable[[str], str]:
@@ -56,8 +72,6 @@ def _llm_call(
     temperature: float = 0.0,
 ) -> str:
     """Send one prompt to an OpenAI-compatible endpoint; return the reply with <think> blocks stripped."""
-    import openai
-
     # Resolve key: explicit arg wins; otherwise pick by the actual host being
     # called — LITELLM_MASTER_KEY only authenticates the LiteLLM proxy itself,
     # so it must not be sent to a real provider being hit directly.
@@ -73,7 +87,7 @@ def _llm_call(
     else:
         _fallback_key = GROQ_API_KEY or LITELLM_MASTER_KEY
     key = api_key or _fallback_key or "EMPTY"
-    client = openai.OpenAI(base_url=api_base, api_key=key)
+    client = _get_openai_client(api_base, key)
     resp = client.chat.completions.create(
         model=model_name,
         messages=[{"role": "user", "content": prompt}],

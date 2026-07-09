@@ -32,7 +32,6 @@ import operator
 import re
 from typing import Annotated, Any, TypedDict
 
-import openai
 from langchain_core.tools import StructuredTool
 from langgraph.graph import END, StateGraph
 from langgraph.types import Send
@@ -49,7 +48,7 @@ from src.duckdb_store import (
     _normalize_sql,
     _truncate_ilike,
 )
-from src.llm_utils import _is_thinking_model
+from src.llm_utils import _get_openai_client, _is_thinking_model
 from src.prompts import (
     DECOMPOSE_PROMPT,
     FORMAT_PROMPT,
@@ -142,8 +141,8 @@ def _llm_chat(
             messages = [
                 {**first, "content": "/no_think " + first["content"]}
             ] + messages[1:]
-    # Build the client and run a single completion, stripping reasoning tags.
-    client = openai.OpenAI(base_url=EXCEL_AGENT_API_BASE, api_key=EXCEL_AGENT_API_KEY)
+    # Reuse a cached client and run a single completion, stripping reasoning tags.
+    client = _get_openai_client(EXCEL_AGENT_API_BASE, EXCEL_AGENT_API_KEY)
     resp = client.chat.completions.create(
         model=EXCEL_AGENT_MODEL,
         messages=messages,
