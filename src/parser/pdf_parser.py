@@ -34,6 +34,27 @@ _LABEL_TEXT = "pymupdf4llm"
 _LABEL_OCR = "LightOn OCR"
 _LABEL_OCR_CPU = "unstructured (CPU)"
 
+# Matches the bold "**Figure 3: ...**" caption heading pymupdf4llm extracts as real
+# page text next to a figure — deliberately requires the leading "**" so it doesn't
+# match a plain-prose mention like "as shown in figure 3" or a table-of-contents row.
+_FIGURE_CAPTION_RE = re.compile(r"\*\*Fig(?:ure)?\.?\s*(\d+)\s*:", re.IGNORECASE)
+
+
+def _nearby_figure_label(page_markdown: str, position: int, window: int = 800) -> str:
+    """Return "Figure N: " if a figure caption heading precedes this position, else "".
+
+    Without this, a figure's own VLM-described chunk never contains its own figure
+    number — so a query naming a specific figure ("what does Figure 3 show") can't be
+    disambiguated from a neighboring figure with similar content (verified: two
+    financial-benefits figures a few pages apart were confused this way). Searches
+    backward for the nearest preceding caption rather than using a small fixed
+    window — real PDFs interpose a paragraph or two (e.g. a "Note:" aside) between
+    the caption and the image.
+    """
+    snippet = page_markdown[max(0, position - window) : position]
+    matches = list(_FIGURE_CAPTION_RE.finditer(snippet))
+    return f"Figure {matches[-1].group(1)}: " if matches else ""
+
 
 def _ocr_page(pix) -> tuple[str, str]:
     """Run the configured OCR backend on a page pixmap.
@@ -164,7 +185,6 @@ def _parse_text_layer_page(path: str, page_number: int, image_dir: str) -> str:
                         xref,
                     )
                     description = "description unavailable"
-                marker = f"[FIGURE_START]\n{description}\n[FIGURE_END]\n\n"
                 bbox = xref_to_bbox.get(xref)
                 if bbox and page_rect.height > 0:
                     # y-fraction applied to original length, then shifted by prior insertions
@@ -177,6 +197,8 @@ def _parse_text_layer_page(path: str, page_number: int, image_dir: str) -> str:
                     pos = para_break
                 else:
                     pos = len(page_markdown)
+                label = _nearby_figure_label(page_markdown, pos)
+                marker = f"[FIGURE_START]\n{label}{description}\n[FIGURE_END]\n\n"
                 page_markdown = (
                     page_markdown[:pos] + "\n\n" + marker + page_markdown[pos:]
                 )
@@ -217,7 +239,10 @@ def _parse_text_layer_page(path: str, page_number: int, image_dir: str) -> str:
                     embedded_path,
                 )
                 description = "description unavailable"
-            replacements.append((match, f"[FIGURE_START]\n{description}\n[FIGURE_END]"))
+            label = _nearby_figure_label(page_markdown, match.start())
+            replacements.append(
+                (match, f"[FIGURE_START]\n{label}{description}\n[FIGURE_END]")
+            )
 
         elif match_type == "picture_text":
             if not VLM_ENABLED:
@@ -239,7 +264,10 @@ def _parse_text_layer_page(path: str, page_number: int, image_dir: str) -> str:
                     img_idx,
                 )
                 description = "description unavailable"
-            replacements.append((match, f"[FIGURE_START]\n{description}\n[FIGURE_END]"))
+            label = _nearby_figure_label(page_markdown, match.start())
+            replacements.append(
+                (match, f"[FIGURE_START]\n{label}{description}\n[FIGURE_END]")
+            )
 
     # Apply replacements from end to start to preserve string positions
     for match, replacement in sorted(
