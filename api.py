@@ -669,13 +669,20 @@ async def query(req: QueryRequest):
         answer = "".join(tokens).strip()
 
         if lf_trace is not None:
+            # collected_chunks only gets a "---CALL_BOUNDARY---" per non-excel
+            # tool call (query_excel's result is SQL, not chunks — see
+            # stream_agent's collected_chunks guard) — so only zip against the
+            # non-excel names, or an excel+search mix silently mislabels spans.
             groups = [
                 g.strip()
                 for g in "\n\n".join(collected).split("---CALL_BOUNDARY---")
                 if g.strip()
             ]
-            for name, group in zip(trace_holder["tools"], groups):
+            retrieval_names = [t for t in trace_holder["tools"] if t != "query_excel"]
+            for name, group in zip(retrieval_names, groups):
                 lf_trace.span(name=name, input={"question": question}, output=group[:2000])
+            for sql in trace_holder["sql"]:
+                lf_trace.span(name="query_excel", input={"question": question}, output=sql[:2000])
             lf_trace.span(name=f"attempt:{attempt}", input=question, output=answer)
 
         return answer, collected, trace_holder
