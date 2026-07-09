@@ -1,8 +1,16 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { FileText, FileSpreadsheet, Image, FileCode, File, ScanSearch, Trash2 } from "lucide-react";
-import { getDocuments, getStats, deleteDocument, clearCollection, type Document, type Stats } from "@/lib/api";
+import { FileText, FileSpreadsheet, Image, FileCode, File, ScanSearch, Trash2, RefreshCw } from "lucide-react";
+import {
+  getDocuments,
+  getStats,
+  deleteDocument,
+  reindexDocument,
+  clearCollection,
+  type Document,
+  type Stats,
+} from "@/lib/api";
 import { cn } from "@/lib/utils";
 import UploadZone from "./UploadZone";
 
@@ -123,9 +131,29 @@ export default function Sidebar({ onToast, onInspect, onCollectionCleared }: Pro
                     >
                       {doc.status}
                     </span>
+                    {doc.last_indexed_at && (
+                      <span className="text-[10px] text-ink-400">
+                        {new Date(doc.last_indexed_at).toLocaleDateString()}
+                      </span>
+                    )}
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                  <button
+                    onClick={async () => {
+                      try {
+                        await reindexDocument(doc.filename);
+                        onToast(`Re-indexing ${basename}…`);
+                        refresh();
+                      } catch (e) {
+                        onToast(e instanceof Error ? e.message : "Re-index failed", "error");
+                      }
+                    }}
+                    title="Re-index document"
+                    className="rounded p-1 text-ink-400 hover:bg-ink-100 hover:text-ink-700"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                  </button>
                   {canInspect && (
                     <button
                       onClick={() => onInspect(doc.filename)}
