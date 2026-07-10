@@ -489,11 +489,16 @@ def _column_matches_question(column_name: str, question: str) -> bool:
     for ("invoice number") -- so only the target-field phrase is compared now.
     """
     q_words = set(re.findall(r"[a-z]+", _target_field_phrase(question).lower()))
-    col_words = set(re.findall(r"[a-z]+", column_name.lower())) - _GENERIC_COLUMN_WORDS
+    raw_col_words = set(re.findall(r"[a-z]+", column_name.lower()))
+    col_words = raw_col_words - _GENERIC_COLUMN_WORDS
     if not col_words:
-        # Column name is entirely generic words (e.g. bare "Amount", "Date") — too
-        # little signal either way to block on, so don't.
-        return True
+        # Column name is entirely generic words (e.g. bare "Amount", "Date") --
+        # too little signal to compare on stripped vocabulary, but an unconditional
+        # pass here let a column like "Total" answer a "payment method" question
+        # (reproduced: doc_007 qa_9). Fall back to raw (unstripped) overlap instead:
+        # "Amount" still matches "what is the amount", "Total" no longer matches
+        # "payment method".
+        return bool(raw_col_words & q_words)
     return bool(col_words & q_words)
 
 

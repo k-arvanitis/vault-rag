@@ -43,3 +43,19 @@ def test_column_match_allows_real_match_on_target_field():
 def test_column_match_still_blocks_unrelated_column_without_row_qualifier():
     q = "What payment method was used for the transaction with the largest Total?"
     assert _column_matches_question("Merchant Category", q) is False
+
+
+def test_column_match_blocks_generic_column_with_no_real_overlap():
+    """ "Total" is a generic word, so it used to auto-pass the gate no matter what
+    was asked -- reproduced: doc_007_qa_9 let "Total" answer a "payment method"
+    question, hallucinating an answer instead of refusing. A generic column must
+    still share a literal word with the question to pass."""
+    q = "What payment method was used for the transaction with the largest Total in the published spend report?"
+    assert _column_matches_question("Total", q) is False
+
+
+def test_column_match_allows_generic_column_with_real_overlap():
+    """Generic columns should still pass when the question actually asks for
+    that generic field (e.g. "Amount" answering "what is the amount")."""
+    q = "What is the amount for transaction number 6091984?"
+    assert _column_matches_question("Amount", q) is True
