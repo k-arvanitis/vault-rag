@@ -14,8 +14,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from src.answer_quality import _is_multi_part_query, _llm_split_subqueries
-from src.config import GENERATION_API_BASE, GENERATION_MODEL, MAX_TOOL_RESULTS
+from src.answer_quality import _is_multi_part_query, _split_multi_part_query
+from src.config import MAX_TOOL_RESULTS
 from src.file_resolver import resolve_original_name as _resolve_original_name
 from src.rag_agent import route_question, routing_directive, stream_agent
 from src.vector_store import _stable_id
@@ -29,22 +29,6 @@ _RETRY_INSTRUCTION = (
     "document_summary chunk and read its Document ID (doc_XXX). "
     "(2) call search_knowledge_base again with the original question, passing that doc_id "
     "as the doc_id argument to scope the search to that specific document."
-)
-
-# Detects "compare X and Y" / "which document does A, which does B" style questions —
-# these require evidence from two distinct sources. A prompt rule alone was verified
-# not to reliably stop the agent from answering half from general knowledge instead
-# of making the second required tool call; this check forces a real second retrieval.
-_COMPARISON_RE = re.compile(
-    r"\b(compare|comparing|versus|vs\.?|both .+ and\b|between .+ and\b|which .+ and which)\b",
-    re.IGNORECASE,
-)
-
-_COMPARISON_RETRY_INSTRUCTION = (
-    "\n\nIMPORTANT: This is a retry. This is a two-part comparison question and the "
-    "previous attempt only retrieved evidence from one source. Do NOT answer the other "
-    "part from general knowledge. Make a second search_knowledge_base call scoped to "
-    "the other document or topic named in the question before finalizing your answer."
 )
 
 # Chunk header format: "[1] file=name.pdf chunk=5 score=0.8312"
@@ -227,13 +211,17 @@ def run_once(
         for name, group in zip(retrieval_names, groups):
             trace.span(name=name, input={"question": question}, output=group[:2000])
         for sql in sql_trace:
-            trace.span(name="query_excel", input={"question": question}, output=sql[:2000])
+            trace.span(
+                name="query_excel", input={"question": question}, output=sql[:2000]
+            )
         trace.span(name=f"attempt:{attempt}", input=question, output=answer)
 
     return answer, collected, trace_holder
 
 
-def answer_one(agent: Any, question: str, trace: Any = None) -> tuple[str, list[str], dict]:
+def answer_one(
+    agent: Any, question: str, trace: Any = None
+) -> tuple[str, list[str], dict]:
     """Answer one question, with a forced retry on a bare Unsupported.
 
     First resolves the tool deterministically: route_question matches the
@@ -245,12 +233,6 @@ def answer_one(agent: Any, question: str, trace: Any = None) -> tuple[str, list[
     Groq inference at temp=0 still has small nondeterminism; the agent
     occasionally skips doc-routing on the first attempt and returns
     Unsupported despite the answer existing. The retry forces the protocol.
-
-    A second, separate retry covers a different failure: on a comparison
-    question, the agent sometimes retrieves only one of the two required
-    sources and answers the other half from general knowledge instead of
-    making the second tool call. Detected after the fact by checking how
-    many distinct source files the retrieved chunks actually span.
     """
     route = route_question(question)
     q = routing_directive(route) + question
@@ -261,43 +243,19 @@ def answer_one(agent: Any, question: str, trace: Any = None) -> tuple[str, list[
         )
         if r_ans.lower() != "unsupported" and r_ans:
             return r_ans, r_coll, r_tr
-        return ans, coll, tr
-    if _COMPARISON_RE.search(question):
-        n_sources = len({s["filename"] for s in parse_sources(coll)})
-        if n_sources < 2:
-            r_ans, r_coll, r_tr = run_once(
-                agent, q + _COMPARISON_RETRY_INSTRUCTION, attempt="comparison-retry", trace=trace
-            )
-            r_sources = len({s["filename"] for s in parse_sources(r_coll)})
-            if r_ans and r_sources > n_sources:
-                return r_ans, r_coll, r_tr
     return ans, coll, tr
 
 
 def answer_query(agent: Any, question: str, trace: Any = None) -> dict:
     """Full answer pipeline: split, answer each part, merge, and format sources.
 
-    Splitting uses the LLM decomposer (_llm_split_subqueries), not a blind
-    regex slice: a plain string split leaves cross-clause pronouns dangling
-    ("...which mission achieved X, and what amount did IT achieve?" splits
-    into a fragment with no antecedent for "it"), which sends that fragment
-    into its own zero-context agent run and it searches blind. The LLM
-    decomposer is prompted to keep entity names in every sub-query, so "it"
-    becomes "the mission with the highest benefits" — verified live. Falls
-    back to the regex splitter only if the LLM call itself fails (rare;
-    degrades to the old behavior for that one question).
-
-    Comparison questions are the one exception: splitting strips the "Comparing
-    X and Y" clause that binds each fragment to a specific document, so a
-    fragment like "what is that deadline" reaches routing with no document
-    context and can land on a completely unrelated document. Keeping the
-    question whole lets _COMPARISON_RE match in answer_one() and its
-    two-source retry actually do its job.
+    Multi-part questions are split and answered one sub-question at a time,
+    then merged here deterministically. The agent's single-pass synthesis
+    intermittently drops a part, so we never rely on it for that — each
+    sub-question runs on its own and every part is guaranteed in the output.
     """
     parts = (
-        [question]
-        if _COMPARISON_RE.search(question)
-        else _llm_split_subqueries(question, GENERATION_API_BASE, GENERATION_MODEL)
+        _split_multi_part_query(question)
         if _is_multi_part_query(question)
         else [question]
     )
