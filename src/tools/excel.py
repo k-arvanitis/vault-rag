@@ -451,16 +451,44 @@ def _extract_selected_columns(sql: str) -> list[str]:
     return columns
 
 
+# Row-qualifier clauses ("for the transaction with the highest...", "on 2025-04-03",
+# "in PLACE / STREET SCENE") describe which ROW is meant, not which FIELD is being
+# asked for -- but their words (e.g. "transaction") can accidentally overlap a wrong
+# column's name (e.g. "Transaction Number" answering an "invoice number" question),
+# passing the vocabulary gate on a coincidence instead of a real match. Cut the
+# question off at the first such clause before comparing.
+_ROW_QUALIFIER_RE = re.compile(r"\b(?:for|with|on|in)\s+the\b", re.IGNORECASE)
+_TARGET_FIELD_PREFIX_RE = re.compile(
+    r"^\s*what\s+(?:is|was|are|were)\s+(?:the\s+)?", re.IGNORECASE
+)
+
+
+def _target_field_phrase(question: str) -> str:
+    """Return the leading phrase naming the field asked for, dropping any
+    trailing row-qualifier clause. Falls back to the full question if no
+    clause boundary is found."""
+    q = question.strip().rstrip("?")
+    m = _ROW_QUALIFIER_RE.search(q)
+    head = q[: m.start()] if m else q
+    head = _TARGET_FIELD_PREFIX_RE.sub("", head).strip()
+    return head or question
+
+
 def _column_matches_question(column_name: str, question: str) -> bool:
     """Hard gate backing the SQL-writing prompt's column-matching rule: does this
-    column's own wording appear anywhere in the question, ignoring generic words?
+    column's own wording appear anywhere in the field the question actually asks
+    for, ignoring generic words and any trailing row-qualifier clause?
 
     Relying on the LLM to self-police "is this really the same concept" is unreliable
     (verified: it still substitutes "Merchant Category" for "payment method" about half
     the time even when explicitly told not to) — this catches the cases where the
-    selected column shares no real vocabulary with what was asked at all.
+    selected column shares no real vocabulary with what was asked at all. Matching
+    against the whole question let a row-qualifier's incidental words (e.g.
+    "transaction" in "...for the transaction with the highest NET Amount") pass a
+    wrong column ("Transaction Number") that has nothing to do with the field asked
+    for ("invoice number") -- so only the target-field phrase is compared now.
     """
-    q_words = set(re.findall(r"[a-z]+", question.lower()))
+    q_words = set(re.findall(r"[a-z]+", _target_field_phrase(question).lower()))
     col_words = set(re.findall(r"[a-z]+", column_name.lower())) - _GENERIC_COLUMN_WORDS
     if not col_words:
         # Column name is entirely generic words (e.g. bare "Amount", "Date") — too
