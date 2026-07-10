@@ -355,8 +355,18 @@ def answer_query(agent: Any, question: str, trace: Any = None) -> dict:
             "collected": collected,
         }
 
+    # Comparison questions are kept whole: splitting strips the "Comparing X
+    # and Y" clause that binds each fragment to a specific document, so a
+    # fragment like "which one prohibits evergreen contracts" reaches routing
+    # with no document context and lands on the wrong doc or Unsupported.
+    # Keeping it whole lets _COMPARISON_RE match in answer_one() and its
+    # two-source retry actually do its job. Reproduced directly: without this,
+    # a "Comparing X and Y, which..." question came back "1. Unsupported /
+    # 2. Unsupported" -- both fragments split apart and lost the comparison.
     parts = (
-        _split_multi_part_query(question)
+        [question]
+        if _COMPARISON_RE.search(question)
+        else _split_multi_part_query(question)
         if _is_multi_part_query(question)
         else [question]
     )
