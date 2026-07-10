@@ -1,7 +1,15 @@
-import pytest
 import json
+
 import openpyxl
-from src.preprocessing.excel_cleaner import process_file, heuristic_fallback, _parse_llm_json, find_data_end_row
+import pytest
+
+from src.preprocessing.excel_cleaner import (
+    _parse_llm_json,
+    find_data_end_row,
+    heuristic_fallback,
+    process_file,
+)
+
 
 @pytest.fixture
 def mock_llm_fn():

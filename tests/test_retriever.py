@@ -6,9 +6,9 @@ from __future__ import annotations
 
 import json
 import math
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-import tempfile
 
 from src.retriever import (
     _cosine_similarity,
@@ -16,7 +16,6 @@ from src.retriever import (
     infer_query_chunk_types,
     retrieve,
 )
-
 
 # ---------------------------------------------------------------------------
 # _cosine_similarity

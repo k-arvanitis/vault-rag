@@ -8,8 +8,8 @@ from pathlib import Path
 
 import tiktoken
 
-from src.config import CHUNK_MAX_TOKENS, CHUNK_MIN_TOKENS
 from src.chunker import chunk_markdown
+from src.config import CHUNK_MAX_TOKENS, CHUNK_MIN_TOKENS
 
 
 def _make_long_markdown(n_sections: int = 10, words_per_section: int = 400) -> str:

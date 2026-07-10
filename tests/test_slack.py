@@ -8,7 +8,6 @@ from unittest.mock import MagicMock, patch
 
 from slack_app import _strip_mention, handle_dm, handle_mention
 
-
 # ---------------------------------------------------------------------------
 # _strip_mention
 # ---------------------------------------------------------------------------

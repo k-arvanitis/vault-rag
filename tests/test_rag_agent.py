@@ -7,23 +7,28 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, SystemMessage, ToolMessage
-
-from src.rag_agent import (
-    SYSTEM_PROMPT,
-    _extract_refs,
-    _is_thinking_model,
-    _build_system_prompt,
-    ask_agent,
-    stream_agent,
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
 )
+
 from src.answer_quality import (
     _context_source_count,
     _extract_key_value_answer,
     _repair_incomplete_answer,
 )
+from src.rag_agent import (
+    SYSTEM_PROMPT,
+    _build_system_prompt,
+    _extract_refs,
+    _is_thinking_model,
+    ask_agent,
+    stream_agent,
+)
 from src.tools.retrieval_tool import _best_snippet, _hyde
-
 
 # ---------------------------------------------------------------------------
 # _extract_refs

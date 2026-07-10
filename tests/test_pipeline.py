@@ -8,7 +8,6 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
-
 from src.pipeline import (
     _is_unsupported,
     _looks_excel,
@@ -17,7 +16,6 @@ from src.pipeline import (
     build_decomposition_pipeline,
     build_reflection_pipeline,
 )
-
 
 # ---------------------------------------------------------------------------
 # Shared helpers
