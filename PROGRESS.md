@@ -885,3 +885,71 @@ was discarded each time and `eval/results/*.jsonl` restored to the consistent pr
 | Unanswerable refusal rate (n=14) | 78.6% |
 | Eval dataset | 109 questions (custom), 18 documents |
 | Judge | `gpt-4o-mini` (OpenAI) |
+
+---
+
+## Session update — sparse-vector/doc_id backfill, routing gate, title shortcut, gate hole (2026-07-10)
+
+Ran the full 109-question eval to measure the cumulative effect of this session's fixes
+(sparse-vector schema bug, doc_id backfill, comparison-retry, title shortcut, `route_question`
+confidence gate). Real, banked wins: hit@5 95.9%→98.6%, structured/Excel 90.5%→95.2%,
+faithfulness 79.5%→80.1%. Two things looked wrong and were investigated in full rather than
+explained away:
+
+**`cross_document_compare` looked like a 87.5%→72.5% regression — mostly a measurement
+artifact, one real bug (now fixed).** Re-judged the frozen 109-merged baseline's 20
+`cross_document_compare` rows with the *current* judge (same `_custom_judge_answer`, no
+pipeline re-run) to separate judge drift from pipeline regression: baseline re-scores at 85%
+under today's judge (not the frozen 87.5% — judge itself moved ~2.5pts, within noise). Diffing
+baseline vs. fresh run predicted answers for every question that dropped:
+- `cross_document_added_qa__qa_2` (doc_009 vs doc_010 misattribution): baseline was already
+  only 0.5, not 1.0 — pre-existing gold ambiguity (two docs both plausibly "HR policy"), not a
+  new regression.
+- `doc_003_doc_008_qa_1`: both facts correct in the fresh answer, scored 0 only for omitting the
+  `doc_003`/`doc_008` naming convention — judge artifact, not a real miss.
+- `doc_001_doc_002_cross_document_qa__qa_3` ("1. Unsupported / 2. Unsupported"): **real bug** —
+  re-adding comparison-retry (`d340d7e`) without restoring the original "keep comparison
+  questions whole, don't split" exemption that shipped with it. Fixed in `7962e1e`
+  (`src/answer_pipeline.py`, `answer_query()`): comparison questions now bypass the
+  multi-part splitter again. Verified deterministically (no LLM) that this exact question no
+  longer gets split.
+- `doc_001_doc_002_cross_document_qa__qa_4` ("Between LACERA... which prohibits evergreen...")
+  answered a flat "Unsupported" — **not** a split-bug case (matches `_COMPARISON_RE`, was never
+  split even before the fix). Root cause not identified. **Open, undiagnosed** — do not assume
+  the split fix covers it; needs its own investigation before claiming cross_doc is fully fixed.
+
+**`unanswerable`/should-refuse failures (stuck at 78.6%) — 3 concrete cases, 3 different root
+causes, one fixed:**
+1. `doc_006_qa_9` (invoice-number hallucination): `route_question()` routes to
+   `doc_005_fueling_records_invoice.pdf` with high confidence — 2-of-3 top hits genuinely agree
+   on the wrong document because of the literal shared word "invoice" between question and
+   doc_005's title/content. This is *not* the same failure mode the `route_question` confidence
+   gate (`beee72d`) fixes — that gate only catches top-3 *disagreement*; here the top-3
+   consistently and wrongly agree. **Open, no fix implemented** — a keyword-overlap routing
+   problem, needs a different mechanism (e.g. weighting doc-title match lower than content
+   match, or a secondary "does this doc's schema even have the asked-for concept" check before
+   trusting routing).
+2. `doc_007_qa_9` ("What payment method...largest Total...?", gold `Unsupported`, doc_007 has no
+   payment-method column at all): **real bug, fixed** in `6924a78`
+   (`src/tools/excel.py`, `_column_matches_question()`). The SQL selected only the `Total`
+   column; `Total` is in `_GENERIC_COLUMN_WORDS`, and the old fallback for a column stripped to
+   zero non-generic words was an unconditional `True` ("too little signal to block") —
+   meaning any all-generic column (`Total`, bare `Amount`) passed the gate regardless of what
+   was actually asked, letting the agent hallucinate "Fedwire Funds transfers." Fixed: the
+   empty-strip fallback now checks raw (unstripped) word overlap with the question instead of
+   auto-passing — `Amount` still matches "what is the amount", `Total` no longer matches
+   "payment method". Added regression tests in `tests/test_excel_tool.py`.
+3. `doc_015_qa_5` (SOP manual vacation policy, gold `Unsupported`): predicted answer is
+   substantively from a *different* document (`doc_010`, Rosemont Employee Handbook) while
+   purporting to answer about `doc_015` (Food SOP Manual) — a cross-document content
+   contamination/false-attribution failure, not a routing miss (`route_question()` correctly
+   returns an empty modality here). **Open, root cause not identified** — untraced whether this
+   is retrieval-side (doc_010 chunks ranking in doc_015's context window) or generation-side
+   (agent citing the wrong doc_id while quoting real doc_010 content).
+
+**Net effect: real fixes landed for the split-bug and the column-gate hole. Two failure modes
+(keyword-pull routing, cross-doc contamination) are diagnosed with concrete repro but not
+fixed — recorded here as known limitations rather than forced tonight.** Have not re-run the
+full eval after the two fixes in this update; the split-fix and gate-fix are each verified
+deterministically/directly against their specific failing case, not via a fresh 109-question
+run.
