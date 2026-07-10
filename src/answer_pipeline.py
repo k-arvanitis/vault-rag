@@ -15,9 +15,10 @@ import re
 from typing import Any
 
 from src.answer_quality import _is_multi_part_query, _split_multi_part_query
-from src.config import MAX_TOOL_RESULTS
+from src.config import MAX_TOOL_RESULTS, QDRANT_COLLECTION, QDRANT_URL
 from src.file_resolver import resolve_original_name as _resolve_original_name
 from src.rag_agent import route_question, routing_directive, stream_agent
+from src.retriever import retrieve
 from src.vector_store import _stable_id
 
 _CALL_BOUNDARY = "---CALL_BOUNDARY---"
@@ -30,6 +31,53 @@ _RETRY_INSTRUCTION = (
     "(2) call search_knowledge_base again with the original question, passing that doc_id "
     "as the doc_id argument to scope the search to that specific document."
 )
+
+# Detects "what is the title of this document" style questions. Answered
+# directly from a document_summary chunk's literal "Title:" line (see
+# src/chunker.py's extract_literal_title) instead of letting the agent
+# generate an answer -- verified live (qwen3-32b) that generation ignores
+# the Title: line even when it's the #1-ranked retrieved chunk after
+# reranking, picking a more prominent section heading instead. A prompt rule
+# telling the model to prefer it is a coin flip against that nondeterminism;
+# a deterministic lookup is not.
+_TITLE_QUESTION_RE = re.compile(
+    r"\btitle of\b"
+    r"|\bthe title\b"
+    r"|\b(?:document|file)(?:'s)? title\b"
+    r"|\bwhat is this (?:document|file) (?:titled|called)\b",
+    re.IGNORECASE,
+)
+_TITLE_LINE_RE = re.compile(r"^Title: (.+)$", re.MULTILINE)
+
+
+def _title_shortcut_answer(question: str) -> tuple[str, list[str]] | None:
+    """Return (answer, collected) from a document_summary's Title: line, or
+    None if the question isn't a title question or no chunk has that line."""
+    if not _TITLE_QUESTION_RE.search(question):
+        return None
+    try:
+        hits = retrieve(
+            query=question,
+            qdrant_url=QDRANT_URL,
+            collection=QDRANT_COLLECTION,
+            top_k=3,
+            use_qdrant=True,
+            force_chunk_types=["document_summary"],
+        )
+    except Exception:
+        return None
+    for hit in hits:
+        content = hit.get("content") or ""
+        m = _TITLE_LINE_RE.search(content)
+        if not m:
+            continue
+        meta = hit.get("metadata") or {}
+        file_name = meta.get("file_name") or meta.get("source_file") or "unknown"
+        score = hit.get("score") or 1.0
+        collected = [f"[1] file={file_name} chunk=-1 score={score:.4f}\n{content}"]
+        return m.group(1).strip(), collected
+    return None
+
 
 # Detects "compare X and Y" / "which document does A, which does B" style questions —
 # these require evidence from two distinct sources. A prompt rule alone was verified
@@ -288,7 +336,25 @@ def answer_query(agent: Any, question: str, trace: Any = None) -> dict:
     then merged here deterministically. The agent's single-pass synthesis
     intermittently drops a part, so we never rely on it for that — each
     sub-question runs on its own and every part is guaranteed in the output.
+
+    Title questions ("what is the title of...") are answered directly from
+    a document_summary chunk's Title: line, bypassing the agent entirely —
+    see _title_shortcut_answer.
     """
+    shortcut = _title_shortcut_answer(question)
+    if shortcut is not None:
+        title, collected = shortcut
+        if trace is not None:
+            trace.span(name="title-shortcut", input=question, output=title)
+        return {
+            "answer": title,
+            "sources": parse_sources(collected),
+            "sql": [],
+            "tools": ["search_knowledge_base"],
+            "rejected_sources": [],
+            "collected": collected,
+        }
+
     parts = (
         _split_multi_part_query(question)
         if _is_multi_part_query(question)
