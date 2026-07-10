@@ -79,6 +79,96 @@ def generate_document_summary(client: OpenAI, model_name: str, markdown: str) ->
         return f"Summary unavailable: {e}"
 
 
+_MD_HEADING_LINE_RE = re.compile(r"^#{1,3}\s*\**\s*(.+?)\s*\**\s*$")
+_HTML_HEADING_LINE_RE = re.compile(r"^<h[1-3]>\s*(.+?)\s*</h[1-3]>$", re.IGNORECASE)
+_PAGE_OR_FIGURE_LINE_RE = re.compile(
+    r"^\s*(<!--\s*PAGE|\[FIGURE_START\]|\[FIGURE_END\])"
+)
+_TABLE_ROW_LINE_RE = re.compile(r"^\|")
+
+# First headings that are administrative labels/boilerplate, not the document's
+# actual title (e.g. GAO reports open "## Report to Congressional Addressees"
+# before the real title as a plain-text line right after; government letters
+# open with the sender's letterhead). Matched against the whole heading text,
+# so it must be an exact/near-exact hit, not a substring, to avoid rejecting a
+# real title that happens to contain one of these words.
+_GENERIC_HEADING_RE = re.compile(
+    r"^(table of contents|contents|report to congress(ional addressees)?|"
+    r"village board|city council|board of (directors|trustees)|introduction)$",
+    re.IGNORECASE,
+)
+
+# Candidates that are technically present but not a usable title: a bare date
+# (a letter's dateline), a bare section-number label ("1 Interpretation",
+# "111th" left dangling from a title split across two lines), too short to be
+# meaningful. Rejecting these is safer than inserting a wrong "Title:" line
+# that the answering prompt now treats as authoritative.
+_DATE_LIKE_RE = re.compile(r"^[A-Za-z]+\s+\d{1,2},?\s+\d{4}$")
+_BARE_NUMBER_RE = re.compile(r"^\d+(st|nd|rd|th)?\.?$")
+_LEADING_NUMBER_LABEL_RE = re.compile(r"^\d+(\.\d+)*[.)]?\s+\S")
+
+
+def _looks_like_title(text: str) -> bool:
+    """Reject candidates too short, numeric-only, or date-like to be a real title."""
+    if not text or len(text) < 4:
+        return False
+    if _DATE_LIKE_RE.match(text) or _BARE_NUMBER_RE.match(text):
+        return False
+    if _LEADING_NUMBER_LABEL_RE.match(text) and len(text.split()) <= 3:
+        return False
+    return True
+
+
+def _heading_text(line: str) -> str | None:
+    """Return a markdown/HTML heading line's text, or None if it isn't one."""
+    m = _MD_HEADING_LINE_RE.match(line) or _HTML_HEADING_LINE_RE.match(line)
+    return m.group(1).strip() if m else None
+
+
+def extract_literal_title(markdown: str, max_chars: int = 3000) -> str:
+    """Return the document's literal title near the top of the document.
+
+    generate_document_summary() only ever produces an LLM paraphrase (e.g. "the
+    policy for X and Y..."), never the literal cover-page title -- so a "what is
+    the title of this document" question has no verbatim text to match against,
+    and generation tends to pick a more prominent section heading deeper in the
+    document instead.
+
+    The first heading (markdown # or HTML <h1-3>) within the cover-page area is
+    usually the literal title (doc_001's "## POLICY FOR THE PROCUREMENT OF
+    GOODS AND SERVICES (PGS)"). But some documents open with an administrative
+    label heading instead (GAO reports: "## Report to Congressional
+    Addressees"; government letters: "## VILLAGE BOARD" letterhead) -- when the
+    first heading matches that pattern, the real title is the next non-empty
+    line instead (heading or plain text), not the label itself.
+    """
+    lines = [line.strip() for line in markdown[:max_chars].splitlines()]
+    content_lines = [
+        line
+        for line in lines
+        if line
+        and not _PAGE_OR_FIGURE_LINE_RE.match(line)
+        and not _TABLE_ROW_LINE_RE.match(line)
+    ]
+    for i, line in enumerate(content_lines):
+        heading = _heading_text(line)
+        if heading is None:
+            continue
+        if not _GENERIC_HEADING_RE.match(heading):
+            return heading if _looks_like_title(heading) else ""
+        # Generic label heading -- the real title is the next content line,
+        # whether it's another heading or a plain descriptive sentence. Skip
+        # candidates too short/date-like/numeric to be a real title instead of
+        # inserting one that's technically present but wrong.
+        for next_line in content_lines[i + 1 :]:
+            candidate = _heading_text(next_line) or next_line
+            if _looks_like_title(candidate):
+                return candidate
+            break
+        return ""
+    return ""
+
+
 def contextualize_chunk(
     client: OpenAI, model_name: str, doc_context: str, chunk_content: str
 ) -> str:
@@ -352,10 +442,12 @@ def chunk_markdown(
         # Derive a doc_NNN id from the file name for the summary chunk header.
         doc_id_match = re.search(r"doc_\d+", file_name)
         doc_id = doc_id_match.group(0) if doc_id_match else ""
+        literal_title = extract_literal_title(markdown)
+        title_line = f"Title: {literal_title}\n" if literal_title else ""
         id_header = (
-            f"Document ID: {doc_id}\nFile: {file_name}\n\n"
+            f"Document ID: {doc_id}\nFile: {file_name}\n{title_line}\n"
             if doc_id
-            else f"File: {file_name}\n\n"
+            else f"File: {file_name}\n{title_line}\n"
         )
         summary_content = f"## Document Summary\n\n{id_header}{doc_summary}"
         summary_chunk = Chunk(
