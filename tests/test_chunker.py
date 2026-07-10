@@ -80,3 +80,21 @@ def test_chunk_output_has_required_fields():
         assert hasattr(chunk, "metadata"), "Chunk is missing 'metadata' attribute"
         assert isinstance(chunk.content, str), "'content' should be a str"
         assert isinstance(chunk.metadata, dict), "'metadata' should be a dict"
+
+
+def test_every_chunk_gets_doc_id_from_file_name():
+    """Only the document_summary chunk used to carry doc_id -- every regular
+    narrative chunk had none, so doc-scoped retrieval filters silently matched
+    nothing for most of the corpus. doc_id must be derived for every chunk."""
+    md = "## Introduction\n\nThis is a short test document with enough text to form a chunk.\n"
+    with tempfile.TemporaryDirectory() as tmp:
+        chunks = chunk_markdown(
+            md,
+            enrich_with_llm=False,
+            verbose=False,
+            output_dir=Path(tmp),
+            file_name="doc_042_example.md",
+        )
+    assert chunks
+    for chunk in chunks:
+        assert chunk.metadata.get("doc_id") == "doc_042"

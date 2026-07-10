@@ -383,6 +383,14 @@ def chunk_markdown(
         metadata["subsection"] = str(metadata.get("subsection", "") or "").strip()
         metadata["file_name"] = file_name or metadata.get("file_name", "unknown")
         metadata["source_file"] = source_file or metadata.get("source_file", "")
+        # doc_id was previously only set on the document_summary chunk (built
+        # above when enrich_with_llm is on) -- every other chunk had no doc_id
+        # at all, so any retrieval call scoped to a specific document (routing
+        # directives, cross-document comparison retries) silently searched
+        # nothing for narrative/page chunks. Derive it here for every chunk.
+        if not metadata.get("doc_id"):
+            doc_id_match = re.search(r"doc_\d+", metadata["file_name"])
+            metadata["doc_id"] = doc_id_match.group(0) if doc_id_match else ""
         metadata["chunk_index"] = i
         metadata["chunk_size_chars"] = len(chunk.content)
         metadata["token_count"] = chunk.token_count

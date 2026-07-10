@@ -88,7 +88,7 @@ def ingest_embeddings(
         point_id = _stable_id(file_name, chunk_idx) if file_name else i
         point: dict = {
             "id": point_id,
-            "vector": row["embedding"],
+            "vector": {"": row["embedding"]},
             "payload": {
                 "source_id": row.get("id", i),
                 "content": row.get("content", ""),
@@ -98,9 +98,7 @@ def ingest_embeddings(
         }
         try:
             sparse_indices, sparse_values = get_sparse_embedder().embed(vector_text)
-            point["sparse_vectors"] = {
-                "sparse": {"indices": sparse_indices, "values": sparse_values}
-            }
+            point["vector"]["sparse"] = {"indices": sparse_indices, "values": sparse_values}
         except Exception:
             pass  # Fall back to dense-only point
         points.append(point)
