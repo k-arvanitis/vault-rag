@@ -174,8 +174,24 @@ def route_question(
         meta = hit.get("metadata") or {}
         return meta.get("source_file") or meta.get("file_name") or ""
 
-    # Majority vote over the top-3 hits: more table-extension sources -> excel.
+    # Confidence gate: don't emit a directive when the top-3 hits don't even
+    # agree on which DOCUMENT is meant. A generic financial-lookup phrasing
+    # ("total amount for transaction number X") can rank three unrelated
+    # documents in the top-3 with no single one dominating -- reproduced
+    # directly: hits[0] came back as a wrong document (an unrelated invoice
+    # PDF) for a question whose real answer was in a completely different
+    # spreadsheet that didn't even place in the top-5. The directive told the
+    # agent "use X, not the other" with unearned confidence and it complied,
+    # querying the wrong document instead of abstaining or asking the agent's
+    # own judgment (which, undirected, answered this exact case correctly
+    # every time in testing). Require at least 2 of the top-3 hits to agree
+    # on the source document before trusting hits[0] enough to route on it.
     top = hits[:3]
+    top_source = _source(hits[0])
+    if sum(1 for h in top if _source(h) == top_source) < 2:
+        return {"modality": "", "source_file": ""}
+
+    # Majority vote over the top-3 hits: more table-extension sources -> excel.
     table_votes = sum(1 for h in top if _source(h).lower().endswith(_TABLE_EXTS))
     is_table = table_votes > len(top) - table_votes
 

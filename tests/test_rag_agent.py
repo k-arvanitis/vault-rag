@@ -3,6 +3,7 @@
 No real LLM, Qdrant, or reranker is used. The LangGraph agent is replaced
 with a mock whose invoke/stream output is controlled per test.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -26,6 +27,7 @@ from src.rag_agent import (
     _extract_refs,
     _is_thinking_model,
     ask_agent,
+    route_question,
     stream_agent,
 )
 from src.tools.retrieval_tool import _best_snippet, _hyde
@@ -33,6 +35,7 @@ from src.tools.retrieval_tool import _best_snippet, _hyde
 # ---------------------------------------------------------------------------
 # _extract_refs
 # ---------------------------------------------------------------------------
+
 
 class TestExtractRefs:
     def test_document_chunk_headers_extracted(self):
@@ -61,6 +64,7 @@ class TestExtractRefs:
 # SYSTEM_PROMPT sanity checks
 # ---------------------------------------------------------------------------
 
+
 class TestSystemPrompt:
     def test_contains_tool_name(self):
         assert "search_knowledge_base" in SYSTEM_PROMPT
@@ -76,6 +80,7 @@ class TestSystemPrompt:
 # ---------------------------------------------------------------------------
 # _is_thinking_model
 # ---------------------------------------------------------------------------
+
 
 class TestIsThinkingModel:
     def test_qwen_detected(self):
@@ -111,6 +116,7 @@ class TestIsThinkingModel:
 # _build_system_prompt
 # ---------------------------------------------------------------------------
 
+
 class TestBuildSystemPrompt:
     def test_thinking_model_gets_no_think_prefix(self):
         prompt = _build_system_prompt("qwen3-30b")
@@ -132,6 +138,7 @@ class TestBuildSystemPrompt:
 # ---------------------------------------------------------------------------
 # _hyde
 # ---------------------------------------------------------------------------
+
 
 class TestHyde:
     def test_thinking_model_prompt_has_no_think_prefix(self):
@@ -159,9 +166,12 @@ class TestHyde:
 # Snippet selection
 # ---------------------------------------------------------------------------
 
+
 class TestBestSnippet:
     def test_keeps_query_relevant_window(self):
-        content = "intro " * 300 + "Original Issue Date: December 15, 2005\n" + "tail " * 300
+        content = (
+            "intro " * 300 + "Original Issue Date: December 15, 2005\n" + "tail " * 300
+        )
         snippet = _best_snippet(
             content,
             "What is the original issue date?",
@@ -218,7 +228,9 @@ class TestIncompleteAnswerRepair:
             patch("src.answer_quality._llm_split_subqueries") as split,
             patch("src.answer_quality._coverage_check") as coverage,
             patch("src.answer_quality.retrieve") as retrieve_mock,
-            patch("src.answer_quality._direct_answer_from_context") as answer_from_context,
+            patch(
+                "src.answer_quality._direct_answer_from_context"
+            ) as answer_from_context,
         ):
             split.return_value = [
                 "services contract 30-day payment deadline valid invoice",
@@ -271,11 +283,14 @@ class TestIncompleteAnswerRepair:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_invoke_result(answer: str, tool_content: str = "") -> dict:
     """Build a minimal agent.invoke() result dict."""
     messages = [SystemMessage(content=SYSTEM_PROMPT)]
     if tool_content:
-        tool_msg = ToolMessage(content=tool_content, tool_call_id="tc1", name="search_knowledge_base")
+        tool_msg = ToolMessage(
+            content=tool_content, tool_call_id="tc1", name="search_knowledge_base"
+        )
         messages.append(tool_msg)
     messages.append(AIMessage(content=answer))
     return {"messages": messages}
@@ -285,7 +300,9 @@ def _make_stream_chunks(tokens: list[str], tool_content: str = "") -> list[tuple
     """Build the (chunk, metadata) tuples that agent.stream() would yield."""
     pairs = []
     if tool_content:
-        pairs.append((ToolMessage(content=tool_content, tool_call_id="tc1", name="search"), None))
+        pairs.append(
+            (ToolMessage(content=tool_content, tool_call_id="tc1", name="search"), None)
+        )
     for token in tokens:
         pairs.append((AIMessageChunk(content=token), None))
     return pairs
@@ -294,6 +311,7 @@ def _make_stream_chunks(tokens: list[str], tool_content: str = "") -> list[tuple
 # ---------------------------------------------------------------------------
 # ask_agent
 # ---------------------------------------------------------------------------
+
 
 class TestAskAgent:
     def test_returns_final_answer(self):
@@ -305,7 +323,9 @@ class TestAskAgent:
 
     def test_strips_think_blocks(self):
         agent = MagicMock()
-        agent.invoke.return_value = _make_invoke_result("<think>hidden reasoning</think>Clean answer.")
+        agent.invoke.return_value = _make_invoke_result(
+            "<think>hidden reasoning</think>Clean answer."
+        )
         agent._rag_limits = {}
         result = ask_agent(agent, "q")
         assert "hidden reasoning" not in result
@@ -317,7 +337,7 @@ class TestAskAgent:
         agent._rag_limits = {}
 
         history = [
-            {"role": "user",      "content": "first question"},
+            {"role": "user", "content": "first question"},
             {"role": "assistant", "content": "first answer"},
         ]
         ask_agent(agent, "follow-up", history=history)
@@ -353,7 +373,9 @@ class TestAskAgent:
     def test_no_answer_returns_fallback(self):
         agent = MagicMock()
         # Only a ToolMessage, no final AIMessage
-        agent.invoke.return_value = {"messages": [ToolMessage(content="chunks", tool_call_id="x", name="s")]}
+        agent.invoke.return_value = {
+            "messages": [ToolMessage(content="chunks", tool_call_id="x", name="s")]
+        }
         agent._rag_limits = {}
         result = ask_agent(agent, "q")
         assert result == "No answer generated."
@@ -368,7 +390,10 @@ class TestAskAgent:
         agent._generation_api_base = "http://llm/v1"
         agent._generation_model = "gpt-test"
 
-        with patch("src.rag_agent._direct_answer_from_context", return_value="December 15, 2005") as fallback:
+        with patch(
+            "src.rag_agent._direct_answer_from_context",
+            return_value="December 15, 2005",
+        ) as fallback:
             result = ask_agent(agent, "What is the original issue date?")
 
         assert result == "December 15, 2005"
@@ -388,6 +413,7 @@ class TestAskAgent:
 # stream_agent
 # ---------------------------------------------------------------------------
 
+
 class TestStreamAgent:
     def test_yields_tokens(self):
         agent = MagicMock()
@@ -397,7 +423,9 @@ class TestStreamAgent:
 
     def test_strips_think_blocks(self):
         agent = MagicMock()
-        agent.stream.return_value = _make_stream_chunks(["<think>hidden</think>visible"])
+        agent.stream.return_value = _make_stream_chunks(
+            ["<think>hidden</think>visible"]
+        )
         tokens = list(stream_agent(agent, "q"))
         full = "".join(tokens)
         assert "hidden" not in full
@@ -415,7 +443,9 @@ class TestStreamAgent:
 
     def test_tool_messages_not_yielded(self):
         agent = MagicMock()
-        agent.stream.return_value = _make_stream_chunks(["answer"], tool_content="chunk data")
+        agent.stream.return_value = _make_stream_chunks(
+            ["answer"], tool_content="chunk data"
+        )
         tokens = list(stream_agent(agent, "q"))
         assert "chunk data" not in "".join(tokens)
         assert "answer" in "".join(tokens)
@@ -423,7 +453,9 @@ class TestStreamAgent:
     def test_collected_chunks_populated(self):
         tool_content = "[1] file=a.pdf chunk=0 score=0.9\ncontent A\n\n[2] file=b.pdf chunk=1 score=0.8\ncontent B"
         agent = MagicMock()
-        agent.stream.return_value = _make_stream_chunks(["ok"], tool_content=tool_content)
+        agent.stream.return_value = _make_stream_chunks(
+            ["ok"], tool_content=tool_content
+        )
         chunks: list[str] = []
         list(stream_agent(agent, "q", collected_chunks=chunks))
         # Tool-call boundary marker + 2 content chunks.
@@ -434,7 +466,7 @@ class TestStreamAgent:
         agent = MagicMock()
         agent.stream.return_value = []
         history = [
-            {"role": "user",      "content": "prev q"},
+            {"role": "user", "content": "prev q"},
             {"role": "assistant", "content": "prev a"},
         ]
         list(stream_agent(agent, "new q", history=history))
@@ -459,7 +491,10 @@ class TestStreamAgent:
         agent._generation_api_base = "http://llm/v1"
         agent._generation_model = "gpt-test"
 
-        with patch("src.rag_agent._direct_answer_from_context", return_value="December 15, 2005") as fallback:
+        with patch(
+            "src.rag_agent._direct_answer_from_context",
+            return_value="December 15, 2005",
+        ) as fallback:
             result = "".join(stream_agent(agent, "What is the original issue date?"))
 
         assert result == "December 15, 2005"
@@ -472,3 +507,42 @@ class TestStreamAgent:
         )
         result = "".join(stream_agent(agent, "q"))
         assert result == "Unsupported"
+
+
+def _hit(source_file: str) -> dict:
+    return {"metadata": {"source_file": source_file}}
+
+
+class TestRouteQuestionConfidenceGate:
+    """route_question's top-3 must agree on a document before a directive
+    fires -- reproduced directly: a generic financial-lookup question ranked
+    three unrelated documents in the top-3, none of them the actual answer's
+    document (which didn't even place in the top-5), and the old majority-
+    vote-on-modality-only logic still emitted a confident "use X" directive
+    for the wrong document."""
+
+    def test_suppresses_directive_when_top_3_disagree_on_document(self):
+        with patch(
+            "src.rag_agent.retrieve",
+            return_value=[
+                _hit("doc_005.pdf"),
+                _hit("doc_003.pdf"),
+                _hit("doc_001.pdf"),
+            ],
+        ):
+            route = route_question(
+                "What is the total amount for transaction number 123?"
+            )
+        assert route == {"modality": "", "source_file": ""}
+
+    def test_routes_when_top_3_agree_on_document(self):
+        with patch(
+            "src.rag_agent.retrieve",
+            return_value=[
+                _hit("doc_001.pdf"),
+                _hit("doc_001.pdf"),
+                _hit("doc_003.pdf"),
+            ],
+        ):
+            route = route_question("What is the mandatory review date?")
+        assert route == {"modality": "document", "source_file": "doc_001.pdf"}
