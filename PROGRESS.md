@@ -870,6 +870,8 @@ was discarded each time and `eval/results/*.jsonl` restored to the consistent pr
       (reranker/scoring), not another natural-language description string.
 - [ ] LiteLLM semantic cache (3 open blockers in `TODO_LITELLM.md`) — optional, not blocking
 - [ ] Langfuse cost logging — optional
+- [ ] Connect a real SQL database as an additional data source (alongside the current
+      Excel/CSV-via-DuckDB path) — not scoped or designed yet, just a future direction.
 
 ---
 
