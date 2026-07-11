@@ -7,7 +7,7 @@
 
 # Vault RAG
 
-Private document knowledge assistant for PDFs, scanned documents, spreadsheets, and mixed business files. Ingests messy company documents, routes scanned pages through OCR, indexes prose and tables separately, retrieves with hybrid dense+sparse search and cross-encoder reranking, and answers only with page-level citations. Refuses out-of-corpus questions instead of hallucinating. Runs as a self-hosted application — storage, OCR, embeddings, Qdrant, and DuckDB all run locally. By default, generation and a few enrichment steps call out to external LLM APIs (Groq/OpenRouter); every one of those endpoints is swappable for a local model — see [Privacy & data](#privacy--data) for exactly what leaves the machine and how to keep it fully on-prem.
+Private document knowledge assistant for PDFs, scanned documents, spreadsheets, and mixed business files. Ingests messy company documents, routes scanned pages through OCR, indexes prose and tables separately, retrieves with hybrid dense+sparse search and cross-encoder reranking, and answers only with cited evidence — page-level citations for PDFs, sheet/SQL evidence for spreadsheets. Refuses out-of-corpus questions instead of hallucinating. The storage, OCR, embeddings, Qdrant and DuckDB layers run locally. Generation and optional enrichment use external APIs by default but can be redirected to local OpenAI-compatible endpoints — see [Privacy & data](#privacy--data) for exactly what leaves the machine and how to keep it fully on-prem.
 
 **Who this is for:** Teams with mixed-format internal document collections (PDFs, scanned docs, spreadsheets) who need cited, auditable answers without shipping their files to a SaaS vendor or paying per-page processing fees.
 
@@ -36,7 +36,7 @@ Private document knowledge assistant for PDFs, scanned documents, spreadsheets, 
 - Store prose in Qdrant and tables in DuckDB
 - Retrieve using hybrid dense + sparse search
 - Rerank with a cross-encoder
-- Generate answers with page-level citations
+- Generate answers with page-level citations for PDFs and sheet/SQL evidence for spreadsheets
 - Refuse when evidence is missing
 - Log evaluation: Hit@K, faithfulness, refusal rate
 
@@ -44,12 +44,12 @@ Private document knowledge assistant for PDFs, scanned documents, spreadsheets, 
 
 | Capability | Score | Reading |
 |---|---:|---|
-| Finds the right source (retrieval hit@5) | **96%** | Correct evidence in the top 5 for nearly every question |
-| Grounded answers (faithfulness) | **79%** | Claims supported by / inferable from retrieved text |
-| On-topic answers (relevancy) | **84%** | Answers address the question asked |
-| Single-document factual & table lookups | **~80%** | The bulk of real-world usage |
-| Refuses unanswerable questions | **79%** | Returns `Unsupported` instead of fabricating — see Known limitations |
-| Overall correctness — adversarial/stress-test mix (10 types) | **80%** | Pulled down by figure-grounded questions and cross-doc joins, the hardest cases; single-document lookups (the bulk of real usage, row above) score ~80% |
+| Overall answer correctness — adversarial/stress-test mix (10 types) | **84.7%** | Pulled down by figure-grounded questions and cross-doc joins, the hardest cases |
+| Grounded answers (faithfulness) | **79.5%** | Claims supported by / inferable from retrieved text |
+| On-topic answers (relevancy) | **86.7%** | Answers address the question asked |
+| Finds the right source (retrieval hit@5) | **95.9%** | Correct evidence in the top 5 for nearly every question |
+| Structured-data accuracy (Excel/CSV) | **90.5%** | Text-to-SQL over DuckDB returns the correct cell value |
+| Refuses unanswerable questions | **78.6%** | Returns `Unsupported` instead of fabricating — see Known limitations |
 
 No eval-set-specific shortcuts — every answer comes from the model and tool outputs. Full methodology and detailed metric breakdowns in [Evaluation](#evaluation).
 
@@ -235,7 +235,7 @@ Four design choices that materially moved eval scores. The full writeup of these
 
 ### Retrieval-quality refinements
 
-A second wave of changes after manual UI testing closed specific failure modes — Unsupported-despite-present-data, irrelevant source chunks, file-list dumps for vague queries, and bare-filename "answers". All fixes are domain-agnostic (no question-specific shortcuts) and lifted the unanswerable refusal rate 75% → 100%. Highlights: stem-overlap doc-routing boost + force-inject, per-doc slot reservation in the reranker, neighbor-chunk expansion, prompt-driven `Clarify:` rule, content-based bare-filename answer guard, source-diversity acceptance check on the repair pass, and an API-level forced retry on bare-`Unsupported`. Full rationale + trade-offs: [docs/engineering.md](docs/engineering.md#retrieval-quality-refinements).
+A second wave of changes after manual UI testing closed specific failure modes — Unsupported-despite-present-data, irrelevant source chunks, file-list dumps for vague queries, and bare-filename "answers". All fixes are domain-agnostic (no question-specific shortcuts). On the earlier refusal subset, these changes improved the rate from 75% to 100%. After adding four harder missing-field questions, the current expanded benchmark scores 78.6%. Highlights: stem-overlap doc-routing boost + force-inject, per-doc slot reservation in the reranker, neighbor-chunk expansion, prompt-driven `Clarify:` rule, content-based bare-filename answer guard, source-diversity acceptance check on the repair pass, and an API-level forced retry on bare-`Unsupported`. Full rationale + trade-offs: [docs/engineering.md](docs/engineering.md#retrieval-quality-refinements).
 
 ---
 
