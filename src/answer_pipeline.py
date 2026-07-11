@@ -84,7 +84,8 @@ def _title_shortcut_answer(question: str) -> tuple[str, list[str]] | None:
 # not to reliably stop the agent from answering half from general knowledge instead
 # of making the second required tool call; this check forces a real second retrieval.
 _COMPARISON_RE = re.compile(
-    r"\b(compare|comparing|versus|vs\.?|both .+ and\b|between .+ and\b|which .+ and which)\b",
+    r"\b(?:compare|comparing|versus|vs\.?|both .+ and\b|between .+ and\b|"
+    r"which .+ and which|which .+\bor the .+\?)",
     re.IGNORECASE,
 )
 
@@ -304,17 +305,26 @@ def answer_one(
     making the second tool call. Detected after the fact by checking how
     many distinct source files the retrieved chunks actually span.
     """
-    route = route_question(question)
+    is_comparison = bool(_COMPARISON_RE.search(question))
+    route = {} if is_comparison else route_question(question)
     q = routing_directive(route) + question
     ans, coll, tr = run_once(agent, q, attempt="initial", trace=trace)
     if ans.lower() == "unsupported":
+        # A comparison question that comes back flat Unsupported needs the
+        # "go find the other document" instruction, not the generic single-doc
+        # retry -- the generic one never tells the agent a second source is
+        # missing (reproduced: doc_001_doc_002_qa_1/qa_4 both short-circuited
+        # here before the comparison-retry branch below ever ran).
+        retry_instruction = (
+            _COMPARISON_RETRY_INSTRUCTION if is_comparison else _RETRY_INSTRUCTION
+        )
         r_ans, r_coll, r_tr = run_once(
-            agent, q + _RETRY_INSTRUCTION, attempt="unsupported-retry", trace=trace
+            agent, q + retry_instruction, attempt="unsupported-retry", trace=trace
         )
         if r_ans.lower() != "unsupported" and r_ans:
             return r_ans, r_coll, r_tr
         return ans, coll, tr
-    if _COMPARISON_RE.search(question):
+    if is_comparison:
         n_sources = len({s["filename"] for s in parse_sources(coll)})
         if n_sources < 2:
             r_ans, r_coll, r_tr = run_once(

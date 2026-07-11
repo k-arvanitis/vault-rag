@@ -953,3 +953,69 @@ fixed — recorded here as known limitations rather than forced tonight.** Have 
 full eval after the two fixes in this update; the split-fix and gate-fix are each verified
 deterministically/directly against their specific failing case, not via a fresh 109-question
 run.
+
+---
+
+## Session update — comparison-question retry/routing fix, scoped eval verification (2026-07-11)
+
+Ran the full 109-question eval to check the two fixes from the previous update, plus followed
+through on the still-open `qa_4` retrieval-imbalance gap. Result: `cross_document_compare`
+dropped further, to 67.5% (vs. 85% re-judged baseline) — the split-exemption fix (`7962e1e`)
+did not, by itself, fix the class of bug it was aimed at; it only fixed the one case
+(`qa_3`) with the exact "1. Unsupported / 2. Unsupported" symptom.
+
+**Root cause, found by tracing `answer_one()`'s actual control flow instead of assuming the
+existing comparison-retry mechanism was reachable:**
+1. `doc_001_doc_002_qa_1` never matched `_COMPARISON_RE` at all — its phrasing ("Which document
+   allows a longer extension period: the procurement policy or the services contract terms?")
+   isn't `compare/comparing/versus/vs/both...and/between...and/which...and which`. Regex gap.
+2. For questions that *did* match, a flat `"Unsupported"` first answer hit the **generic**
+   unsupported-retry branch and returned before the comparison-retry branch below it ever ran —
+   the comparison-retry code was live but structurally unreachable for exactly the failure mode
+   it was written to catch.
+3. `route_question()`'s routing directive actively fights comparison questions: it picks one
+   confident single document (`route: {'modality': 'document', 'source_file': 'doc_002...'}`)
+   and tells the agent "concerns doc_002 ... use search_knowledge_base" — the agent then treats
+   this as "the answer lives in doc_002 only" and never retrieves the other required document.
+   Verified directly: `route_question(qa_4)` returns only `doc_002`, but the question needs both
+   `doc_001` and `doc_002`.
+
+**Fix (`src/answer_pipeline.py`):**
+- Broadened `_COMPARISON_RE` to also match "which ... X or the Y?" phrasing.
+- Merged the two retry branches: a comparison question that comes back `Unsupported` now gets
+  `_COMPARISON_RETRY_INSTRUCTION` (search the other document) instead of the generic
+  single-doc retry instruction.
+- Routing directive is now skipped entirely for comparison questions (`route = {} if
+  is_comparison else route_question(question)`) — a single-doc lock is never correct for a
+  question that inherently needs two.
+
+**Verified via scoped eval** (`eval/run_eval.py --category cross_document_compare` +
+`--category unanswerable`, not the full 109 — faster signal, same code path):
+- `cross_document_compare`: 67.5% → 72.5% (net improvement, not a full recovery to 85%).
+  `qa_4` improved 0.0 → 0.5 (partial credit — the retry now fires and does return an answer
+  citing the right document, but not both parts). `doc_003_doc_008_qa_1` and
+  `doc_006_doc_007_qa_3` recovered to 1.0 from the previous run's judge-noise dip. `qa_1` still
+  scores 0.0 in this run — traced separately (see below), root cause is Groq inference
+  nondeterminism at temp=0, not a logic bug: a direct re-run of the same question outside the
+  eval harness returned the correct answer on one attempt and `Unsupported` on another, with the
+  underlying retrieval quality itself varying between runs.
+- **New side effect surfaced**: `doc_004_doc_005_qa_1` flipped 1.0 → 0.0. This looks like the
+  routing-suppression change removing a previously-*helpful* routing hint for this specific
+  question (both old and new `_COMPARISON_RE` already matched it — the regex broadening isn't
+  the cause). Not chased further tonight — recorded as an open follow-up. If revisited: routing
+  suppression may need to be conditional (e.g. only suppress when the two named documents in the
+  question don't match the routed single document, rather than suppressing for every comparison
+  match).
+- `unanswerable`: 8/10 → 9/10 (improved; not directly targeted by this fix, likely benefiting
+  from the earlier Excel gate-hole fix or run-to-run variance — not re-diagnosed question by
+  question this session).
+
+**Net: real, root-caused fix, verified with a scoped eval (not just unit tests). Committed.**
+Not a full recovery of `cross_document_compare` to its 85% baseline — one known new side effect
+(`doc_004_doc_005_qa_1`) and one known nondeterminism-driven flake (`qa_1`) remain open.
+
+**Still not done this session** (carried over, unchanged from previous update):
+- `doc_006_qa_9` keyword-pull routing failure (`route_question` agrees on the wrong doc via
+  literal "invoice" overlap) — open, no fix attempted.
+- `doc_015_qa_5` cross-document content contamination (answer drawn from `doc_010` while citing
+  `doc_015`) — open, no fix attempted.
