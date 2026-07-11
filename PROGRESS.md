@@ -1076,3 +1076,44 @@ any single flaky question) and both improved.
 
 **Not touched further today** (unchanged, still open): `doc_006_qa_9` keyword-pull routing
 misattribution, `doc_015_qa_5` cross-document content contamination.
+
+---
+
+## Session wrap-up #2 — soft-refusal fix, scoped cdc re-measurement (2026-07-11, later still)
+
+Root-caused why `cross_document_compare`'s volatility persisted even after the comparison-
+retry/routing fix (`5636b94`): the codebase already has a pooled multi-query retrieval fallback
+(`_direct_retrieval_answer` in `src/answer_quality.py`, wired in via `_context_fallback_answer`)
+that splits a question into clause-derived sub-queries via an LLM call and unions the retrieved
+context — verified directly (no eval) that it correctly answers `doc_001_doc_002_qa_1` when
+called standalone. It was never reached in practice: `_looks_like_bad_final_answer()` only
+matched the literal string `"unsupported"`, so a soft-refusal answer like *"The retrieved
+content does not provide information on... I cannot perform the requested comparison"* was
+accepted as a final answer instead of triggering the fallback that would have fixed it.
+
+**Fix (`7fb25eb`, `src/answer_quality.py`):** added `_SOFT_REFUSAL_RE` to `_looks_like_bad_final_
+answer()`, catching common soft-refusal phrasings ("does not provide/contain", "cannot
+perform/determine/answer", "no information available", "unable to determine/answer/find") in
+addition to the literal token. Tests pass (187/187).
+
+**Verified directly** (3x repeat on `qa_1`/`qa_4` through `answer_query`): `qa_1` went from
+near-total-fail to 2 of 3 runs returning a real answer. `qa_4` unchanged (its failures are the
+literal "Unsupported" token, already covered by the existing retry path, not soft-refusal prose
+— consistent with the separately-diagnosed generation-side ceiling for that question).
+
+**Scoped `cross_document_compare` eval** (per explicit instruction: cdc category only, no full
+109 run): **80.0%** — the highest of four measurements this session (67.5% pre-fix -> 72.5% ->
+65.0% on the full-109 rerun -> **80.0%**). `doc_004_doc_005_qa_1/2/3` all 1.0 this run (previously
+flaky). `qa_1` and `qa_4` both still 0.0 in this specific run — `qa_1`'s predicted answer this
+time picked the wrong document ("services contract terms" instead of gold's "procurement
+policy"), a different failure mode than its earlier retrieval-miss runs, underscoring that this
+bucket's per-run score is still a sample, not a fixed number, even after two real fixes.
+
+**Net across the session's two comparison-question fixes:** cdc score band widened but trended
+up (65-80% observed, vs. 67.5% pre-session and an 85% re-judged historical baseline). Both fixes
+are real, root-caused, and verified with direct/standalone tests, not just eval-score chasing.
+`qa_1`/`qa_4` remain not fully solved — they surface a different failure mode almost every run
+(wrong document, missing document, correct-retrieval-but-bad-generation, or now sometimes
+correct) — consistent with an inherently nondeterministic generation step on top of a mostly-
+fixed retrieval path. A trustworthy final number for this bucket would need several repeated
+full runs (mean +/- std), not attempted today due to time.
