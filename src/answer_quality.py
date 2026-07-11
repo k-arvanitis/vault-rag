@@ -59,8 +59,25 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 
 
+_SOFT_REFUSAL_RE = re.compile(
+    r"does not (?:provide|contain)|cannot (?:perform|determine|answer)|"
+    r"no information (?:is )?available|unable to (?:determine|answer|find)",
+    re.IGNORECASE,
+)
+
+
 def _looks_like_bad_final_answer(text: str) -> bool:
-    """Return True for transport/tool artifacts or empty abstentions worth retrying."""
+    """Return True for transport/tool artifacts or abstentions worth retrying.
+
+    Includes soft-refusal prose ("the retrieved content does not provide...")
+    -- not just the literal "Unsupported" token -- so these fall through to
+    the context/retrieval fallbacks below instead of being accepted as a
+    final answer. Reproduced: a comparison question whose first attempt only
+    retrieved one document produced "The retrieved content does not provide
+    information on..." -- a bad answer with a strong, targeted fallback
+    (_direct_retrieval_answer's clause-split re-retrieval) available, but the
+    narrow exact-string check let it slip through un-retried.
+    """
     cleaned = _strip_think(text).strip()
     if not cleaned:
         return True
@@ -72,6 +89,7 @@ def _looks_like_bad_final_answer(text: str) -> bool:
         or lowered.startswith("function=")
         or "search_knowledge_base" in lowered
         and ("<function" in lowered or "</function>" in lowered)
+        or bool(_SOFT_REFUSAL_RE.search(lowered))
     )
 
 
