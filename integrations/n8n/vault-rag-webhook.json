@@ -1,0 +1,130 @@
+{
+  "name": "Vault RAG - Generic Webhook Connector",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "vault-rag-query",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "1a1b2c3d-0001-4a00-8000-000000000001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-40, 0],
+      "webhookId": "vault-rag-query"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.VAULT_RAG_API_URL }}/query",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ question: $json.body.question }) }}",
+        "options": {}
+      },
+      "id": "1a1b2c3d-0002-4a00-8000-000000000002",
+      "name": "Query Vault RAG",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [180, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-1",
+              "leftValue": "={{ $json.answer }}",
+              "rightValue": "Unsupported",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "1a1b2c3d-0003-4a00-8000-000000000003",
+      "name": "Needs human? (Unsupported)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [400, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"answer\": \"I don't have a confident answer for that yet — a teammate has been notified and will follow up.\", \"escalated\": true } }}",
+        "options": {}
+      },
+      "id": "1a1b2c3d-0004-4a00-8000-000000000004",
+      "name": "Respond - Escalated",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [620, -100]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "channel": "={{ $env.ESCALATION_SLACK_CHANNEL }}",
+        "text": "=Unanswered question needs a human:\n>{{ $('Webhook').item.json.body.question }}\n\nVault RAG returned Unsupported."
+      },
+      "id": "1a1b2c3d-0005-4a00-8000-000000000005",
+      "name": "Notify On-Call (Slack)",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [620, -220],
+      "credentials": {
+        "slackApi": {
+          "id": "REPLACE_WITH_YOUR_SLACK_CREDENTIAL_ID",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"answer\": $json.answer, \"sources\": $json.sources } }}",
+        "options": {}
+      },
+      "id": "1a1b2c3d-0006-4a00-8000-000000000006",
+      "name": "Respond - Answer",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [620, 100]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Query Vault RAG", "type": "main", "index": 0 }]]
+    },
+    "Query Vault RAG": {
+      "main": [[{ "node": "Needs human? (Unsupported)", "type": "main", "index": 0 }]]
+    },
+    "Needs human? (Unsupported)": {
+      "main": [
+        [
+          { "node": "Notify On-Call (Slack)", "type": "main", "index": 0 },
+          { "node": "Respond - Escalated", "type": "main", "index": 0 }
+        ],
+        [{ "node": "Respond - Answer", "type": "main", "index": 0 }]
+      ]
+    },
+    "Notify On-Call (Slack)": {
+      "main": [[]]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

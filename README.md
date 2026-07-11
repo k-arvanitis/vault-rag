@@ -538,6 +538,9 @@ it matched a specific class of job (`internal knowledge assistant over WhatsApp`
 than the others. This keeps the channel integration outside Vault RAG's own codebase, consistent
 with the existing Slack bot being a thin client of the same `/query` endpoint.
 
+Two working, importable n8n workflows implementing exactly this pattern (generic webhook +
+WhatsApp-specific) are in [`integrations/n8n/`](integrations/n8n/), with an import walkthrough.
+
 ---
 
 ## Tests
