@@ -1119,3 +1119,58 @@ are real, root-caused, and verified with direct/standalone tests, not just eval-
 correct) — consistent with an inherently nondeterministic generation step on top of a mostly-
 fixed retrieval path. A trustworthy final number for this bucket would need several repeated
 full runs (mean +/- std), not attempted today due to time.
+
+---
+
+## Session — README consistency fixes + product backlog (2026-07-11, later still)
+
+Separate from the eval-tuning work above: fixed README inconsistencies and shipped the
+Upwork-facing backlog items the user asked for, skipping only auth/workspace login (explicitly
+deferred).
+
+**README fixes** (`2c391a2`): headline benchmark table now uses the exact detailed-results
+numbers (was rounding some down by 4-5 points) — correctness 84.7%, faithfulness 79.5%,
+relevancy 86.7%, hit@5 95.9%, structured-data 90.5%, refusal 78.6%. Refusal-rate history
+separated ("on the earlier subset, 75%->100%; current expanded benchmark scores 78.6%" instead
+of reading like 100% is current). Removed the unverifiable "~80%" single-doc-lookups row.
+Citation and self-hosted wording corrected (spreadsheets cite sheet/SQL evidence, not page
+numbers; generation/enrichment use external APIs by default but redirect to local endpoints).
+
+**Feedback admin page** (`1bed3e6`): dedicated `/feedback` route (reuses the existing
+`FeedbackPanel` modal). `FeedbackRow` now renders cited sources and an editable admin note —
+both were already in the `Feedback` data model but never shown. "Add to eval set" previously
+only relabeled the record; it now also appends `{question, predicted_answer, sources}` to
+`eval/regression_candidates.jsonl` with `gold_answer: null` for a human to fill in before it
+counts in a real eval run — closes the feedback -> investigation -> regression-question loop
+for real.
+
+**Calculator tool** (`0007afa`): the agent previously refused all arithmetic on PDF/OCR-extracted
+numbers by prompt rule. Added `src/tools/calculator.py` — an `ast`-walked evaluator restricted to
+numeric literals and `+ - * / ** ()`, no name/call/attribute access, so no code-execution
+surface even though the LLM controls the input string. Wired into both tool-prompt variants.
+Verified end-to-end (not just unit tests): asked the live agent to retrieve a year from a PDF
+and multiply it by a decimal constant; it called `calculate` and returned the exact correct
+product, confirming real tool use rather than mental math.
+
+**Google Drive sync connector** (`03f3f89`): `src/connectors/google_drive.py`, authenticated via
+a service-account key file — deliberately non-interactive (no OAuth consent screen, no login UI)
+since a real user-facing auth system was explicitly out of scope for this session. Lists a
+configured folder, downloads new/changed files (by `modifiedTime`), routes each through the
+existing ingestion pipeline (`run_ingest` / `ingest_table_rows`), and optionally removes
+documents deleted from Drive via `delete_by_file`. Each file's failure is caught and reported
+per-file rather than aborting the sync. Four endpoints
+(`configure`/`sync`/`status`/`files` under `/connectors/google-drive/`) plus a UI panel at
+`/connectors/google-drive`. Tests fully mock the Drive API client — no live network calls.
+
+**n8n workflow templates** (`f6516c7`): `integrations/n8n/` — two real, importable n8n workflow
+JSONs (generic webhook, WhatsApp) implementing the connector pattern the README already
+described but never shipped a file for: `POST /query`, then route `Unsupported` answers to a
+Slack on-call notification instead of surfacing them to the end user.
+
+**Explicitly not done** (per direct instruction): Priority 3 — user authentication, login,
+workspace separation. The current API auth model (single shared `X-API-Key` on mutating
+endpoints) is unchanged.
+
+All 202 tests pass (`uv run pytest tests/`), ruff clean on every file touched. Frontend
+typechecks cleanly except one pre-existing, unrelated error in `frontend/app/layout.tsx` (a
+`next/font/google` import issue in files I did not touch this session).
