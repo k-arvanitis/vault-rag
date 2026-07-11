@@ -21,8 +21,7 @@ Private document knowledge assistant for PDFs, scanned documents, spreadsheets, 
 
 ### Not included yet
 
-- Google Drive / cloud-storage sync (planned — see [Known limitations](#known-limitations))
-- WhatsApp connector (Slack bot exists today; a WhatsApp/n8n pattern is the next channel)
+- WhatsApp connector (Slack bot exists today; two working n8n workflow templates cover the pattern — see [WhatsApp (via n8n)](#whatsapp-via-n8n))
 - Production RBAC / multi-tenant workspaces (current auth is a single shared `X-API-Key`)
 - Enterprise SSO
 - Full multi-tenant SaaS billing
@@ -513,6 +512,25 @@ Key overrides:
 ### Slack
 
 Create a Slack app with Socket Mode, add the `app_mention` and `message.im` event subscriptions, and add `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` to `.env`. Full walkthrough: [docs/SLACK_SETUP.md](docs/SLACK_SETUP.md).
+
+### Google Drive sync
+
+Keeps the corpus synchronized with a company Google Drive folder — new/changed files are
+detected, downloaded, and ingested; files removed from Drive can optionally be removed from the
+index too. Non-interactive: authenticates with a service-account key file, not a login flow —
+create a service account, download its JSON key, share the target folder with that account's
+email (read access), and set `GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE` in `.env`.
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /connectors/google-drive/configure` | Set the Drive folder ID to sync from |
+| `POST /connectors/google-drive/sync` | Pull new/changed files and ingest them (`remove_deleted: true` to also drop files removed from Drive) |
+| `GET /connectors/google-drive/status` | Configured folder, last sync time, tracked file count |
+| `GET /connectors/google-drive/files` | Every Drive file currently tracked, with its indexed timestamp |
+
+A small panel in the UI (folder ID input, sync button, tracked-file list) wraps these
+endpoints — open it via the "Drive sync" button in the header, or at `/connectors/google-drive`
+directly.
 
 ### WhatsApp (via n8n)
 
