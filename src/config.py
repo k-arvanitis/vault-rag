@@ -90,6 +90,11 @@ class Settings(BaseSettings):
     # Conversation history
     conversation_path: str = "data/conversations.json"
 
+    # Google Drive folder sync connector
+    input_dir: str = "data/input"
+    google_drive_service_account_file: str = ""
+    google_drive_sync_state_path: str = "data/google_drive_sync_state.json"
+
     # Excel sub-agent
     excel_agent_model: str = "gpt-4o-mini"
     excel_agent_api_base: str = "https://api.openai.com/v1"
@@ -167,6 +172,9 @@ VLM_MODEL: str = _s.vlm_model
 DUCKDB_PATH: str = _s.duckdb_path
 FEEDBACK_PATH: str = _s.feedback_path
 EVAL_REGRESSION_CANDIDATES_PATH: str = _s.eval_regression_candidates_path
+INPUT_DIR: str = _s.input_dir
+GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE: str = _s.google_drive_service_account_file
+GOOGLE_DRIVE_SYNC_STATE_PATH: str = _s.google_drive_sync_state_path
 CONVERSATION_PATH: str = _s.conversation_path
 EXCEL_AGENT_MODEL: str = _s.excel_agent_model
 EXCEL_AGENT_API_BASE: str = _s.excel_agent_api_base

@@ -542,6 +542,65 @@ async def reindex_document(filename: str):
     return {"job_id": job_id, "status": "processing"}
 
 
+# ── Google Drive connector endpoints ────────────────────────────────────────────
+
+
+class DriveConfigureRequest(BaseModel):
+    folder_id: str
+    service_account_file: str | None = None
+
+
+class DriveSyncRequest(BaseModel):
+    remove_deleted: bool = False
+
+
+@app.post("/connectors/google-drive/configure", dependencies=[Depends(require_api_key)])
+async def configure_google_drive(req: DriveConfigureRequest):
+    """POST /connectors/google-drive/configure — set which Drive folder to sync from.
+
+    Authenticates via a service-account key file (see GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE
+    in .env) -- share the target folder with that service account's email, no
+    interactive login required.
+    """
+    from src.connectors.google_drive import configure
+
+    return configure(req.folder_id, req.service_account_file)
+
+
+@app.post("/connectors/google-drive/sync", dependencies=[Depends(require_api_key)])
+async def sync_google_drive(req: DriveSyncRequest):
+    """POST /connectors/google-drive/sync — pull new/changed files and ingest them.
+
+    Runs synchronously (not backgrounded like /ingest) since a folder sync is
+    typically small and bounded; each file's own ingestion failure is captured
+    per-file in the response rather than aborting the whole sync.
+    """
+    from src.connectors.google_drive import sync
+
+    try:
+        result = sync(remove_deleted=req.remove_deleted)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _get_agent.cache_clear()
+    return result
+
+
+@app.get("/connectors/google-drive/status")
+async def google_drive_status():
+    """GET /connectors/google-drive/status — configured folder + last sync summary."""
+    from src.connectors.google_drive import status
+
+    return status()
+
+
+@app.get("/connectors/google-drive/files")
+async def google_drive_files():
+    """GET /connectors/google-drive/files — every Drive file currently tracked."""
+    from src.connectors.google_drive import list_files
+
+    return list_files()
+
+
 # ── inspector endpoints ────────────────────────────────────────────────────────
 
 

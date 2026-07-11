@@ -287,3 +287,48 @@ export async function getTableSheet(filename: string, sheet: string): Promise<Ta
     `/documents/${encodeURIComponent(filename)}/table-sheet/${encodeURIComponent(sheet)}`
   );
 }
+
+export interface DriveStatus {
+  configured: boolean;
+  folder_id: string | null;
+  last_synced_at: string | null;
+  file_count: number;
+}
+
+export interface DriveFile {
+  file_id: string;
+  name: string;
+  modified_time: string;
+  local_path: string;
+  indexed_at: string;
+}
+
+export interface DriveSyncResult {
+  synced: { name: string; status: string; error?: string }[];
+  removed: string[];
+  last_synced_at: string;
+}
+
+export async function getDriveStatus(): Promise<DriveStatus> {
+  return request<DriveStatus>("/connectors/google-drive/status");
+}
+
+export async function getDriveFiles(): Promise<DriveFile[]> {
+  return request<DriveFile[]>("/connectors/google-drive/files");
+}
+
+export async function configureDrive(folderId: string): Promise<DriveStatus> {
+  return request<DriveStatus>("/connectors/google-drive/configure", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ folder_id: folderId }),
+  });
+}
+
+export async function syncDrive(removeDeleted = false): Promise<DriveSyncResult> {
+  return request<DriveSyncResult>("/connectors/google-drive/sync", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ remove_deleted: removeDeleted }),
+  });
+}

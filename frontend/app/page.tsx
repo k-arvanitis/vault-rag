@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { X, FlaskConical, MessageSquareWarning, History } from "lucide-react";
+import { X, FlaskConical, MessageSquareWarning, History, FolderSync } from "lucide-react";
 import { checkHealth, type Conversation } from "@/lib/api";
 import Sidebar from "@/components/Sidebar";
 import ChatPanel from "@/components/ChatPanel";
@@ -9,6 +9,7 @@ import ToastContainer, { type ToastItem } from "@/components/Toast";
 import InspectorPanel from "@/components/InspectorPanel";
 import EvalPanel from "@/components/EvalPanel";
 import FeedbackPanel from "@/components/FeedbackPanel";
+import GoogleDrivePanel from "@/components/GoogleDrivePanel";
 import HistoryPanel from "@/components/HistoryPanel";
 import ThemeToggle from "@/components/ThemeToggle";
 import TraceSidebar, { type Trace } from "@/components/TraceSidebar";
@@ -22,6 +23,7 @@ export default function Home() {
   const [inspecting, setInspecting] = useState<string | null>(null);
   const [showEval, setShowEval] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
+  const [showDrive, setShowDrive] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [loadedConversation, setLoadedConversation] = useState<Conversation | null>(null);
   const [conversationLoadKey, setConversationLoadKey] = useState(0);
@@ -93,6 +95,13 @@ export default function Home() {
             <FlaskConical className="h-3.5 w-3.5" />
             Evaluation
           </button>
+          <button
+            onClick={() => setShowDrive(true)}
+            className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-ink-500 transition-colors hover:bg-ink-100 hover:text-ink-800"
+          >
+            <FolderSync className="h-3.5 w-3.5" />
+            Drive sync
+          </button>
           <ThemeToggle />
         </div>
       </header>
@@ -137,6 +146,7 @@ export default function Home() {
 
       {showEval && <EvalPanel onClose={() => setShowEval(false)} />}
       {showFeedback && <FeedbackPanel onClose={() => setShowFeedback(false)} />}
+      {showDrive && <GoogleDrivePanel onClose={() => setShowDrive(false)} />}
       {showHistory && (
         <HistoryPanel onClose={() => setShowHistory(false)} onSelect={handleSelectConversation} />
       )}
