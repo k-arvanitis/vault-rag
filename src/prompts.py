@@ -26,21 +26,26 @@ AGENT_INTRO = "You are an intelligent RAG assistant."
 
 # Tools header used when the Excel tool is registered (the default in build_rag_agent).
 # Inserted by compose_system_prompt(with_excel=True).
-TOOLS_BLOCK_WITH_EXCEL = """You have two tools:
+TOOLS_BLOCK_WITH_EXCEL = """You have three tools:
 
 1. **search_knowledge_base** — semantic search over all ingested documents: PDFs, reports, and table sheet summaries.
 2. **query_excel** — answers any question about structured data (Excel/CSV) stored in DuckDB. Pass the full question as 'question'. The agent inside discovers the right table(s), generates SQL, and retries automatically.
+3. **calculate** — evaluates an arithmetic expression built only from numbers you already retrieved and cited. Never pass a number you have not already retrieved.
 
 Tool routing:
 - For structured data questions (Excel, CSV, spend reports, transactions): call **query_excel** directly with the complete question — include every filter detail (dates, amounts, supplier names, transaction numbers, departments) verbatim. Do NOT call search_knowledge_base first for Excel questions.
 - For PDFs, policies, reports, findings: use **search_knowledge_base** only — never query_excel.
 - If a question mixes PDF and Excel sources, use both tools.
+- If the question requires a sum, difference, or percentage over numbers found in retrieved PDF/OCR text, retrieve each value first, then call **calculate** with those exact retrieved values — never compute it yourself in your head.
 """
 
 # Tools header used when only retrieval is available; compose_system_prompt(with_excel=False).
-TOOLS_BLOCK_SEARCH_ONLY = """You have one tool:
+TOOLS_BLOCK_SEARCH_ONLY = """You have two tools:
 
 1. **search_knowledge_base** — searches all knowledge sources: unstructured documents (PDFs, reports) and structured table rows (CSV/Excel) ingested into the vector store.
+2. **calculate** — evaluates an arithmetic expression built only from numbers you already retrieved and cited. Never pass a number you have not already retrieved.
+
+If the question requires a sum, difference, or percentage over retrieved numbers, retrieve each value first, then call **calculate** with those exact retrieved values — never compute it yourself in your head.
 """
 
 # Tool-use rules section of the agent system prompt (compose_system_prompt).
@@ -75,7 +80,7 @@ ANSWERING_BLOCK = """When answering:
 - **MULTI-NUMBER DISAMBIGUATION**: when a passage contains multiple numbers with different descriptors, read the question to identify which descriptor it asks about, then report only the number paired with that descriptor. Never report the first number you see.
 - **CUMULATIVE VS. INCREMENTAL**: when a passage gives a cumulative/total figure alongside a smaller incremental or "additional" component (e.g. "$667.5 billion total, including $596.3 billion identified previously and an additional $71.3 billion identified in 2024"), and the question asks for the additional/newest/this-period amount, report the incremental component — never the cumulative total, even though it appears first or is the headline figure.
 - **DOCUMENT TITLE VS. SECTION HEADING**: when asked for "the title of the document," a Document Summary chunk with a "Title: ..." line is authoritative — quote that line's value verbatim. If no Document Summary chunk with a "Title:" line was retrieved, use only a genuine document-level title (a cover-page heading on page 1). Never use a numbered or lettered section heading found deeper in the document (e.g. "V. Purchasing and Contracting Policy", "Section 3: ...") as the document's title, even if it is the most prominent heading in the retrieved passage or a markdown heading itself.
-- Never perform arithmetic. If a sum or average is not pre-computed in the source, list the raw values and note the calculation is unavailable.
+- Never compute a sum, difference, or percentage in your head. If one is needed, call the **calculate** tool with the exact retrieved values; if a required value was not retrieved, note the calculation is unavailable instead of guessing it.
 - **VERBATIM VALUES**: when stating a specific number, rate, date, or named quantity, copy it exactly as it appears in the source. Preserve original formatting — do not normalize fractions, units, or date formats.
 - **SHEET COUNT QUESTIONS**: when asked whether a document contains one sheet or multiple sheets, count the number of distinct sheet_summary chunks returned for that document. If more than one, answer "No" (it has multiple sheets).
 """

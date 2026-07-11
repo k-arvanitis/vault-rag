@@ -63,6 +63,7 @@ from src.reranker import BGEReranker, QwenReranker
 from src.retriever import (
     retrieve,
 )
+from src.tools.calculator import build_calculator_tool
 from src.tools.excel import build_excel_agent_tools
 from src.tools.retrieval_tool import _make_unified_tool
 
@@ -378,9 +379,10 @@ def build_rag_agent(
         doc_registry=doc_registry,
     )
 
-    # Add the Excel text-to-SQL tool (query_excel) backed by the DuckDB store.
+    # Add the Excel text-to-SQL tool (query_excel) backed by the DuckDB store, plus
+    # the controlled arithmetic tool for prose-retrieved numbers.
     excel_store = DuckDBStore()
-    tools = [tool] + build_excel_agent_tools(excel_store)
+    tools = [tool] + build_excel_agent_tools(excel_store) + [build_calculator_tool()]
 
     # Assemble the ReAct agent and stash metadata ask_agent/stream_agent read back
     # off the agent object (the _rag_limits dict is mutated on context overflow).
