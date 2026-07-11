@@ -1032,7 +1032,7 @@ today.
 |---|---|---|
 | Overall correctness | 82.4% | 84.2% |
 | Faithfulness | 80.1% | 82.1% |
-| `cross_document_compare` | 67.5% (pre-fix) / 72.5% (scoped post-fix) | 65.0% |
+| `cross_document_compare` | 67.5% (pre-fix) / 72.5% (scoped post-fix) | 80.0% (scoped, after the soft-refusal fix `7fb25eb` — see later section; not yet re-confirmed on a full 109 run) |
 | `unanswerable` (question_type) | 8/10 | 10/10 |
 | `unanswerable_metrics` (broader scope, n=14) | — | 13/14 (92.9%) |
 
