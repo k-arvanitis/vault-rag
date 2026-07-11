@@ -17,11 +17,12 @@ const ACTIONS = [
 
 function FeedbackRow({ item, onResolved }: { item: Feedback; onResolved: (f: Feedback) => void }) {
   const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState(item.note ?? "");
 
   const resolve = async (action: string) => {
     setBusy(true);
     try {
-      const updated = await resolveFeedback(item.id, action);
+      const updated = await resolveFeedback(item.id, action, note || undefined);
       onResolved(updated);
     } finally {
       setBusy(false);
@@ -59,22 +60,46 @@ function FeedbackRow({ item, onResolved }: { item: Feedback; onResolved: (f: Fee
       <p className="mt-2 text-xs font-medium text-ink-800">{item.question}</p>
       <p className="mt-1 line-clamp-3 text-[11px] text-ink-500">{item.answer}</p>
 
-      {item.status === "open" ? (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {ACTIONS.map((a) => (
-            <button
-              key={a.value}
-              onClick={() => resolve(a.value)}
-              disabled={busy}
-              className="rounded-md border border-ink-200 px-2 py-1 text-[10px] font-medium text-ink-600 transition-colors hover:bg-ink-100 disabled:opacity-50"
+      {item.sources.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {item.sources.map((s, i) => (
+            <span
+              key={`${s.filename}-${i}`}
+              className="rounded bg-ink-100 px-1.5 py-0.5 text-[10px] text-ink-500"
+              title={s.excerpt || s.quote}
             >
-              {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : a.label}
-            </button>
+              {s.filename}
+              {s.page != null ? ` p.${s.page}` : ""}
+            </span>
           ))}
         </div>
+      )}
+
+      {item.status === "open" ? (
+        <>
+          <input
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Admin note (optional)"
+            className="mt-2 w-full rounded-md border border-ink-200 bg-surface px-2 py-1 text-[11px] text-ink-700 placeholder:text-ink-400 focus:outline-none focus:ring-1 focus:ring-ink-300"
+          />
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {ACTIONS.map((a) => (
+              <button
+                key={a.value}
+                onClick={() => resolve(a.value)}
+                disabled={busy}
+                className="rounded-md border border-ink-200 px-2 py-1 text-[10px] font-medium text-ink-600 transition-colors hover:bg-ink-100 disabled:opacity-50"
+              >
+                {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : a.label}
+              </button>
+            ))}
+          </div>
+        </>
       ) : (
         <p className="mt-2 text-[10px] text-ink-400">
           Resolved: {item.action?.replace(/_/g, " ")}
+          {item.note ? ` — ${item.note}` : ""}
         </p>
       )}
     </div>

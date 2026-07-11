@@ -85,6 +85,7 @@ class Settings(BaseSettings):
 
     # Feedback queue
     feedback_path: str = "data/feedback.json"
+    eval_regression_candidates_path: str = "eval/regression_candidates.jsonl"
 
     # Conversation history
     conversation_path: str = "data/conversations.json"
@@ -165,6 +166,7 @@ VLM_PROVIDER: str = _s.vlm_provider
 VLM_MODEL: str = _s.vlm_model
 DUCKDB_PATH: str = _s.duckdb_path
 FEEDBACK_PATH: str = _s.feedback_path
+EVAL_REGRESSION_CANDIDATES_PATH: str = _s.eval_regression_candidates_path
 CONVERSATION_PATH: str = _s.conversation_path
 EXCEL_AGENT_MODEL: str = _s.excel_agent_model
 EXCEL_AGENT_API_BASE: str = _s.excel_agent_api_base

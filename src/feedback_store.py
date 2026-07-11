@@ -7,12 +7,40 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.config import FEEDBACK_PATH
+from src.config import EVAL_REGRESSION_CANDIDATES_PATH, FEEDBACK_PATH
 
 
 def _path() -> Path:
     """Return the feedback store path, resolved relative to the repo root."""
     return Path(FEEDBACK_PATH)
+
+
+def _regression_candidates_path() -> Path:
+    """Return the eval regression-candidates path, resolved relative to the repo root."""
+    return Path(EVAL_REGRESSION_CANDIDATES_PATH)
+
+
+def _append_regression_candidate(item: dict) -> None:
+    """Append a flagged answer to the eval regression-candidates file.
+
+    Not auto-graded: the flagged predicted_answer isn't a verified gold
+    answer, so gold_answer/question_type are left for a human to fill in
+    before the question counts in a real eval run.
+    """
+    path = _regression_candidates_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    candidate = {
+        "qa_id": f"feedback_{item['id']}",
+        "question": item["question"],
+        "predicted_answer": item["answer"],
+        "sources": item["sources"],
+        "reason": item["reason"],
+        "gold_answer": None,  # TODO: fill in before including in an eval run
+        "question_type": None,  # TODO: classify
+        "flagged_at": item["created_at"],
+    }
+    with path.open("a") as f:
+        f.write(json.dumps(candidate) + "\n")
 
 
 def _load() -> list[dict]:
@@ -70,5 +98,7 @@ def resolve_feedback(feedback_id: str, action: str, note: str | None) -> dict:
             item["action"] = action
             item["note"] = note
             _save(items)
+            if action == "add_to_eval_set":
+                _append_regression_candidate(item)
             return item
     raise KeyError(feedback_id)

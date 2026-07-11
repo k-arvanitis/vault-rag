@@ -6,8 +6,11 @@ import src.feedback_store as feedback_store
 
 @pytest.fixture(autouse=True)
 def _isolated_feedback_path(tmp_path, monkeypatch):
-    """Point the feedback store at a scratch file so tests never touch real data."""
+    """Point the feedback store at scratch files so tests never touch real data."""
     monkeypatch.setattr(feedback_store, "_path", lambda: tmp_path / "feedback.json")
+    monkeypatch.setattr(
+        feedback_store, "_regression_candidates_path", lambda: tmp_path / "regression_candidates.jsonl"
+    )
 
 
 def test_add_and_list_feedback():
@@ -30,3 +33,23 @@ def test_resolve_feedback_updates_status():
 def test_resolve_unknown_feedback_raises():
     with pytest.raises(KeyError):
         feedback_store.resolve_feedback("nonexistent", "dismissed", None)
+
+
+def test_add_to_eval_set_appends_regression_candidate(tmp_path):
+    item = feedback_store.add_feedback("q1", "a1", "down", "wrong_source", [])
+    feedback_store.resolve_feedback(item["id"], "add_to_eval_set", None)
+    candidates_path = feedback_store._regression_candidates_path()
+    lines = candidates_path.read_text().strip().splitlines()
+    assert len(lines) == 1
+    import json
+
+    candidate = json.loads(lines[0])
+    assert candidate["question"] == "q1"
+    assert candidate["predicted_answer"] == "a1"
+    assert candidate["gold_answer"] is None
+
+
+def test_dismissed_action_does_not_append_regression_candidate():
+    item = feedback_store.add_feedback("q1", "a1", "down", "wrong_source", [])
+    feedback_store.resolve_feedback(item["id"], "dismissed", None)
+    assert not feedback_store._regression_candidates_path().exists()
