@@ -1019,3 +1019,60 @@ Not a full recovery of `cross_document_compare` to its 85% baseline — one know
   literal "invoice" overlap) — open, no fix attempted.
 - `doc_015_qa_5` cross-document content contamination (answer drawn from `doc_010` while citing
   `doc_015`) — open, no fix attempted.
+
+---
+
+## Session wrap-up — full 109-question re-run after the comparison-retry fix (2026-07-11, later same session)
+
+Ran a full 109-question eval after committing `5636b94` (the comparison-retry/routing fix), to
+get a real post-fix number instead of relying on the scoped `--category` runs used earlier
+today.
+
+| Metric | Prior full-109 baseline | This run |
+|---|---|---|
+| Overall correctness | 82.4% | 84.2% |
+| Faithfulness | 80.1% | 82.1% |
+| `cross_document_compare` | 67.5% (pre-fix) / 72.5% (scoped post-fix) | 65.0% |
+| `unanswerable` (question_type) | 8/10 | 10/10 |
+| `unanswerable_metrics` (broader scope, n=14) | — | 13/14 (92.9%) |
+
+Overall correctness and faithfulness both improved over the pre-session baseline. Unanswerable
+refusal is now at its best measured point this session.
+
+**`cross_document_compare` is not a stable number and I'm not reporting it as one.** Earlier
+today, a direct 5x-repeat test on the exact same questions (`doc_001_doc_002_qa_1`, `qa_4`,
+`doc_004_doc_005_qa_1`) through the real `answer_query()` path showed:
+- `qa_1`: Unsupported in 4-5 of 5 runs, with retrieval consistently pulling three completely
+  unrelated documents (Fed annual report, employee handbook, lease amendment) instead of
+  `doc_002`. Traced further: raw-question `retrieve()` (hybrid or dense-only, doesn't matter)
+  does not surface `doc_002` in its top-10 for this exact question wording either — a real
+  retrieval-relevance gap, not a query-formulation artifact. In *this* run, however, it scored
+  1.0 correct — the pipeline's own nondeterminism (temp=0, but Groq inference still varies) means
+  the same question can land on either side of the line.
+- `qa_4`: Unsupported in 5 of 5 direct-repeat runs, mostly missing one of the two required
+  documents; one repeat did retrieve both documents and *still* answered Unsupported — a
+  generation-side ceiling on top of the retrieval issue. In this run it failed again (0.0).
+- `doc_004_doc_005_qa_1`: genuinely flaky (2 of 5 direct-repeat runs correct) — confirmed the
+  apparent "regression" flagged earlier today was noise from run-to-run variance, not caused by
+  the routing-directive-suppression fix. No revert was needed. This run it passed (1.0).
+
+**Decision (with advisor input): did not build a deeper fix (deterministic dual-retrieval for
+comparison questions, bypassing the agent's self-formulated search query) today.** The evidence
+doesn't support it being a reliable win: `qa_1`'s failure is a retrieval-relevance gap even on
+the literal question text (context injection wouldn't help unless it can already resolve "the
+procurement policy" -> `doc_001` by identity, untested), and `qa_4` has a demonstrated
+generation-side failure even with correct retrieval. Forcing scoped dual-retrieval for all
+comparison questions risks regressing ones that currently pass some of the time, and the
+question-pair-specific nature of a hand-built fix would cross into "cheating the eval" territory
+that's explicitly out of bounds for this project.
+
+**Honest bottom line:** the comparison-retry/routing fix (`5636b94`) is a real, root-caused
+improvement — the mechanism is now reachable and doesn't actively fight itself — but
+`cross_document_compare` sits in a volatile band (~65-72.5%) that a single eval run cannot
+pin down precisely, given the pipeline's proven run-to-run nondeterminism. A defensible headline
+number for this bucket would need mean±std over several full runs, which wasn't done today due
+to time. Overall correctness/faithfulness/unanswerable are more stable (larger n, less swung by
+any single flaky question) and both improved.
+
+**Not touched further today** (unchanged, still open): `doc_006_qa_9` keyword-pull routing
+misattribution, `doc_015_qa_5` cross-document content contamination.
