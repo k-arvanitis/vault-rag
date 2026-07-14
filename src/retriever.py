@@ -94,14 +94,17 @@ def _metadata_filter(
     chunk_types: list[str] | None = None,
     exclude_chunk_types: list[str] | None = None,
     filter_token: str | None = None,
-    scope_doc_id: str | None = None,
+    scope_doc_id: str | list[str] | None = None,
     scope_doc_key: str = "metadata.doc_id",
 ) -> dict | None:
     """Build a Qdrant filter for chunk-type routing and optional text filtering.
 
-    scope_doc_id restricts results to a single document via a should-OR across
-    metadata.doc_id, metadata.source_file, and metadata.file_name — covering
-    both old ingestions (source_file only) and new ones (doc_id set).
+    scope_doc_id restricts results to one or more documents via a should-OR
+    across metadata.doc_id, metadata.source_file, and metadata.file_name for
+    each id — covering both old ingestions (source_file only) and new ones
+    (doc_id set). A list ORs across documents (matches any one of them), not
+    ANDs (a chunk only ever belongs to one document, so requiring it match
+    every id in the list would always return nothing).
     scope_doc_key is kept for backward compat but is no longer used.
     """
     # Accumulate positive (must) and negative (must_not) filter conditions.
@@ -118,17 +121,22 @@ def _metadata_filter(
     if filter_token:
         must.append({"key": "content", "match": {"text": filter_token}})
     if scope_doc_id:
-        # OR across all three doc-id fields — older ingestions may only have
-        # source_file/file_name; newer ones set metadata.doc_id explicitly.
-        must.append(
-            {
-                "should": [
-                    {"key": "metadata.doc_id", "match": {"value": scope_doc_id}},
-                    {"key": "metadata.source_file", "match": {"text": scope_doc_id}},
-                    {"key": "metadata.file_name", "match": {"text": scope_doc_id}},
-                ]
-            }
+        scope_doc_ids = (
+            [scope_doc_id] if isinstance(scope_doc_id, str) else list(scope_doc_id)
         )
+        # OR across all three doc-id fields for every requested document —
+        # older ingestions may only have source_file/file_name; newer ones set
+        # metadata.doc_id explicitly.
+        should: list[dict] = []
+        for doc_id in scope_doc_ids:
+            should.extend(
+                [
+                    {"key": "metadata.doc_id", "match": {"value": doc_id}},
+                    {"key": "metadata.source_file", "match": {"text": doc_id}},
+                    {"key": "metadata.file_name", "match": {"text": doc_id}},
+                ]
+            )
+        must.append({"should": should})
     # No conditions means "no filter" — Qdrant should search everything.
     if not must and not must_not:
         return None
@@ -281,7 +289,7 @@ def _qdrant_search(
     filter_token: str | None = None,
     chunk_types: list[str] | None = None,
     exclude_chunk_types: list[str] | None = None,
-    scope_doc_id: str | None = None,
+    scope_doc_id: str | list[str] | None = None,
     scope_doc_key: str = "metadata.doc_id",
 ) -> list[dict[str, Any]]:
     """Run a dense vector search against Qdrant, with optional payload filters."""
@@ -347,7 +355,7 @@ def _qdrant_hybrid_search(
     filter_token: str | None = None,
     chunk_types: list[str] | None = None,
     exclude_chunk_types: list[str] | None = None,
-    scope_doc_id: str | None = None,
+    scope_doc_id: str | list[str] | None = None,
     scope_doc_key: str = "metadata.doc_id",
 ) -> list[dict[str, Any]]:
     """Hybrid search using dense prefetch + sparse prefetch + RRF fusion."""
@@ -410,7 +418,7 @@ def _qdrant_scroll_filter(
     filter_token: str | None = None,
     chunk_types: list[str] | None = None,
     exclude_chunk_types: list[str] | None = None,
-    scope_doc_id: str | None = None,
+    scope_doc_id: str | list[str] | None = None,
     scope_doc_key: str = "metadata.doc_id",
 ) -> list[dict[str, Any]]:
     """Fetch exact payload-filter matches without vector ranking."""
@@ -469,7 +477,7 @@ def retrieve(
     filter_token: str | None = None,
     force_chunk_types: list[str] | None = None,
     force_exclude_chunk_types: list[str] | None = None,
-    scope_doc_id: str | None = None,
+    scope_doc_id: str | list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Retrieve top-k relevant chunks from the full collection.
 

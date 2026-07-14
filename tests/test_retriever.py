@@ -2,6 +2,7 @@
 
 All network calls (Ollama, Qdrant) are mocked — no live services required.
 """
+
 from __future__ import annotations
 
 import json
@@ -12,6 +13,7 @@ from unittest.mock import MagicMock, patch
 
 from src.retriever import (
     _cosine_similarity,
+    _metadata_filter,
     _text_filter,
     infer_query_chunk_types,
     retrieve,
@@ -20,6 +22,7 @@ from src.retriever import (
 # ---------------------------------------------------------------------------
 # _cosine_similarity
 # ---------------------------------------------------------------------------
+
 
 class TestCosineSimilarity:
     def test_identical_vectors_return_one(self):
@@ -37,6 +40,7 @@ class TestCosineSimilarity:
 
     def test_dimension_mismatch_raises(self):
         import pytest
+
         with pytest.raises(ValueError, match="dimension mismatch"):
             _cosine_similarity([1.0, 2.0], [1.0])
 
@@ -44,6 +48,32 @@ class TestCosineSimilarity:
 # ---------------------------------------------------------------------------
 # _text_filter
 # ---------------------------------------------------------------------------
+
+
+class TestMetadataFilterScopeDocId:
+    """scope_doc_id accepts a single id (str) or multiple (list[str]) — a list
+    ORs across documents (the UI's multi-select source scope), it doesn't AND,
+    since one chunk only ever belongs to one document."""
+
+    def test_single_string_scope_unchanged(self):
+        f = _metadata_filter(scope_doc_id="doc_001")
+        should = f["must"][0]["should"]
+        assert {"key": "metadata.doc_id", "match": {"value": "doc_001"}} in should
+        assert len(should) == 3
+
+    def test_list_scope_ors_across_all_ids(self):
+        f = _metadata_filter(scope_doc_id=["doc_001", "doc_002"])
+        should = f["must"][0]["should"]
+        assert {"key": "metadata.doc_id", "match": {"value": "doc_001"}} in should
+        assert {"key": "metadata.doc_id", "match": {"value": "doc_002"}} in should
+        assert len(should) == 6
+
+    def test_empty_list_is_no_filter(self):
+        assert _metadata_filter(scope_doc_id=[]) is None
+
+    def test_none_is_no_filter(self):
+        assert _metadata_filter(scope_doc_id=None) is None
+
 
 class TestTextFilter:
     def test_returns_must_clause(self):
@@ -59,6 +89,7 @@ class TestTextFilter:
 # ---------------------------------------------------------------------------
 # query routing
 # ---------------------------------------------------------------------------
+
 
 class TestInferQueryChunkTypes:
     def test_always_returns_none_none(self):
@@ -78,6 +109,7 @@ class TestInferQueryChunkTypes:
 # retrieve — local JSON path (no Qdrant)
 # ---------------------------------------------------------------------------
 
+
 class TestRetrieveFromJson:
     """retrieve() with use_qdrant=False, mocking only the Ollama embedding call."""
 
@@ -92,7 +124,12 @@ class TestRetrieveFromJson:
     def test_returns_top_k_results(self, mock_embed):
         mock_embed.return_value = self._FAKE_EMBED
         rows = [
-            {"id": str(i), "embedding": [float(i % 2), 0.0, 0.0], "content": f"doc{i}", "metadata": {}}
+            {
+                "id": str(i),
+                "embedding": [float(i % 2), 0.0, 0.0],
+                "content": f"doc{i}",
+                "metadata": {},
+            }
             for i in range(10)
         ]
         with tempfile.TemporaryDirectory() as tmp:
@@ -104,8 +141,18 @@ class TestRetrieveFromJson:
     def test_results_sorted_by_score_descending(self, mock_embed):
         mock_embed.return_value = [1.0, 0.0]
         rows = [
-            {"id": "low",  "embedding": [0.0, 1.0], "content": "irrelevant", "metadata": {}},
-            {"id": "high", "embedding": [1.0, 0.0], "content": "relevant",   "metadata": {}},
+            {
+                "id": "low",
+                "embedding": [0.0, 1.0],
+                "content": "irrelevant",
+                "metadata": {},
+            },
+            {
+                "id": "high",
+                "embedding": [1.0, 0.0],
+                "content": "relevant",
+                "metadata": {},
+            },
         ]
         with tempfile.TemporaryDirectory() as tmp:
             path = self._make_json(tmp, rows)
@@ -125,7 +172,12 @@ class TestRetrieveFromJson:
         mock_embed.return_value = self._FAKE_EMBED
         rows = [
             {"id": "1", "content": "no embedding here", "metadata": {}},
-            {"id": "2", "embedding": [1.0, 0.0, 0.0], "content": "has embedding", "metadata": {}},
+            {
+                "id": "2",
+                "embedding": [1.0, 0.0, 0.0],
+                "content": "has embedding",
+                "metadata": {},
+            },
         ]
         with tempfile.TemporaryDirectory() as tmp:
             path = self._make_json(tmp, rows)
@@ -136,7 +188,14 @@ class TestRetrieveFromJson:
     @patch("src.retriever._ollama_embed_query")
     def test_result_has_required_keys(self, mock_embed):
         mock_embed.return_value = [1.0, 0.0]
-        rows = [{"id": "x", "embedding": [1.0, 0.0], "content": "hello", "metadata": {"k": "v"}}]
+        rows = [
+            {
+                "id": "x",
+                "embedding": [1.0, 0.0],
+                "content": "hello",
+                "metadata": {"k": "v"},
+            }
+        ]
         with tempfile.TemporaryDirectory() as tmp:
             path = self._make_json(tmp, rows)
             results = retrieve("q", embeddings_path=path, top_k=1, use_qdrant=False)
@@ -146,6 +205,7 @@ class TestRetrieveFromJson:
 # ---------------------------------------------------------------------------
 # retrieve — Qdrant dense path
 # ---------------------------------------------------------------------------
+
 
 class TestRetrieveFromQdrant:
     """retrieve() with use_qdrant=True — mocks Ollama, Qdrant, and sparse embedder."""
