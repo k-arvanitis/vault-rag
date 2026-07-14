@@ -1,9 +1,16 @@
 "use client";
 
-import { History, MessageSquareWarning, FlaskConical, FolderSync, X } from "lucide-react";
+import { History, MessageSquareWarning, FlaskConical, FolderSync, ShieldCheck, Plug, ChevronDown, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import ThemeToggle from "@/components/ThemeToggle";
 
 interface Props {
@@ -14,13 +21,6 @@ interface Props {
   onShowEval: () => void;
   onShowDrive: () => void;
 }
-
-const NAV_ITEMS = (props: Props) => [
-  { label: "History", icon: History, onClick: props.onShowHistory },
-  { label: "Feedback", icon: MessageSquareWarning, onClick: props.onShowFeedback },
-  { label: "Evaluation", icon: FlaskConical, onClick: props.onShowEval },
-  { label: "Drive sync", icon: FolderSync, onClick: props.onShowDrive },
-];
 
 export default function AppHeader(props: Props) {
   return (
@@ -37,12 +37,48 @@ export default function AppHeader(props: Props) {
           </div>
         </div>
         <nav className="flex items-center gap-1">
-          {NAV_ITEMS(props).map(({ label, icon: Icon, onClick }) => (
-            <Button key={label} variant="ghost" size="sm" onClick={onClick}>
-              <Icon data-icon="inline-start" />
-              <span className="hidden md:inline">{label}</span>
-            </Button>
-          ))}
+          <Button variant="ghost" size="sm" onClick={props.onShowHistory}>
+            <History data-icon="inline-start" />
+            <span className="hidden md:inline">Conversations</span>
+          </Button>
+
+          {/* Workspace administration — not primary actions for a normal user. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger render={<Button variant="ghost" size="sm" />}>
+              <ShieldCheck data-icon="inline-start" />
+              <span className="hidden md:inline">Quality</span>
+              <ChevronDown data-icon="inline-end" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuGroup>
+                <DropdownMenuItem onClick={props.onShowFeedback}>
+                  <MessageSquareWarning data-icon="inline-start" />
+                  Feedback
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={props.onShowEval}>
+                  <FlaskConical data-icon="inline-start" />
+                  Quality Evaluation
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger render={<Button variant="ghost" size="sm" />}>
+              <Plug data-icon="inline-start" />
+              <span className="hidden md:inline">Integrations</span>
+              <ChevronDown data-icon="inline-end" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuGroup>
+                <DropdownMenuItem onClick={props.onShowDrive}>
+                  <FolderSync data-icon="inline-start" />
+                  Google Drive
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
           <Separator orientation="vertical" className="mx-1 h-5" />
           <ThemeToggle />
         </nav>

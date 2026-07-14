@@ -2,13 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { ThumbsUp, ThumbsDown, Check, ScanSearch } from "lucide-react";
-import { submitFeedback, sourceInspectTarget, type Source, type FeedbackReason, type InspectTarget } from "@/lib/api";
+import { ThumbsUp, ThumbsDown, Check } from "lucide-react";
+import { submitFeedback, type Source, type FeedbackReason, type InspectTarget } from "@/lib/api";
+import { toCitation, type Citation } from "@/lib/product";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 export interface Message {
   id: string;
@@ -27,58 +28,85 @@ function LoadingPill() {
   return <Skeleton className="h-2 w-12 rounded-full" />;
 }
 
-/** Numbered citation chips under an assistant message; click one to expand its
- * page/row evidence inline, so a non-technical user doesn't need the trace panel. */
-function SourceDrawer({ sources, onInspect }: { sources: Source[]; onInspect?: (target: InspectTarget) => void }) {
-  const [openIdx, setOpenIdx] = useState<number | null>(null);
+/** A compact numbered citation button. Hover or focus opens a Popover with the
+ * exact supporting quote — click selects the citation and opens the Evidence
+ * panel on it (see product-level Citation type, lib/product.ts). Citations
+ * currently only render as a summary after the answer, not inline after each
+ * claim, because the backend doesn't map individual claims to sources (see
+ * TODO.md) — a fragile client-side text match was rejected in favor of this
+ * honest fallback, which the product spec explicitly allows. */
+function CitationChip({
+  citation,
+  onSelect,
+}: {
+  citation: Citation;
+  onSelect?: (target: InspectTarget) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const target: InspectTarget = { filename: citation.sourceId, page: citation.page, sheet: citation.sheet };
 
   return (
-    <div className="mt-2 flex flex-wrap items-start gap-1.5">
-      {sources.map((s, i) => {
-        const basename = s.filename.split("/").pop() ?? s.filename;
-        const open = openIdx === i;
-        return (
-          <div key={i} className={open ? "w-full" : undefined}>
-            <Badge
-              variant={open ? "default" : "outline"}
-              render={<button type="button" onClick={() => setOpenIdx(open ? null : i)} />}
-              className="cursor-pointer font-mono"
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={
+          <button
+            type="button"
+            onMouseEnter={() => setOpen(true)}
+            onMouseLeave={() => setOpen(false)}
+            onFocus={() => setOpen(true)}
+            onBlur={() => setOpen(false)}
+            onClick={() => onSelect?.(target)}
+            className="inline-flex size-4 items-center justify-center rounded-full bg-muted font-mono text-[10px] font-medium text-muted-foreground hover:bg-primary hover:text-primary-foreground"
+          />
+        }
+      >
+        {citation.id}
+      </PopoverTrigger>
+      <PopoverContent className="w-80 text-xs" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+        <p className="font-medium text-foreground">{citation.sourceName}</p>
+        <p className="text-[11px] text-muted-foreground">
+          {citation.page != null && `Page ${citation.page}`}
+          {citation.sheet && `Sheet: ${citation.sheet}`}
+          {citation.section && ` · ${citation.section}`}
+        </p>
+        <p className="mt-1.5 whitespace-pre-wrap border-l-2 border-border pl-2 italic leading-relaxed text-muted-foreground">
+          {citation.quote || "—"}
+        </p>
+        {onSelect && (
+          <Button variant="link" size="xs" className="mt-1 h-auto p-0" onClick={() => onSelect(target)}>
+            Open source
+          </Button>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/** "Sources used · N" compact summary — one row per source, not the full
+ * retrieved-chunk cards (those live under Technical details). */
+function SourcesUsed({ sources, onInspect }: { sources: Source[]; onInspect?: (target: InspectTarget) => void }) {
+  if (sources.length === 0) return null;
+  const citations = sources.map((s, i) => toCitation(s, i + 1));
+
+  return (
+    <div className="mt-2">
+      <p className="text-[11px] font-medium text-muted-foreground">Sources used · {sources.length}</p>
+      <div className="mt-1 space-y-1">
+        {citations.map((c) => (
+          <div key={c.id} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <CitationChip citation={c} onSelect={onInspect} />
+            <button
+              type="button"
+              className="min-w-0 flex-1 truncate text-left hover:text-foreground hover:underline"
+              onClick={() => onInspect?.({ filename: c.sourceId, page: c.page, sheet: c.sheet })}
             >
-              [{i + 1}] {basename}
-              {s.page != null && ` · p.${s.page}`}
-            </Badge>
-            {open && (
-              <div className="mt-1 rounded-md border border-border bg-muted px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
-                <div className="mb-1 flex items-start justify-between gap-2">
-                  {s.section && <p className="font-medium text-foreground">{s.section}</p>}
-                  {onInspect && (
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <Button
-                            variant="ghost"
-                            size="icon-xs"
-                            className="-mt-1 shrink-0"
-                            onClick={() => onInspect(sourceInspectTarget(s))}
-                            aria-label="Open in inspector"
-                          />
-                        }
-                      >
-                        <ScanSearch />
-                      </TooltipTrigger>
-                      <TooltipContent>Open in inspector</TooltipContent>
-                    </Tooltip>
-                  )}
-                </div>
-                <p className="whitespace-pre-wrap">{s.quote || s.excerpt || "—"}</p>
-                {s.location && (
-                  <p className="mt-1 font-mono text-[10px] text-muted-foreground/80">{s.location}</p>
-                )}
-              </div>
-            )}
+              {c.sourceName}
+              {c.page != null && ` · Page ${c.page}`}
+              {c.sheet && ` · ${c.sheet}`}
+            </button>
           </div>
-        );
-      })}
+        ))}
+      </div>
     </div>
   );
 }
@@ -218,7 +246,7 @@ export default function MessageList({ messages, streaming, onInspect }: Props) {
                 <ReactMarkdown>{msg.content}</ReactMarkdown>
               </div>
               {msg.sources && msg.sources.length > 0 && (
-                <SourceDrawer sources={msg.sources} onInspect={onInspect} />
+                <SourcesUsed sources={msg.sources} onInspect={onInspect} />
               )}
               <FeedbackWidget
                 question={messages[i - 1]?.content ?? ""}

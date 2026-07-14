@@ -17,14 +17,23 @@ interface UploadingFile {
   error?: string;
 }
 
-const STAGES = ["Parsing", "Chunking", "Embedding", "Indexed"];
+// User-facing stages only: Uploading -> Processing -> Ready. The backend's
+// finer-grained stage names (parsing/chunking/embedding) are an internal
+// pipeline detail, not something a normal user needs to track.
 const STAGE_PROGRESS: Record<string, number> = {
-  parsing: 10,
-  chunking: 40,
-  embedding: 70,
+  parsing: 25,
+  chunking: 55,
+  embedding: 80,
   done: 100,
   failed: 100,
 };
+
+function displayStage(rawStage: string): string {
+  const s = rawStage.toLowerCase();
+  if (s === "done") return "Ready";
+  if (s === "failed") return "Failed";
+  return "Processing";
+}
 
 const ACCEPTED = ".pdf,.xlsx,.xls,.csv,.docx,.doc,.md,.png,.jpg,.jpeg";
 const ACCEPTED_EXT = ACCEPTED.split(",").map((e) => e.slice(1));
@@ -68,7 +77,7 @@ export default function UploadZone({ onUploaded, onToast, offline }: Props) {
         return;
       }
 
-      const entry: UploadingFile = { id, name: file.name, stage: "Parsing", progress: 5 };
+      const entry: UploadingFile = { id, name: file.name, stage: "Uploading", progress: 5 };
       setFiles((prev) => [...prev, entry]);
 
       const update = (patch: Partial<UploadingFile>) =>
@@ -76,20 +85,18 @@ export default function UploadZone({ onUploaded, onToast, offline }: Props) {
 
       try {
         const { job_id } = await ingestFile(file, selectedPipeline);
-        update({ stage: "Parsing", progress: STAGE_PROGRESS.parsing });
+        update({ stage: "Processing", progress: STAGE_PROGRESS.parsing });
 
         await new Promise<void>((resolve, reject) => {
           const poll = setInterval(async () => {
             try {
               const status = await getIngestStatus(job_id);
-              const stageName =
-                status.stage.charAt(0).toUpperCase() + status.stage.slice(1).toLowerCase();
               const prog = STAGE_PROGRESS[status.stage.toLowerCase()] ?? 50;
-              update({ stage: stageName, progress: prog });
+              update({ stage: displayStage(status.stage), progress: prog });
 
               if (status.status === "done") {
                 clearInterval(poll);
-                update({ stage: "Indexed", progress: 100 });
+                update({ stage: "Ready", progress: 100 });
                 resolve();
               } else if (status.status === "failed") {
                 clearInterval(poll);
@@ -214,18 +221,6 @@ export default function UploadZone({ onUploaded, onToast, offline }: Props) {
                 <Alert variant="destructive" className="mt-1 py-1.5">
                   <AlertDescription className="text-[10px]">{f.error}</AlertDescription>
                 </Alert>
-              )}
-              {f.stage !== "Indexed" && !f.error && (
-                <div className="mt-1 flex gap-1.5">
-                  {STAGES.map((s) => (
-                    <span
-                      key={s}
-                      className={cn("text-[9px]", f.stage === s ? "text-foreground" : "text-muted-foreground/50")}
-                    >
-                      {s}
-                    </span>
-                  ))}
-                </div>
               )}
             </div>
           ))}

@@ -20,7 +20,7 @@ export default function RightPanelTabs({ trace, onInspect, selectedTarget }: Pro
       <Tabs defaultValue="evidence" className="flex h-full min-h-0 flex-col">
         <TabsList className="mx-3 mt-2 w-fit shrink-0">
           <TabsTrigger value="evidence">Evidence</TabsTrigger>
-          <TabsTrigger value="technical">Technical trace</TabsTrigger>
+          <TabsTrigger value="technical">Technical details</TabsTrigger>
         </TabsList>
         <TabsContent value="evidence" className="min-h-0 flex-1">
           <EvidencePanel

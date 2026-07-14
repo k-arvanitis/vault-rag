@@ -11,6 +11,7 @@ import {
   type Document,
   type Stats,
 } from "@/lib/api";
+import { toSourceLibraryItem, SOURCE_STATUS_LABEL, type SourceStatus } from "@/lib/product";
 import {
   Sidebar as SidebarRoot,
   SidebarContent,
@@ -33,9 +34,10 @@ import {
 } from "@/components/ui/alert-dialog";
 import UploadZone from "./UploadZone";
 
-const STATUS_BADGE: Record<string, "default" | "secondary" | "destructive"> = {
-  indexed: "default",
+const STATUS_BADGE: Record<SourceStatus, "default" | "secondary" | "destructive"> = {
+  ready: "default",
   processing: "secondary",
+  attention: "destructive",
   failed: "destructive",
 };
 
@@ -84,7 +86,7 @@ export default function Sidebar({ onToast, onInspect, onCollectionCleared, offli
   return (
     <SidebarRoot collapsible="offcanvas">
       <SidebarHeader className="flex-row items-center justify-between px-3 py-3">
-        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Documents</span>
+        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Sources</span>
         <AlertDialog open={confirmClear} onOpenChange={setConfirmClear}>
           <Button variant="ghost" size="xs" onClick={() => setConfirmClear(true)}>
             <Trash2 data-icon="inline-start" />
@@ -94,7 +96,7 @@ export default function Sidebar({ onToast, onInspect, onCollectionCleared, offli
             <AlertDialogHeader>
               <AlertDialogTitle>Clear the collection?</AlertDialogTitle>
               <AlertDialogDescription>
-                This deletes every indexed document and chunk. This cannot be undone.
+                This deletes every source. This cannot be undone.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -121,13 +123,14 @@ export default function Sidebar({ onToast, onInspect, onCollectionCleared, offli
         <ScrollArea className="h-full">
           <div className="flex flex-col gap-1.5 pb-2">
             {docs.length === 0 ? (
-              <p className="px-0.5 pt-1 text-xs text-muted-foreground">No documents indexed yet.</p>
+              <p className="px-0.5 pt-1 text-xs text-muted-foreground">No sources added yet.</p>
             ) : (
               docs.map((doc) => {
                 const ext = fileExt(doc.filename);
                 const basename = doc.filename.split("/").pop() ?? doc.filename;
                 const typeLabel = doc.file_type || ext.toUpperCase();
                 const canInspect = INSPECTABLE.has(ext);
+                const status = toSourceLibraryItem(doc).status;
                 return (
                   <div
                     key={doc.filename}
@@ -142,7 +145,7 @@ export default function Sidebar({ onToast, onInspect, onCollectionCleared, offli
                         <Badge variant="outline" className="uppercase">
                           {typeLabel}
                         </Badge>
-                        <Badge variant={STATUS_BADGE[doc.status] ?? "secondary"}>{doc.status}</Badge>
+                        <Badge variant={STATUS_BADGE[status]}>{SOURCE_STATUS_LABEL[status]}</Badge>
                         {doc.last_indexed_at && (
                           <span className="text-[10px] text-muted-foreground">
                             {new Date(doc.last_indexed_at).toLocaleDateString()}
@@ -229,12 +232,8 @@ export default function Sidebar({ onToast, onInspect, onCollectionCleared, offli
         {stats && (
           <div className="flex gap-5 px-0.5">
             <div>
-              <p className="text-[10px] text-muted-foreground">Docs</p>
+              <p className="text-[10px] text-muted-foreground">Sources</p>
               <p className="text-sm font-semibold text-foreground">{stats.total_docs}</p>
-            </div>
-            <div>
-              <p className="text-[10px] text-muted-foreground">Chunks</p>
-              <p className="text-sm font-semibold text-foreground">{stats.total_chunks.toLocaleString()}</p>
             </div>
           </div>
         )}
