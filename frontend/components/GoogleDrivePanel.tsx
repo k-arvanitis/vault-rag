@@ -166,7 +166,7 @@ export default function GoogleDrivePanel({ onClose }: Props) {
                     >
                       <span className="font-medium">{f.name}</span>{" "}
                       <span className="text-muted-foreground">
-                        — indexed {new Date(f.indexed_at).toLocaleString()}
+                        — added {new Date(f.indexed_at).toLocaleString()}
                       </span>
                     </div>
                   ))}
