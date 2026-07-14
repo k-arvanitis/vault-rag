@@ -94,8 +94,19 @@ in TODO item 2 and CLAUDE.md's vLLM cheatsheet. Config-only change, not backend 
        component; would need new backend config-read endpoints for the
        privacy/processing-location section (§12) since nothing currently exposes
        where OCR/embeddings/generation run.
-7. [ ] Spreadsheet evidence (§5D) — highlighted cells/rows, does not exist; figure
-       evidence (§5C) already shipped in an earlier session.
+7. [x] Spreadsheet evidence (§5D) — `EvidencePanel.tsx`'s `SpreadsheetEvidence`
+       renders the real sheet (via `/table-sheet`) with best-effort row highlighting
+       (a row lights up when one of its cells appears verbatim in the citation
+       quote); falls back to first rows + disclaimer when nothing matches, same
+       pattern as the PDF bbox highlight. **Real gap found, not fixed**: `query_excel`
+       (the actual SQL Q&A tool) never produces citable sources at all — its
+       artifact only carries `{sql, subquestions}`, no row/cell identity. Verified
+       live: an excel-scoped question routed to `query_excel` returns `sources: []`
+       every time. `SpreadsheetEvidence` only lights up for the `search_knowledge_base`
+       → `sheet_summary` citation path, which does track a source. True cell-level
+       evidence for SQL-answered questions needs `src/tools/excel.py`'s LangGraph
+       pipeline to track which DuckDB rows it matched — real SQL-generation work,
+       explicitly out of bounds for a UI-only pass.
 8. [ ] Responsive passes (§16), remaining tests (§17), final terminology sweep (§19).
 
 ### Known backend gaps (flagged, not faked with fragile frontend hacks)
