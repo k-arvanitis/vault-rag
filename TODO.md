@@ -1,5 +1,67 @@
 # vault-rag — TODO to portfolio-ready
 
+## UI product refinement (2026-07-14 spec) — full requirements + phased execution plan
+
+Full spec given verbatim by the user; condensed here into a checklist so it survives
+across sessions. Product promise: "Ask questions across your organisation's documents
+and verify every answer directly against the original source." Normal users should never
+need to understand chunks/Qdrant/embeddings/reranker/tool-calls/SQL — that lives under
+Technical details / Advanced settings only.
+
+**Before starting real work:** GENERATION_API_BASE pointed at OpenRouter was causing
+intermittent empty answers (see the retrieval-flakiness item below) — this blocks
+verifying any of the citation/evidence UI. Fix in progress: bringing up local vLLM
+(Qwen3-32B-AWQ, `:8005`) as `.env`'s `GENERATION_API_BASE`, per the documented fallback
+in TODO item 2 and CLAUDE.md's vLLM cheatsheet. Config-only change, not backend code.
+
+### Already implemented (do not rebuild) — confirmed by inspection
+- Evidence tab (default) / Technical trace tab split — `RightPanelTabs.tsx` (§5, §6).
+  Just needs the label rename "Technical trace" → "Technical details".
+- Tools / Generated SQL / Retrieved chunks / Rejected accordions — `TraceSidebar.tsx`,
+  already Collapsible-based, already hides raw internals behind an expand (§6).
+- Live PDF bbox highlighting + figure crop (shipped this session) — `EvidencePanel.tsx` (§5B, §5C).
+- Numbered citation chips below the answer, click-to-expand quote — `MessageList.tsx`'s
+  `SourceDrawer` (§4, partial — see gaps below).
+- Feedback thumbs up/down + reason dropdown — `MessageList.tsx`'s `FeedbackWidget` (§10A, partial).
+- Reranker-score three-tier badges (no rainbow palette), already restrained — `SourceCard.tsx`.
+
+### Real backend/product gaps — flag, do not fake with fragile frontend hacks
+- **Inline citations after each claim (§4).** Backend's `_INLINE_CITATION_RE` in
+  `src/answer_pipeline.py` deliberately strips `[N]` markers from the answer text —
+  code comment explains the model's own numbering doesn't correspond to the source
+  list, so leaving them in would mislead. No claim→source span mapping exists anywhere
+  in the pipeline. Implementing true inline citation requires a real backend change
+  (have the model emit citation markers that are then validated/renumbered against the
+  actual source list) — out of scope for a frontend refinement pass. Ship the "Sources
+  used · N" compact list + Popover per claim instead (spec explicitly allows this as
+  the fallback pattern) and flag inline placement as backend-blocked in the final report.
+- **"Preserve streaming answers / stop generation" (§3B).** There is no token streaming
+  today — `ChatPanel.tsx`'s `send()` awaits the full `/query` response; the `streaming`
+  state is really just a loading spinner. Nothing to "preserve" because it doesn't exist.
+  A real fix means the backend needs an SSE/chunked response endpoint. Flag, don't fake.
+- **Retry** on a message doesn't exist either — only new-conversation. Same category.
+
+### Phased execution order (highest product-value / lowest risk first)
+1. [ ] Backend generation reliability fix (local vLLM, see above) — unblocks verifying everything else.
+2. [ ] Product-level data contracts + adapters (§14) — `Answer`/`Citation`/`Source`/`AnswerTrace`
+       types in `lib/`, adapter functions from current `api.ts` shapes. Foundational, low risk.
+3. [ ] Terminology pass: `indexed`→`Ready`/`processing`→`Processing`/`failed`→`Needs attention`
+       or `Failed` (§7), "Technical trace"→"Technical details" (§6), "Sources used · N" compact
+       summary + Popover-based citations synced with Evidence panel selection (§4).
+4. [ ] Navigation restructure (§2) — group Eval/Feedback/Drive under Quality/Integrations,
+       keep Ask/Sources/Conversations primary. Biggest single change; currently a single-page
+       app with header-triggered overlay panels, not routed screens.
+5. [ ] Source-scope control (§3A) — "Ask across: All sources" selector, does not exist at all today.
+6. [ ] Sources screen (§7), Conversations screen (§9), Settings screen (§12) — new dedicated
+       screens replacing the current sidebar-doc-list + overlay-panel pattern.
+7. [ ] Spreadsheet evidence (§5D) — highlighted cells/rows, does not exist; figure evidence (§5C)
+       already shipped this session.
+8. [ ] Responsive passes (§16), remaining tests (§17), final terminology sweep (§19).
+
+### Deferred until phase 1 (backend fix) is verified
+Do not build citation/evidence UI on top of a backend that returns empty answers
+intermittently — verify `/query` returns consistent, sourced answers first.
+
 ## Session summary (2026-07-14) — evidence panel shipped, open items before wrap-up
 
 Committed: PDF bbox highlighting + evidence panel, figure-image return (crop endpoint,
