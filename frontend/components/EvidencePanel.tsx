@@ -6,12 +6,14 @@ import {
   getPdfCrop,
   getPdfHighlight,
   getPdfPage,
+  getTableSheet,
   sourceInspectTarget,
   type InspectTarget,
   type Source,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
 
 const IS_PDF = (f: string) => f.toLowerCase().endsWith(".pdf");
 
@@ -120,6 +122,101 @@ function FigureCrop({ source }: { source: Source }) {
   );
 }
 
+const SHEET_CONTEXT_ROWS = 3;
+
+function normalizeCell(v: string): string {
+  return v.trim().toLowerCase();
+}
+
+/** Renders the source sheet's actual rows around the cited passage, with a
+ * best-effort row highlight — matches a row when one of its cell values
+ * appears verbatim in the citation's quote. No exact row/cell reference is
+ * tracked at ingestion time (spreadsheets only ever get a sheet-level
+ * summary chunk — see TODO.md), so this is a heuristic over the live sheet
+ * data, not a stored coordinate; when nothing matches, it falls back to the
+ * sheet's first rows with a note, same "never fabricate" pattern as the PDF
+ * bbox highlight below. */
+function SpreadsheetEvidence({ source }: { source: Source }) {
+  const [rows, setRows] = useState<string[][] | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    setRows(null);
+    if (!source.sheet) return;
+    setLoading(true);
+    getTableSheet(source.filename, source.sheet)
+      .then((res) => setRows(res.raw_rows))
+      .catch(() => setRows(null))
+      .finally(() => setLoading(false));
+  }, [source.filename, source.sheet]);
+
+  if (!source.sheet) return null;
+  if (loading) {
+    return (
+      <div className="mt-2 flex justify-center py-6">
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+  if (!rows || rows.length === 0) return null;
+
+  const [header, ...body] = rows;
+  const quoteNorm = normalizeCell(source.quote || "");
+  const matchedIdx = quoteNorm
+    ? body.findIndex((row) =>
+        row.some((cell) => {
+          const cellNorm = normalizeCell(cell || "");
+          return cellNorm.length > 2 && quoteNorm.includes(cellNorm);
+        })
+      )
+    : -1;
+
+  const start = matchedIdx >= 0 ? Math.max(0, matchedIdx - SHEET_CONTEXT_ROWS) : 0;
+  const end =
+    matchedIdx >= 0
+      ? Math.min(body.length, matchedIdx + SHEET_CONTEXT_ROWS + 1)
+      : Math.min(body.length, SHEET_CONTEXT_ROWS * 2 + 1);
+  const visible = body.slice(start, end);
+
+  return (
+    <div className="mt-2">
+      <div className="max-h-64 overflow-auto rounded border border-border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              {header.map((h, i) => (
+                <TableHead key={i} className="whitespace-nowrap text-[10px]">
+                  {h}
+                </TableHead>
+              ))}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {visible.map((row, i) => {
+              const rowIdx = start + i;
+              const isMatch = rowIdx === matchedIdx;
+              return (
+                <TableRow key={rowIdx} className={isMatch ? "bg-amber-100 dark:bg-amber-950" : undefined}>
+                  {row.map((cell, j) => (
+                    <TableCell key={j} className="whitespace-nowrap text-[10px]">
+                      {cell}
+                    </TableCell>
+                  ))}
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </div>
+      {matchedIdx < 0 && (
+        <p className="mt-1 text-[10px] text-muted-foreground">
+          Exact row unavailable — showing the sheet's first rows and the quoted summary below.
+        </p>
+      )}
+    </div>
+  );
+}
+
 interface Props {
   sources: Source[];
   onInspect?: (target: InspectTarget) => void;
@@ -197,6 +294,7 @@ export default function EvidencePanel({ sources, onInspect, selectedTarget }: Pr
 
       <FigureCrop source={source} />
       <EvidencePage source={source} />
+      <SpreadsheetEvidence source={source} />
 
       <blockquote className="mt-2 border-l-2 border-border pl-2 text-xs italic text-muted-foreground">
         &ldquo;{source.quote}&rdquo;
