@@ -7,6 +7,7 @@ from unittest.mock import patch
 from src.answer_pipeline import (
     _TITLE_QUESTION_RE,
     _title_shortcut_answer,
+    answer_one,
     answer_query,
     parse_sources,
 )
@@ -118,7 +119,9 @@ class TestParseSourcesContract:
         )
         sources = parse_sources([f"{header}\n{body}"])
         assert len(sources) == 1
-        assert sources[0]["quote"] == "The actual retrieved passage that matches the PDF."
+        assert (
+            sources[0]["quote"] == "The actual retrieved passage that matches the PDF."
+        )
 
     def test_quote_strips_figure_block_synthetic_text(self):
         """A [FIGURE_START]/[FIGURE_END] block holds a VLM-generated description,
@@ -136,3 +139,62 @@ class TestParseSourcesContract:
         assert "FIGURE" not in quote
         assert "logo" not in quote
         assert quote.startswith("Contracts are used for complex Goods")
+
+
+class TestForcedDocScope:
+    """The UI's source-scope control (Ask across: one document) forces routing
+    to a specific doc_id instead of the semantic auto-detection route_question
+    normally does — verifies the routing directive names the right tool/doc and
+    that route_question (the auto-detect path) is never called when bypassed."""
+
+    def test_forced_pdf_doc_id_routes_to_search_knowledge_base(self):
+        with (
+            patch("src.answer_pipeline.route_question") as mock_route,
+            patch(
+                "src.answer_pipeline.run_once",
+                return_value=("An answer.", [], {}),
+            ) as mock_run_once,
+        ):
+            answer_one(
+                agent=object(),
+                question="What does this say?",
+                forced_doc_id="doc_001_procurement_policy.pdf",
+            )
+        mock_route.assert_not_called()
+        directed_question = mock_run_once.call_args[0][1]
+        assert "search_knowledge_base" in directed_question
+        assert "doc_001_procurement_policy.pdf" in directed_question
+
+    def test_forced_spreadsheet_doc_id_routes_to_query_excel(self):
+        with (
+            patch("src.answer_pipeline.route_question") as mock_route,
+            patch(
+                "src.answer_pipeline.run_once",
+                return_value=("An answer.", [], {}),
+            ) as mock_run_once,
+        ):
+            answer_one(
+                agent=object(),
+                question="What's the total?",
+                forced_doc_id="doc_006_purchase_card_transactions.xlsx",
+            )
+        mock_route.assert_not_called()
+        directed_question = mock_run_once.call_args[0][1]
+        assert "query_excel" in directed_question
+
+    def test_answer_query_skips_title_shortcut_when_doc_forced(self):
+        """The title shortcut's own retrieve() call isn't scoped to a document,
+        so it must not short-circuit a scoped query."""
+        with (
+            patch("src.answer_pipeline._title_shortcut_answer") as mock_shortcut,
+            patch(
+                "src.answer_pipeline.answer_one",
+                return_value=("An answer.", [], {}),
+            ),
+        ):
+            answer_query(
+                agent=object(),
+                question="What is the title of this document?",
+                forced_doc_id="doc_001_procurement_policy.pdf",
+            )
+        mock_shortcut.assert_not_called()

@@ -450,6 +450,7 @@ async def delete_conversation_endpoint(conversation_id: str):
 
 class QueryRequest(BaseModel):
     question: str
+    doc_id: str | None = None
 
 
 @app.post("/query")
@@ -469,7 +470,7 @@ async def query(req: QueryRequest):
     lf_trace = lf.trace(name="query", input=req.question) if lf else None
 
     result = await loop.run_in_executor(
-        _executor, answer_query, agent, req.question, lf_trace
+        _executor, answer_query, agent, req.question, lf_trace, req.doc_id
     )
 
     if lf_trace is not None:

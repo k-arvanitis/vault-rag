@@ -169,11 +169,11 @@ export async function getIngestStatus(jobId: string): Promise<IngestStatus> {
   return request<IngestStatus>(`/ingest/status/${jobId}`);
 }
 
-export async function queryDocuments(question: string): Promise<QueryResponse> {
+export async function queryDocuments(question: string, docId?: string | null): Promise<QueryResponse> {
   return request<QueryResponse>("/query", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, doc_id: docId ?? null }),
   });
 }
 

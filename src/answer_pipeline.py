@@ -20,6 +20,7 @@ from src.config import MAX_TOOL_RESULTS, QDRANT_COLLECTION, QDRANT_URL
 from src.file_resolver import resolve_original_name as _resolve_original_name
 from src.rag_agent import route_question, routing_directive, stream_agent
 from src.retriever import retrieve
+from src.tools.retrieval_tool import FORCED_DOC_ID
 from src.vector_store import _stable_id
 
 _CALL_BOUNDARY = "---CALL_BOUNDARY---"
@@ -323,8 +324,11 @@ def run_once(
     return answer, collected, trace_holder
 
 
+_TABLE_EXTS = (".xlsx", ".xls", ".csv")
+
+
 def answer_one(
-    agent: Any, question: str, trace: Any = None
+    agent: Any, question: str, trace: Any = None, forced_doc_id: str | None = None
 ) -> tuple[str, list[str], dict]:
     """Answer one question, with a forced retry on a bare Unsupported.
 
@@ -333,6 +337,10 @@ def answer_one(
     spreadsheet vs a text document, a routing directive is prepended so the
     agent uses query_excel vs search_knowledge_base accordingly — instead of
     guessing the tool from question wording.
+
+    forced_doc_id: when the UI's source-scope control names a specific
+    document, route directly to it instead of semantic auto-detection —
+    the user already told us which document, no need to guess.
 
     Groq inference at temp=0 still has small nondeterminism; the agent
     occasionally skips doc-routing on the first attempt and returns
@@ -345,40 +353,63 @@ def answer_one(
     many distinct source files the retrieved chunks actually span.
     """
     is_comparison = bool(_COMPARISON_RE.search(question))
-    route = {} if is_comparison else route_question(question)
+    is_forced_doc_modality = None
+    if forced_doc_id:
+        is_forced_doc_modality = (
+            "excel" if forced_doc_id.lower().endswith(_TABLE_EXTS) else "document"
+        )
+        route = {"modality": is_forced_doc_modality, "source_file": forced_doc_id}
+    else:
+        route = {} if is_comparison else route_question(question)
     q = routing_directive(route) + question
-    ans, coll, tr = run_once(agent, q, attempt="initial", trace=trace)
-    if ans.lower() == "unsupported":
-        # A comparison question that comes back flat Unsupported needs the
-        # "go find the other document" instruction, not the generic single-doc
-        # retry -- the generic one never tells the agent a second source is
-        # missing (reproduced: doc_001_doc_002_qa_1/qa_4 both short-circuited
-        # here before the comparison-retry branch below ever ran).
-        retry_instruction = (
-            _COMPARISON_RETRY_INSTRUCTION if is_comparison else _RETRY_INSTRUCTION
-        )
-        r_ans, r_coll, r_tr = run_once(
-            agent, q + retry_instruction, attempt="unsupported-retry", trace=trace
-        )
-        if r_ans.lower() != "unsupported" and r_ans:
-            return r_ans, r_coll, r_tr
-        return ans, coll, tr
-    if is_comparison:
-        n_sources = len({s["filename"] for s in parse_sources(coll)})
-        if n_sources < 2:
-            r_ans, r_coll, r_tr = run_once(
-                agent,
-                q + _COMPARISON_RETRY_INSTRUCTION,
-                attempt="comparison-retry",
-                trace=trace,
+
+    # The routing directive above is only a prompt nudge -- verified unreliable
+    # on its own (the model sometimes calls search_knowledge_base on a
+    # different document despite being told which one to use). For the
+    # document modality, hard-enforce it at the tool layer instead; query_excel
+    # has no per-source scoping param to override, so excel-forced questions
+    # still rely on the directive alone (see TODO.md).
+    token = None
+    if is_forced_doc_modality == "document":
+        token = FORCED_DOC_ID.set(forced_doc_id)
+    try:
+        ans, coll, tr = run_once(agent, q, attempt="initial", trace=trace)
+        if ans.lower() == "unsupported":
+            # A comparison question that comes back flat Unsupported needs the
+            # "go find the other document" instruction, not the generic single-doc
+            # retry -- the generic one never tells the agent a second source is
+            # missing (reproduced: doc_001_doc_002_qa_1/qa_4 both short-circuited
+            # here before the comparison-retry branch below ever ran).
+            retry_instruction = (
+                _COMPARISON_RETRY_INSTRUCTION if is_comparison else _RETRY_INSTRUCTION
             )
-            r_sources = len({s["filename"] for s in parse_sources(r_coll)})
-            if r_ans and r_sources > n_sources:
+            r_ans, r_coll, r_tr = run_once(
+                agent, q + retry_instruction, attempt="unsupported-retry", trace=trace
+            )
+            if r_ans.lower() != "unsupported" and r_ans:
                 return r_ans, r_coll, r_tr
+            return ans, coll, tr
+        if is_comparison:
+            n_sources = len({s["filename"] for s in parse_sources(coll)})
+            if n_sources < 2:
+                r_ans, r_coll, r_tr = run_once(
+                    agent,
+                    q + _COMPARISON_RETRY_INSTRUCTION,
+                    attempt="comparison-retry",
+                    trace=trace,
+                )
+                r_sources = len({s["filename"] for s in parse_sources(r_coll)})
+                if r_ans and r_sources > n_sources:
+                    return r_ans, r_coll, r_tr
+    finally:
+        if token is not None:
+            FORCED_DOC_ID.reset(token)
     return ans, coll, tr
 
 
-def answer_query(agent: Any, question: str, trace: Any = None) -> dict:
+def answer_query(
+    agent: Any, question: str, trace: Any = None, forced_doc_id: str | None = None
+) -> dict:
     """Full answer pipeline: split, answer each part, merge, and format sources.
 
     Multi-part questions are split and answered one sub-question at a time,
@@ -388,9 +419,13 @@ def answer_query(agent: Any, question: str, trace: Any = None) -> dict:
 
     Title questions ("what is the title of...") are answered directly from
     a document_summary chunk's Title: line, bypassing the agent entirely —
-    see _title_shortcut_answer.
+    see _title_shortcut_answer. Skipped when forced_doc_id is set, since that
+    shortcut's own retrieval isn't scoped to the requested document.
+
+    forced_doc_id: the UI's source-scope control, when the user picked "one
+    document" instead of "all sources" — see answer_one.
     """
-    shortcut = _title_shortcut_answer(question)
+    shortcut = None if forced_doc_id else _title_shortcut_answer(question)
     if shortcut is not None:
         title, collected = shortcut
         if trace is not None:
@@ -420,7 +455,9 @@ def answer_query(agent: Any, question: str, trace: Any = None) -> dict:
         else [question]
     )
     if len(parts) == 1:
-        answer, collected, excel_trace = answer_one(agent, question, trace=trace)
+        answer, collected, excel_trace = answer_one(
+            agent, question, trace=trace, forced_doc_id=forced_doc_id
+        )
     else:
         sub_answers: list[str] = []
         collected = []
@@ -428,7 +465,9 @@ def answer_query(agent: Any, question: str, trace: Any = None) -> dict:
         tools_all: list[str] = []
         rejected_all: list[dict] = []
         for part in parts:
-            p_ans, p_coll, p_trace = answer_one(agent, part, trace=trace)
+            p_ans, p_coll, p_trace = answer_one(
+                agent, part, trace=trace, forced_doc_id=forced_doc_id
+            )
             sub_answers.append(p_ans.strip())
             collected += p_coll
             sql_all += p_trace.get("sql") or []

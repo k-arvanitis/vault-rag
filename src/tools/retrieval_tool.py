@@ -22,6 +22,7 @@ import json
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
@@ -41,6 +42,16 @@ from src.retriever import (
 )
 
 _RETRIEVAL_DEBUG = bool(os.getenv("RETRIEVAL_DEBUG"))
+
+# Set by answer_pipeline.answer_one when the UI's source-scope control names a
+# specific document — overrides whatever doc_id the LLM passes to
+# search_knowledge_base. A prompt-only routing directive was verified
+# unreliable: the model sometimes queries a different document entirely
+# despite being told which one to use (reproduced directly, not hypothetical).
+# ContextVar rather than a module-global: each API request runs its own
+# executor thread (see api.py's run_in_executor), and a plain global would
+# leak one request's forced scope into a concurrent request on another thread.
+FORCED_DOC_ID: ContextVar[str | None] = ContextVar("FORCED_DOC_ID", default=None)
 
 # ---------------------------------------------------------------------------
 # Scope plan — the routing decision passed from _resolve_scope to _fetch_docs
@@ -1188,7 +1199,8 @@ def _make_unified_tool(
         rides on the ToolMessage and is not shown to the LLM.
         """
         # Run the full retrieve/rerank/format pipeline; map None → not-found text.
-        result = _fetch_docs(query, doc_id=doc_id)
+        forced = FORCED_DOC_ID.get()
+        result = _fetch_docs(query, doc_id=forced if forced else doc_id)
         content = result if result else "No relevant information found."
         artifact = {"rejected": list(_last_rejected)}
         return content, artifact

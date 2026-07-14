@@ -2,10 +2,11 @@
 
 import { useRef, useState, useCallback, useEffect } from "react";
 import { Send, Loader2, SquarePen } from "lucide-react";
-import { queryDocuments, saveConversation, type InspectTarget } from "@/lib/api";
+import { queryDocuments, saveConversation, getDocuments, type Document, type InspectTarget } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import MessageList, { type Message } from "./MessageList";
+import SourceScope from "./SourceScope";
 
 let msgCounter = 0;
 function nextId() {
@@ -37,7 +38,17 @@ export default function ChatPanel({
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(initialConversationId);
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [scopedDocId, setScopedDocId] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    getDocuments()
+      .then(setDocuments)
+      .catch(() => {
+        // Backend unreachable — the source-scope control degrades to "All sources" only.
+      });
+  }, [resetSignal]);
 
   useEffect(() => {
     if (resetSignal > 0) {
@@ -74,7 +85,7 @@ export default function ChatPanel({
     setStreaming(true);
 
     try {
-      const data = await queryDocuments(question);
+      const data = await queryDocuments(question, scopedDocId);
       const assistantMsg: Message = {
         id: nextId(),
         role: "assistant",
@@ -97,7 +108,7 @@ export default function ChatPanel({
     } finally {
       setStreaming(false);
     }
-  }, [input, streaming, onToast, onTrace, persist]);
+  }, [input, streaming, onToast, onTrace, persist, scopedDocId]);
 
   const newConversation = useCallback(() => {
     if (streaming) return;
@@ -117,7 +128,8 @@ export default function ChatPanel({
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col bg-background">
-      <div className="flex shrink-0 items-center justify-end border-b border-border bg-card px-6 py-2">
+      <div className="flex shrink-0 items-center justify-between border-b border-border bg-card px-6 py-2">
+        <SourceScope documents={documents} scopedDocId={scopedDocId} onChange={setScopedDocId} />
         <Button
           variant="outline"
           size="sm"
