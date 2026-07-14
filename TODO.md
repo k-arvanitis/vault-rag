@@ -77,11 +77,23 @@ in TODO item 2 and CLAUDE.md's vLLM cheatsheet. Config-only change, not backend 
        plus a Qdrant filter change across `retriever.py`'s ~10 `scope_doc_id` call
        sites. query_excel has no per-source scoping param at all, so a forced
        spreadsheet document still relies on the soft prompt directive only.
-6. [ ] Sources screen (§7), Conversations screen (§9), Settings screen (§12) — new
-       dedicated routed screens replacing the current sidebar-doc-list + overlay-panel
-       pattern. Wire the header's Quality/Integrations items to the existing
-       `/feedback` and `/connectors/google-drive` routes instead of overlay panels
-       while here.
+6. [x] Sources screen (§7) — `app/sources/page.tsx`, a real table (name, type,
+       status, last updated, actions: Open/Ask about this source/Reprocess/Delete)
+       complementing the persistent sidebar list. Wired header's Quality/Integrations
+       items to the existing `/feedback` and `/connectors/google-drive` routes
+       (previously unused by the header despite existing) and added
+       `/quality/evaluation` (had no route at all). "Replace" action from spec §7
+       not implemented — no backend endpoint for replacing a source in place, only
+       delete + re-upload. Conversations screen (§9) and Settings screen (§12) —
+       NOT done. Conversations: `HistoryPanel` already covers title/updated/count/
+       search/delete reasonably well as an overlay (kept as overlay deliberately —
+       selecting a conversation must return to "/" to load it into the active chat,
+       so a separate route doesn't add much); missing "source scope" and "preview of
+       last question" columns, which need small backend additions to
+       `ConversationSummary` (not done). Settings: not started at all — no route, no
+       component; would need new backend config-read endpoints for the
+       privacy/processing-location section (§12) since nothing currently exposes
+       where OCR/embeddings/generation run.
 7. [ ] Spreadsheet evidence (§5D) — highlighted cells/rows, does not exist; figure
        evidence (§5C) already shipped in an earlier session.
 8. [ ] Responsive passes (§16), remaining tests (§17), final terminology sweep (§19).
