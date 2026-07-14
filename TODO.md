@@ -42,25 +42,58 @@ in TODO item 2 and CLAUDE.md's vLLM cheatsheet. Config-only change, not backend 
 - **Retry** on a message doesn't exist either — only new-conversation. Same category.
 
 ### Phased execution order (highest product-value / lowest risk first)
-1. [ ] Backend generation reliability fix (local vLLM, see above) — unblocks verifying everything else.
-2. [ ] Product-level data contracts + adapters (§14) — `Answer`/`Citation`/`Source`/`AnswerTrace`
-       types in `lib/`, adapter functions from current `api.ts` shapes. Foundational, low risk.
-3. [ ] Terminology pass: `indexed`→`Ready`/`processing`→`Processing`/`failed`→`Needs attention`
-       or `Failed` (§7), "Technical trace"→"Technical details" (§6), "Sources used · N" compact
-       summary + Popover-based citations synced with Evidence panel selection (§4).
-4. [ ] Navigation restructure (§2) — group Eval/Feedback/Drive under Quality/Integrations,
-       keep Ask/Sources/Conversations primary. Biggest single change; currently a single-page
-       app with header-triggered overlay panels, not routed screens.
-5. [ ] Source-scope control (§3A) — "Ask across: All sources" selector, does not exist at all today.
-6. [ ] Sources screen (§7), Conversations screen (§9), Settings screen (§12) — new dedicated
-       screens replacing the current sidebar-doc-list + overlay-panel pattern.
-7. [ ] Spreadsheet evidence (§5D) — highlighted cells/rows, does not exist; figure evidence (§5C)
-       already shipped this session.
+1. [x] ~~Backend generation reliability fix (local vLLM)~~ — not done as planned (GPU
+       budget conflict with the OCR model, user redirected focus back to UI work). But
+       found and fixed a bigger, unrelated issue instead: **the API worker process had
+       been running since 2026-07-12 17:57, completely stale** — `uvicorn --reload`
+       silently stopped picking up file changes at some point this session (root cause
+       not diagnosed; a leaked `multiprocessing` orphan child was also found still
+       holding the port after a `kill -9` of the parent, which is why the first restart
+       attempt failed with "Address already in use"). Every backend test earlier in this
+       session ran against **old code** — the doc_001 empty-answer flakiness observed
+       and logged below may or may not reproduce against a properly-reloading server;
+       not re-verified. Killed both the stale worker and the orphaned child, restarted
+       clean. **If backend changes stop showing up in live testing, check process start
+       time (`ps -o lstart=`) against file mtimes before assuming the code is wrong.**
+2. [x] Product-level data contracts + adapters (§14) — `frontend/lib/product.ts`
+       (`Answer`/`Citation`/`Source`/`AnswerTrace`/`SourceLibraryItem` + adapters).
+3. [x] Terminology pass — `Sidebar.tsx` status badges (Ready/Processing/Failed),
+       `UploadZone.tsx` stages (Uploading/Processing/Ready, dropped the granular
+       Parsing/Chunking/Embedding breadcrumb), "Technical trace"→"Technical details".
+       Citation chips now open a Popover (hover/focus) with quote/section/Open source;
+       "Sources used · N" compact summary replaces the always-expanded drawer.
+4. [x] Navigation restructure (§2) — `AppHeader.tsx`: Feedback + Evaluation grouped
+       under a "Quality" DropdownMenu, Google Drive under "Integrations"; primary
+       History button renamed "Conversations". Note: still opens the same overlay
+       panels (`FeedbackPanel`/`EvalPanel`/`GoogleDrivePanel`), not routed to
+       `/feedback` etc. — those routes exist (`app/feedback/page.tsx`,
+       `app/connectors/google-drive/page.tsx`) but are unused by the header; wiring
+       them up properly is still open (see phase 6).
+5. [x] Source-scope control (§3A) — "Ask across: All sources / one document" shipped
+       (`SourceScope.tsx`, `QueryRequest.doc_id`, `FORCED_DOC_ID` contextvar in
+       `retrieval_tool.py` hard-overriding the model's tool-call argument — the prompt
+       directive alone was verified unreliable, see the commit message). Multi-select
+       "selected sources" NOT implemented — needs the same override extended to a list
+       plus a Qdrant filter change across `retriever.py`'s ~10 `scope_doc_id` call
+       sites. query_excel has no per-source scoping param at all, so a forced
+       spreadsheet document still relies on the soft prompt directive only.
+6. [ ] Sources screen (§7), Conversations screen (§9), Settings screen (§12) — new
+       dedicated routed screens replacing the current sidebar-doc-list + overlay-panel
+       pattern. Wire the header's Quality/Integrations items to the existing
+       `/feedback` and `/connectors/google-drive` routes instead of overlay panels
+       while here.
+7. [ ] Spreadsheet evidence (§5D) — highlighted cells/rows, does not exist; figure
+       evidence (§5C) already shipped in an earlier session.
 8. [ ] Responsive passes (§16), remaining tests (§17), final terminology sweep (§19).
 
-### Deferred until phase 1 (backend fix) is verified
-Do not build citation/evidence UI on top of a backend that returns empty answers
-intermittently — verify `/query` returns consistent, sourced answers first.
+### Known backend gaps (flagged, not faked with fragile frontend hacks)
+- **Inline citations after each claim (§4).** `_INLINE_CITATION_RE` in
+  `src/answer_pipeline.py` deliberately strips `[N]` markers — no claim→source span
+  mapping exists. Shipped the "Sources used · N" + Popover fallback instead (spec
+  explicitly allows this). True inline citation needs the model to emit markers that
+  get validated/renumbered against the real source list — a real backend change.
+- **No token streaming.** `ChatPanel.tsx`'s `send()` awaits the full `/query` response;
+  "stop generation" and "retry" don't exist. Needs an SSE/chunked backend endpoint.
 
 ## Session summary (2026-07-14) — evidence panel shipped, open items before wrap-up
 
