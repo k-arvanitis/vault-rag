@@ -176,13 +176,34 @@ def test_chunk_metadata_carries_page_number():
     assert by_section["Section Two"] == 2
 
 
+def test_chunk_metadata_carries_figure_bbox():
+    """A figure chunk's PDF bbox comment (embedded by pdf_parser.py) must survive
+    into chunk metadata so the evidence panel can crop the source image."""
+    md = (
+        "\n\n<!-- PAGE 1 | pymupdf4llm -->\n\n## Section One\n\n"
+        "[FIGURE_START]\n<!-- bbox:[10.5, 20.0, 300.0, 150.25] -->\n"
+        "A bar chart.\n[FIGURE_END]\n\n"
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        chunks = chunk_markdown(
+            md,
+            enrich_with_llm=False,
+            verbose=False,
+            output_dir=Path(tmp),
+            file_name="test.md",
+        )
+    figure_chunk = next(c for c in chunks if "[FIGURE_START]" in c.content)
+    assert figure_chunk.metadata.get("figure_bbox") == [10.5, 20.0, 300.0, 150.25]
+
+
 def test_chunk_merge_pass_keeps_previous_chunk_page():
     """A tiny fragment folded into the previous chunk inherits that chunk's page
     (documented limitation: it can be off-by-one if the fragment actually started
     the next page — acceptable, not special-cased)."""
     md = (
         "\n\n<!-- PAGE 1 | pymupdf4llm -->\n\n"
-        "## Section One\n\n" + (" ".join(f"word{i}" for i in range(400)) + "\n\n")
+        "## Section One\n\n"
+        + (" ".join(f"word{i}" for i in range(400)) + "\n\n")
         + "\n\n<!-- PAGE 2 | pymupdf4llm -->\n\ntiny fragment\n\n"
     )
     with tempfile.TemporaryDirectory() as tmp:

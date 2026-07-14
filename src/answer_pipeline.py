@@ -110,11 +110,14 @@ _TABLE_MARKER_RE = re.compile(r"\[TABLE_START\]|\[TABLE_END\]")
 # A figure's VLM description is synthetic text, not present in the PDF itself —
 # leaving it in a citation's quote would break fitz.search_for-based highlighting.
 _FIGURE_BLOCK_RE = re.compile(r"\[FIGURE_START\].*?\[FIGURE_END\]", re.DOTALL)
+_FIGURE_BBOX_RE = re.compile(r"<!-- bbox:\[([\d.,\s]+)\] -->")
 # _format_hits (retrieval_tool.py) sometimes wraps a chunk's own content with
 # "[prev chunk]"/"[next chunk]" neighbor context for the LLM's benefit — that
 # wrapper isn't part of the chunk's real text, so it must not leak into the
 # excerpt/quote a citation shows or fitz text-search would never match the PDF.
-_THIS_CHUNK_RE = re.compile(r"\[this chunk\]\n(.*?)(?:\n\n\[next chunk\]|\Z)", re.DOTALL)
+_THIS_CHUNK_RE = re.compile(
+    r"\[this chunk\]\n(.*?)(?:\n\n\[next chunk\]|\Z)", re.DOTALL
+)
 # doc_id/title trail the header line's fixed file/loc/page/score sequence,
 # so they're picked up separately rather than folded into _HEADER_RE's ordered groups.
 _DOC_META_RE = re.compile(r"\bdoc_id=(?P<doc_id>\S+)\s+title=(?P<title>\S+)")
@@ -226,6 +229,11 @@ def parse_sources(collected: list[str]) -> list[dict]:
             else:
                 location = ""
 
+            bbox_m = _FIGURE_BBOX_RE.search(body)
+            figure_bbox = (
+                [float(v) for v in bbox_m.group(1).split(",")] if bbox_m else None
+            )
+
             plain = _FIGURE_BLOCK_RE.sub("", body)
             plain = _TABLE_MARKER_RE.sub("", plain)
             plain = re.sub(r"^#{1,3}\s+.+$", "", plain, flags=re.MULTILINE).strip()
@@ -260,6 +268,7 @@ def parse_sources(collected: list[str]) -> list[dict]:
                     "quote": excerpt,
                     "chunk_id": chunk_id,
                     "score": round(score, 4) if score else None,
+                    "figure_bbox": figure_bbox,
                 }
             )
     return sources[:8]

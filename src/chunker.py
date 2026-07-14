@@ -33,6 +33,8 @@ from src.prompts import CHUNK_CONTEXT_PROMPT, DOCUMENT_SUMMARY_PROMPT
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
+_FIGURE_BBOX_RE = re.compile(r"<!-- bbox:\[([\d.,\s]+)\] -->")
+
 
 # ---------------------------------------------------------------------------
 # Chunk model and debug helper
@@ -491,6 +493,13 @@ def chunk_markdown(
         metadata["chunk_size_chars"] = len(chunk.content)
         metadata["token_count"] = chunk.token_count
         metadata["ingested_at"] = datetime.now(UTC).isoformat()
+
+        # Figure chunks carry the source PDF bbox as an HTML comment (embedded by
+        # src/parser/pdf_parser.py) so the evidence panel can crop the original
+        # image instead of showing only the VLM's text description.
+        bbox_match = _FIGURE_BBOX_RE.search(chunk.content)
+        if bbox_match:
+            metadata["figure_bbox"] = [float(v) for v in bbox_match.group(1).split(",")]
 
         # Prepend the title/section/subsection headers if the chunk lacks them.
         title = metadata["title"]

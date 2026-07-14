@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight, FileSearch, Loader2 } from "lucide-react";
 import {
+  getPdfCrop,
   getPdfHighlight,
   getPdfPage,
   sourceInspectTarget,
@@ -95,6 +96,30 @@ function EvidencePage({ source }: { source: Source }) {
   );
 }
 
+/** Shows the actual source figure/chart, cropped from the PDF at ingestion-time
+ * bbox — a companion to the VLM's text description, not a replacement for it. */
+function FigureCrop({ source }: { source: Source }) {
+  const [imgSrc, setImgSrc] = useState<string | null>(null);
+
+  useEffect(() => {
+    setImgSrc(null);
+    if (!source.figure_bbox || source.page == null) return;
+    getPdfCrop(source.filename, source.page, source.figure_bbox)
+      .then((res) => setImgSrc(`data:image/png;base64,${res.image_b64}`))
+      .catch(() => setImgSrc(null));
+  }, [source.filename, source.page, source.figure_bbox]);
+
+  if (!imgSrc) return null;
+
+  return (
+    <img
+      src={imgSrc}
+      alt="Source figure"
+      className="mt-2 w-full rounded border border-border"
+    />
+  );
+}
+
 interface Props {
   sources: Source[];
   onInspect?: (target: InspectTarget) => void;
@@ -170,6 +195,7 @@ export default function EvidencePanel({ sources, onInspect, selectedTarget }: Pr
         </div>
       </div>
 
+      <FigureCrop source={source} />
       <EvidencePage source={source} />
 
       <blockquote className="mt-2 border-l-2 border-border pl-2 text-xs italic text-muted-foreground">

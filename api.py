@@ -468,7 +468,9 @@ async def query(req: QueryRequest):
     lf = _get_langfuse()
     lf_trace = lf.trace(name="query", input=req.question) if lf else None
 
-    result = await loop.run_in_executor(_executor, answer_query, agent, req.question, lf_trace)
+    result = await loop.run_in_executor(
+        _executor, answer_query, agent, req.question, lf_trace
+    )
 
     if lf_trace is not None:
         lf_trace.span(
@@ -725,6 +727,41 @@ async def document_pdf_highlight(filename: str, page: int, quote: str):
             else None
         )
         return {"bbox": bbox, "coordinate_system": "pdf_points" if bbox else None}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/documents/{filename:path}/pdf/{page}/crop")
+async def document_pdf_crop(filename: str, page: int, bbox: str):
+    """Crop a region of a born-digital PDF page and return it as a base64 PNG.
+
+    Used by the evidence panel to show the actual source figure/chart instead
+    of only its VLM-generated text description. `bbox` is "x0,y0,x1,y1" in PDF
+    points, as stored on the chunk at ingestion time.
+    """
+    pdf_path = _resolve_pdf_path(filename)
+    if not pdf_path:
+        raise HTTPException(status_code=404, detail="PDF not found")
+    try:
+        coords = [float(v) for v in bbox.split(",")]
+        if len(coords) != 4:
+            raise ValueError("bbox must have 4 comma-separated values")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid bbox: {exc}")
+    try:
+        import fitz
+
+        doc = fitz.open(str(pdf_path))
+        if page < 1 or page > len(doc):
+            raise HTTPException(
+                status_code=404, detail=f"Page {page} out of range (1–{len(doc)})"
+            )
+        fitz_page = doc[page - 1]
+        pix = fitz_page.get_pixmap(dpi=150, clip=fitz.Rect(*coords))
+        b64 = base64.b64encode(pix.tobytes("png")).decode()
+        return {"image_b64": b64}
     except HTTPException:
         raise
     except Exception as exc:

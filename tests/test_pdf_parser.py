@@ -3,6 +3,7 @@
 All external calls (fitz, pymupdf4llm, OCR, VLM) are mocked.
 No real files or API calls are made.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -10,6 +11,7 @@ from unittest.mock import MagicMock, patch
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_page(text: str) -> MagicMock:
     """Return a mock fitz page whose get_text() returns *text*."""
@@ -34,6 +36,7 @@ def _mock_pymupdf_chunk(text: str, images: list | None = None) -> list[dict]:
 # Test 1 — text layer, no images: pymupdf4llm called, OCR NOT called
 # ---------------------------------------------------------------------------
 
+
 def test_text_layer_no_images_uses_pymupdf(tmp_path):
     page_text = "A" * 60  # >= 50 chars → text layer path
     expected_md = "# Heading\n\nSome content"
@@ -46,7 +49,9 @@ def test_text_layer_no_images_uses_pymupdf(tmp_path):
         patch("src.parser.pdf_parser.VLM_ENABLED", True),
     ):
         mock_fitz.open.return_value = _make_doc([_make_page(page_text)])
-        mock_pymupdf.to_markdown.return_value = _mock_pymupdf_chunk(expected_md, images=[])
+        mock_pymupdf.to_markdown.return_value = _mock_pymupdf_chunk(
+            expected_md, images=[]
+        )
 
         from src.parser.pdf_parser import parse_pdf
 
@@ -61,6 +66,7 @@ def test_text_layer_no_images_uses_pymupdf(tmp_path):
 # ---------------------------------------------------------------------------
 # Test 2 — no text layer: LightOn OCR called, pymupdf4llm NOT called
 # ---------------------------------------------------------------------------
+
 
 def test_scanned_page_uses_lighton_ocr():
     page_text = ""  # < 50 chars → OCR path
@@ -91,6 +97,7 @@ def test_scanned_page_uses_lighton_ocr():
 # Test 3 — text layer + image + VLM_ENABLED=True: VLM called, ref replaced
 # ---------------------------------------------------------------------------
 
+
 def test_text_layer_with_image_calls_vlm(tmp_path):
     img_file = tmp_path / "doc-0-0.png"
     img_file.write_bytes(b"fakepng")
@@ -119,7 +126,10 @@ def test_text_layer_with_image_calls_vlm(tmp_path):
 
         result = parse_pdf("doc.pdf")
 
-    assert result[0][0] == f"# Title\n\n[FIGURE_START]\n{vlm_desc}\n[FIGURE_END]\n\nMore text"
+    assert (
+        result[0][0]
+        == f"# Title\n\n[FIGURE_START]\n<!-- bbox:[0, 0, 100, 100] -->\n{vlm_desc}\n[FIGURE_END]\n\nMore text"
+    )
     assert result[0][1] == "pymupdf4llm"
     mock_vlm.assert_called_once_with(b"fakepng")
 
@@ -127,6 +137,7 @@ def test_text_layer_with_image_calls_vlm(tmp_path):
 # ---------------------------------------------------------------------------
 # Test 4 — text layer + image + VLM_ENABLED=False: ref left as-is
 # ---------------------------------------------------------------------------
+
 
 def test_vlm_disabled_leaves_image_refs_unchanged(tmp_path):
     page_text = "C" * 60
@@ -159,6 +170,7 @@ def test_vlm_disabled_leaves_image_refs_unchanged(tmp_path):
 # Test 5 — VLM raises exception: fallback inserted, no propagation
 # ---------------------------------------------------------------------------
 
+
 def test_vlm_exception_inserts_fallback(tmp_path):
     img_file = tmp_path / "doc-0-0.png"
     img_file.write_bytes(b"fakepng")
@@ -187,16 +199,17 @@ def test_vlm_exception_inserts_fallback(tmp_path):
         # Must not raise
         result = parse_pdf("doc.pdf")
 
-    assert "[FIGURE_START]\ndescription unavailable\n[FIGURE_END]" in result[0][0]
+    assert "description unavailable\n[FIGURE_END]" in result[0][0]
 
 
 # ---------------------------------------------------------------------------
 # Test 6 — mixed document: page 0 text layer, page 1 scanned
 # ---------------------------------------------------------------------------
 
+
 def test_mixed_document_routes_pages_correctly(tmp_path):
-    text_page = _make_page("E" * 60)   # text layer
-    scan_page = _make_page("")          # scanned
+    text_page = _make_page("E" * 60)  # text layer
+    scan_page = _make_page("")  # scanned
     scan_pixmap = MagicMock()
     scan_page.get_pixmap.return_value = scan_pixmap
 
@@ -214,7 +227,9 @@ def test_mixed_document_routes_pages_correctly(tmp_path):
         mock_tmpdir.return_value.__enter__ = MagicMock(return_value=str(tmp_path))
         mock_tmpdir.return_value.__exit__ = MagicMock(return_value=False)
         mock_fitz.open.return_value = _make_doc([text_page, scan_page])
-        mock_pymupdf.to_markdown.return_value = _mock_pymupdf_chunk(pymupdf_md, images=[])
+        mock_pymupdf.to_markdown.return_value = _mock_pymupdf_chunk(
+            pymupdf_md, images=[]
+        )
         mock_ocr.return_value = ocr_md
 
         from src.parser.pdf_parser import parse_pdf

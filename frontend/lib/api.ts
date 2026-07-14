@@ -31,6 +31,7 @@ export interface Source {
   quote: string;
   chunk_id: number | null;
   score: number | null;
+  figure_bbox: [number, number, number, number] | null;
 }
 
 export interface InspectTarget {
@@ -314,6 +315,22 @@ export async function getPdfHighlight(
 ): Promise<PdfHighlightResponse> {
   return request<PdfHighlightResponse>(
     `/documents/${encodeURIComponent(filename)}/pdf/${page}/highlight?quote=${encodeURIComponent(quote)}`
+  );
+}
+
+export interface PdfCropResponse {
+  image_b64: string;
+}
+
+/** Crops a figure/chart region out of the source PDF page, so the evidence
+ * panel can show the real image instead of only its VLM text description. */
+export async function getPdfCrop(
+  filename: string,
+  page: number,
+  bbox: [number, number, number, number]
+): Promise<PdfCropResponse> {
+  return request<PdfCropResponse>(
+    `/documents/${encodeURIComponent(filename)}/pdf/${page}/crop?bbox=${bbox.join(",")}`
   );
 }
 

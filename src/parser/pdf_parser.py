@@ -198,7 +198,8 @@ def _parse_text_layer_page(path: str, page_number: int, image_dir: str) -> str:
                 else:
                     pos = len(page_markdown)
                 label = _nearby_figure_label(page_markdown, pos)
-                marker = f"[FIGURE_START]\n{label}{description}\n[FIGURE_END]\n\n"
+                bbox_comment = f"<!-- bbox:{list(bbox)} -->\n" if bbox else ""
+                marker = f"[FIGURE_START]\n{bbox_comment}{label}{description}\n[FIGURE_END]\n\n"
                 page_markdown = (
                     page_markdown[:pos] + "\n\n" + marker + page_markdown[pos:]
                 )
@@ -240,8 +241,13 @@ def _parse_text_layer_page(path: str, page_number: int, image_dir: str) -> str:
                 )
                 description = "description unavailable"
             label = _nearby_figure_label(page_markdown, match.start())
+            bbox = images[img_idx].get("bbox") if img_idx < len(images) else None
+            bbox_comment = f"<!-- bbox:{list(bbox)} -->\n" if bbox else ""
             replacements.append(
-                (match, f"[FIGURE_START]\n{label}{description}\n[FIGURE_END]")
+                (
+                    match,
+                    f"[FIGURE_START]\n{bbox_comment}{label}{description}\n[FIGURE_END]",
+                )
             )
 
         elif match_type == "picture_text":
@@ -265,8 +271,12 @@ def _parse_text_layer_page(path: str, page_number: int, image_dir: str) -> str:
                 )
                 description = "description unavailable"
             label = _nearby_figure_label(page_markdown, match.start())
+            bbox_comment = f"<!-- bbox:{list(bbox)} -->\n" if bbox else ""
             replacements.append(
-                (match, f"[FIGURE_START]\n{label}{description}\n[FIGURE_END]")
+                (
+                    match,
+                    f"[FIGURE_START]\n{bbox_comment}{label}{description}\n[FIGURE_END]",
+                )
             )
 
     # Apply replacements from end to start to preserve string positions
