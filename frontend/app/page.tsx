@@ -11,9 +11,6 @@ import Sidebar from "@/components/Sidebar";
 import AppHeader from "@/components/AppHeader";
 import ChatPanel from "@/components/ChatPanel";
 import InspectorPanel from "@/components/InspectorPanel";
-import EvalPanel from "@/components/EvalPanel";
-import FeedbackPanel from "@/components/FeedbackPanel";
-import GoogleDrivePanel from "@/components/GoogleDrivePanel";
 import HistoryPanel from "@/components/HistoryPanel";
 import { type Trace } from "@/components/TraceSidebar";
 import RightPanelTabs from "@/components/RightPanelTabs";
@@ -23,14 +20,24 @@ export default function Home() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [inspecting, setInspecting] = useState<InspectTarget | null>(null);
   const [lastCited, setLastCited] = useState<InspectTarget | null>(null);
-  const [showEval, setShowEval] = useState(false);
-  const [showFeedback, setShowFeedback] = useState(false);
-  const [showDrive, setShowDrive] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showTraceSheet, setShowTraceSheet] = useState(false);
   const [loadedConversation, setLoadedConversation] = useState<Conversation | null>(null);
   const [conversationLoadKey, setConversationLoadKey] = useState(0);
   const [trace, setTrace] = useState<Trace | null>(null);
+  const [initialScopedDocId, setInitialScopedDocId] = useState<string | null>(null);
+
+  // Picks up "Open" / "Ask about this source" links from /sources — read directly
+  // from the URL rather than useSearchParams(), which requires wrapping this page
+  // in a Suspense boundary for a one-time value read on mount.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const inspectParam = params.get("inspect");
+    if (inspectParam) setInspecting({ filename: inspectParam });
+    const docParam = params.get("doc");
+    if (docParam) setInitialScopedDocId(docParam);
+    if (inspectParam || docParam) window.history.replaceState(null, "", "/");
+  }, []);
 
   const addToast = useCallback((message: string, variant?: "error") => {
     if (variant === "error") toast.error(message);
@@ -84,9 +91,6 @@ export default function Home() {
           offline={offline}
           onDismissOffline={() => setOffline(false)}
           onShowHistory={() => setShowHistory(true)}
-          onShowFeedback={() => setShowFeedback(true)}
-          onShowEval={() => setShowEval(true)}
-          onShowDrive={() => setShowDrive(true)}
         />
 
         <div className="flex flex-1 overflow-hidden">
@@ -98,6 +102,7 @@ export default function Home() {
             onInspect={handleInspect}
             initialMessages={loadedConversation?.messages}
             initialConversationId={loadedConversation?.id ?? null}
+            initialScopedDocId={initialScopedDocId}
           />
 
           {inspecting ? (
@@ -134,9 +139,6 @@ export default function Home() {
         </div>
       </SidebarInset>
 
-      {showEval && <EvalPanel onClose={() => setShowEval(false)} />}
-      {showFeedback && <FeedbackPanel onClose={() => setShowFeedback(false)} />}
-      {showDrive && <GoogleDrivePanel onClose={() => setShowDrive(false)} />}
       {showHistory && (
         <HistoryPanel onClose={() => setShowHistory(false)} onSelect={handleSelectConversation} />
       )}

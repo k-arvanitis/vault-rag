@@ -22,6 +22,9 @@ interface Props {
   onInspect?: (target: InspectTarget) => void;
   initialMessages?: Message[];
   initialConversationId?: string | null;
+  /** Preselects the source-scope control — e.g. arriving from a Sources
+   * screen's "Ask about this source" action. */
+  initialScopedDocId?: string | null;
   onConversationSaved?: (id: string) => void;
 }
 
@@ -32,6 +35,7 @@ export default function ChatPanel({
   onInspect,
   initialMessages,
   initialConversationId = null,
+  initialScopedDocId = null,
   onConversationSaved,
 }: Props) {
   const [messages, setMessages] = useState<Message[]>(initialMessages ?? []);
@@ -39,7 +43,7 @@ export default function ChatPanel({
   const [streaming, setStreaming] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(initialConversationId);
   const [documents, setDocuments] = useState<Document[]>([]);
-  const [scopedDocId, setScopedDocId] = useState<string | null>(null);
+  const [scopedDocId, setScopedDocId] = useState<string | null>(initialScopedDocId);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -49,6 +53,13 @@ export default function ChatPanel({
         // Backend unreachable — the source-scope control degrades to "All sources" only.
       });
   }, [resetSignal]);
+
+  // initialScopedDocId arrives asynchronously (page.tsx reads it from the URL in
+  // its own effect, after this component's first mount already captured the
+  // prop's initial value) — react to it changing, not just its initial value.
+  useEffect(() => {
+    if (initialScopedDocId) setScopedDocId(initialScopedDocId);
+  }, [initialScopedDocId]);
 
   useEffect(() => {
     if (resetSignal > 0) {

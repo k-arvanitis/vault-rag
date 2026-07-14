@@ -1,6 +1,7 @@
 "use client";
 
-import { History, MessageSquareWarning, FlaskConical, FolderSync, ShieldCheck, Plug, ChevronDown, X } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { History, Library, MessageSquareWarning, FlaskConical, FolderSync, ShieldCheck, Plug, ChevronDown, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
@@ -16,13 +17,13 @@ import ThemeToggle from "@/components/ThemeToggle";
 interface Props {
   offline: boolean;
   onDismissOffline: () => void;
+  /** Conversations stays an in-app overlay (not a route) — selecting a saved
+   * conversation must return to "/" to load it into the active chat. */
   onShowHistory: () => void;
-  onShowFeedback: () => void;
-  onShowEval: () => void;
-  onShowDrive: () => void;
 }
 
 export default function AppHeader(props: Props) {
+  const router = useRouter();
   return (
     <div className="flex shrink-0 flex-col">
       <header className="flex items-center justify-between gap-2 border-b border-border bg-card px-4 py-2.5">
@@ -37,6 +38,10 @@ export default function AppHeader(props: Props) {
           </div>
         </div>
         <nav className="flex items-center gap-1">
+          <Button variant="ghost" size="sm" onClick={() => router.push("/sources")}>
+            <Library data-icon="inline-start" />
+            <span className="hidden md:inline">Sources</span>
+          </Button>
           <Button variant="ghost" size="sm" onClick={props.onShowHistory}>
             <History data-icon="inline-start" />
             <span className="hidden md:inline">Conversations</span>
@@ -51,11 +56,11 @@ export default function AppHeader(props: Props) {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuGroup>
-                <DropdownMenuItem onClick={props.onShowFeedback}>
+                <DropdownMenuItem onClick={() => router.push("/feedback")}>
                   <MessageSquareWarning data-icon="inline-start" />
                   Feedback
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={props.onShowEval}>
+                <DropdownMenuItem onClick={() => router.push("/quality/evaluation")}>
                   <FlaskConical data-icon="inline-start" />
                   Quality Evaluation
                 </DropdownMenuItem>
@@ -71,7 +76,7 @@ export default function AppHeader(props: Props) {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuGroup>
-                <DropdownMenuItem onClick={props.onShowDrive}>
+                <DropdownMenuItem onClick={() => router.push("/connectors/google-drive")}>
                   <FolderSync data-icon="inline-start" />
                   Google Drive
                 </DropdownMenuItem>
