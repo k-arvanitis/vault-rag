@@ -1,6 +1,7 @@
 import argparse
 import importlib
 import json
+import logging
 import os
 import time
 from pathlib import Path
@@ -854,34 +855,42 @@ def run_ingest(
     results: list[dict[str, Path]] = []
     for index, file_path in enumerate(all_files, start=1):
         file_started_at = time.perf_counter()
-        if file_path.suffix.lower() in _TABLE_EXTS:
+        try:
+            if file_path.suffix.lower() in _TABLE_EXTS:
+                _log(
+                    f"File {index}/{len(all_files)} | {file_path.name} [TABLE]",
+                    enabled=verbose,
+                )
+                out_path = ingest_table_rows(
+                    str(file_path), collection=collection, verbose=verbose
+                )
+                results.append({"chunks_path": out_path})
+            else:
+                file_size_mb = _path_size_mb(file_path)
+                _log(
+                    f"File {index}/{len(all_files)} | {file_path.name} | size={file_size_mb:.2f} MB",
+                    enabled=verbose,
+                )
+                out = _run_ingest_pdf(
+                    pdf_path=file_path,
+                    collection=collection,
+                    qdrant_url=qdrant_url,
+                    ocr_endpoint=ocr_endpoint,
+                    ocr_model_name=ocr_model_name,
+                    ocr_table_mode=ocr_table_mode,
+                    ollama_api_base=ollama_api_base,
+                    ollama_embed_model=ollama_embed_model,
+                    enrich_with_llm=enrich_with_llm,
+                    verbose=False,
+                )
+                results.append(out)
+        except Exception:
             _log(
-                f"File {index}/{len(all_files)} | {file_path.name} [TABLE]",
+                f"File {index}/{len(all_files)} FAILED | {file_path.name}",
                 enabled=verbose,
             )
-            out_path = ingest_table_rows(
-                str(file_path), collection=collection, verbose=verbose
-            )
-            results.append({"chunks_path": out_path})
-        else:
-            file_size_mb = _path_size_mb(file_path)
-            _log(
-                f"File {index}/{len(all_files)} | {file_path.name} | size={file_size_mb:.2f} MB",
-                enabled=verbose,
-            )
-            out = _run_ingest_pdf(
-                pdf_path=file_path,
-                collection=collection,
-                qdrant_url=qdrant_url,
-                ocr_endpoint=ocr_endpoint,
-                ocr_model_name=ocr_model_name,
-                ocr_table_mode=ocr_table_mode,
-                ollama_api_base=ollama_api_base,
-                ollama_embed_model=ollama_embed_model,
-                enrich_with_llm=enrich_with_llm,
-                verbose=False,
-            )
-            results.append(out)
+            logging.exception("Folder ingest: %s failed, skipping", file_path.name)
+            continue
         elapsed_seconds = time.perf_counter() - file_started_at
         _log(
             f"File {index}/{len(all_files)} done | elapsed={elapsed_seconds:.2f}s",

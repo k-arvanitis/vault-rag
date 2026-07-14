@@ -1,42 +1,7 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
-/* ── Oikia front-desk colour tokens — one .dark class on <html> flips everything ── */
-:root {
-  color-scheme: light;
-  --ink-50: 248 250 252;
-  --ink-100: 241 245 249;
-  --ink-200: 226 232 240;
-  --ink-300: 203 213 225;
-  --ink-400: 148 163 184;
-  --ink-500: 100 116 139;
-  --ink-600: 71 85 105;
-  --ink-700: 51 65 85;
-  --ink-800: 30 41 59;
-  --ink-900: 15 23 42;
-  --surface: 255 255 255;
-  --brand-strong: 67 56 202;
-}
-.dark {
-  color-scheme: dark;
-  --ink-50: 15 23 42;
-  --ink-100: 30 41 59;
-  --ink-200: 51 65 85;
-  --ink-300: 71 85 105;
-  --ink-400: 100 116 139;
-  --ink-500: 148 163 184;
-  --ink-600: 203 213 225;
-  --ink-700: 226 232 240;
-  --ink-800: 241 245 249;
-  --ink-900: 248 250 252;
-  --surface: 30 41 59;
-  --brand-strong: 165 180 252;
-}
-
-* {
-  box-sizing: border-box;
-}
+@import "tailwindcss";
+@config "../tailwind.config.ts";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
 
 html,
 body {
@@ -44,20 +9,12 @@ body {
   overflow: hidden;
 }
 
-body {
-  background: rgb(var(--ink-50));
-  color: rgb(var(--ink-900));
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, "Noto Sans", sans-serif;
-  -webkit-font-smoothing: antialiased;
-}
-
 #__next,
 main {
   height: 100%;
 }
 
-/* Thin token-driven scrollbar */
+/* Thin scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -66,11 +23,11 @@ main {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgb(var(--ink-200));
+  background: var(--border);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgb(var(--ink-300));
+  background: var(--muted-foreground);
 }
 
 /* Markdown prose — token-driven, works in both themes */
@@ -82,7 +39,7 @@ main {
   margin-bottom: 0;
 }
 .prose-ui code {
-  background: rgb(var(--ink-100));
+  background: var(--muted);
   padding: 0.1em 0.3em;
   border-radius: 3px;
   font-size: 0.875em;
@@ -112,10 +69,10 @@ main {
 }
 .prose-ui strong {
   font-weight: 600;
-  color: rgb(var(--ink-900));
+  color: var(--foreground);
 }
 .prose-ui a {
-  color: rgb(var(--brand-strong));
+  color: var(--primary);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
@@ -125,7 +82,7 @@ main {
   font-weight: 600;
   margin-bottom: 0.4rem;
   margin-top: 0.9rem;
-  color: rgb(var(--ink-900));
+  color: var(--foreground);
 }
 .prose-ui table {
   width: 100%;
@@ -135,11 +92,90 @@ main {
 }
 .prose-ui th,
 .prose-ui td {
-  border: 1px solid rgb(var(--ink-200));
+  border: 1px solid var(--border);
   padding: 0.25rem 0.45rem;
   text-align: left;
 }
 .prose-ui th {
-  background: rgb(var(--ink-100));
+  background: var(--muted);
   font-weight: 600;
+}
+
+@layer base {
+  :root {
+    --background: oklch(0.985 0.002 247.839);
+    --foreground: oklch(0.145 0 0);
+    --card: oklch(1 0 0);
+    --card-foreground: oklch(0.145 0 0);
+    --popover: oklch(1 0 0);
+    --popover-foreground: oklch(0.145 0 0);
+    --primary: oklch(0.205 0 0);
+    --primary-foreground: oklch(0.985 0 0);
+    --secondary: oklch(0.97 0 0);
+    --secondary-foreground: oklch(0.205 0 0);
+    --muted: oklch(0.97 0 0);
+    --muted-foreground: oklch(0.556 0 0);
+    --accent: oklch(0.97 0 0);
+    --accent-foreground: oklch(0.205 0 0);
+    --destructive: oklch(0.577 0.245 27.325);
+    --border: oklch(0.922 0 0);
+    --input: oklch(0.922 0 0);
+    --ring: oklch(0.708 0 0);
+    --chart-1: oklch(0.87 0 0);
+    --chart-2: oklch(0.556 0 0);
+    --chart-3: oklch(0.439 0 0);
+    --chart-4: oklch(0.371 0 0);
+    --chart-5: oklch(0.269 0 0);
+    --radius: 0.625rem;
+    --sidebar: oklch(0.985 0 0);
+    --sidebar-foreground: oklch(0.145 0 0);
+    --sidebar-primary: oklch(0.205 0 0);
+    --sidebar-primary-foreground: oklch(0.985 0 0);
+    --sidebar-accent: oklch(0.97 0 0);
+    --sidebar-accent-foreground: oklch(0.205 0 0);
+    --sidebar-border: oklch(0.922 0 0);
+    --sidebar-ring: oklch(0.708 0 0);
+  }
+  .dark {
+    --background: oklch(0.145 0 0);
+    --foreground: oklch(0.985 0 0);
+    --card: oklch(0.205 0 0);
+    --card-foreground: oklch(0.985 0 0);
+    --popover: oklch(0.205 0 0);
+    --popover-foreground: oklch(0.985 0 0);
+    --primary: oklch(0.922 0 0);
+    --primary-foreground: oklch(0.205 0 0);
+    --secondary: oklch(0.269 0 0);
+    --secondary-foreground: oklch(0.985 0 0);
+    --muted: oklch(0.269 0 0);
+    --muted-foreground: oklch(0.708 0 0);
+    --accent: oklch(0.269 0 0);
+    --accent-foreground: oklch(0.985 0 0);
+    --destructive: oklch(0.704 0.191 22.216);
+    --border: oklch(1 0 0 / 10%);
+    --input: oklch(1 0 0 / 15%);
+    --ring: oklch(0.556 0 0);
+    --chart-1: oklch(0.87 0 0);
+    --chart-2: oklch(0.556 0 0);
+    --chart-3: oklch(0.439 0 0);
+    --chart-4: oklch(0.371 0 0);
+    --chart-5: oklch(0.269 0 0);
+    --sidebar: oklch(0.205 0 0);
+    --sidebar-foreground: oklch(0.985 0 0);
+    --sidebar-primary: oklch(0.488 0.243 264.376);
+    --sidebar-primary-foreground: oklch(0.985 0 0);
+    --sidebar-accent: oklch(0.269 0 0);
+    --sidebar-accent-foreground: oklch(0.985 0 0);
+    --sidebar-border: oklch(1 0 0 / 10%);
+    --sidebar-ring: oklch(0.556 0 0);
+  }
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
 }

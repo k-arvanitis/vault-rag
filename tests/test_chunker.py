@@ -154,3 +154,45 @@ def test_document_summary_chunk_carries_literal_title():
         "Title: POLICY FOR THE PROCUREMENT OF GOODS AND SERVICES (PGS)"
         in summary_chunk.content
     )
+
+
+def test_chunk_metadata_carries_page_number():
+    """Every chunk built from a page's text must record that page in metadata."""
+    words = lambda n: " ".join(f"word{i}" for i in range(n))  # noqa: E731
+    md = (
+        f"\n\n<!-- PAGE 1 | pymupdf4llm -->\n\n## Section One\n\n{words(400)}\n\n"
+        f"\n\n<!-- PAGE 2 | pymupdf4llm -->\n\n## Section Two\n\n{words(400)}\n\n"
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        chunks = chunk_markdown(
+            md,
+            enrich_with_llm=False,
+            verbose=False,
+            output_dir=Path(tmp),
+            file_name="test.md",
+        )
+    by_section = {c.metadata.get("section"): c.metadata.get("page") for c in chunks}
+    assert by_section["Section One"] == 1
+    assert by_section["Section Two"] == 2
+
+
+def test_chunk_merge_pass_keeps_previous_chunk_page():
+    """A tiny fragment folded into the previous chunk inherits that chunk's page
+    (documented limitation: it can be off-by-one if the fragment actually started
+    the next page — acceptable, not special-cased)."""
+    md = (
+        "\n\n<!-- PAGE 1 | pymupdf4llm -->\n\n"
+        "## Section One\n\n" + (" ".join(f"word{i}" for i in range(400)) + "\n\n")
+        + "\n\n<!-- PAGE 2 | pymupdf4llm -->\n\ntiny fragment\n\n"
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        chunks = chunk_markdown(
+            md,
+            enrich_with_llm=False,
+            verbose=False,
+            output_dir=Path(tmp),
+            file_name="test.md",
+            min_chars=10_000,
+        )
+    assert len(chunks) == 1
+    assert chunks[0].metadata.get("page") == 1

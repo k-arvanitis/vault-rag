@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Sun, Moon } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 export default function ThemeToggle() {
   const [mounted, setMounted] = useState(false);
@@ -24,17 +25,14 @@ export default function ThemeToggle() {
   };
 
   return (
-    <button
+    <Button
+      variant="ghost"
+      size="icon-sm"
       onClick={toggle}
       aria-label="Toggle dark mode"
       title={dark ? "Switch to light theme" : "Switch to dark theme"}
-      className="rounded-md border border-ink-200 bg-surface p-1.5 text-ink-600 transition-colors hover:bg-ink-100 hover:text-ink-800"
     >
-      {mounted ? (
-        dark ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />
-      ) : (
-        <span className="block h-3.5 w-3.5" />
-      )}
-    </button>
+      {mounted ? dark ? <Sun /> : <Moon /> : <span className="block size-3.5" />}
+    </Button>
   );
 }

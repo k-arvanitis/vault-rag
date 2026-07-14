@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from src.answer_pipeline import _TITLE_QUESTION_RE, _title_shortcut_answer, answer_query
+from src.answer_pipeline import (
+    _TITLE_QUESTION_RE,
+    _title_shortcut_answer,
+    answer_query,
+    parse_sources,
+)
 
 
 def _summary_hit(title: str, file_name: str = "doc_001_procurement_policy.md") -> dict:
@@ -73,3 +78,61 @@ class TestTitleShortcutAnswer:
         assert result["answer"] == "CUSTOMER INVOICE"
         assert result["sql"] == []
         assert result["sources"][0]["filename"].startswith("doc_005")
+
+
+class TestParseSourcesContract:
+    def test_source_dict_carries_page_and_doc_fields(self):
+        header = (
+            "[1] file=doc_001_procurement_policy.pdf chunk=4 page=7 "
+            "score=0.9123 doc_id=doc_001 title=Procurement%20Policy"
+        )
+        body = "## Some Section\n\nThe actual chunk text goes here."
+        sources = parse_sources([f"{header}\n{body}"])
+        assert len(sources) == 1
+        source = sources[0]
+        assert source["page"] == 7
+        assert source["document_id"] == "doc_001"
+        assert source["document_title"] == "Procurement Policy"
+        assert source["sheet"] is None
+        assert source["chunk_id"] is not None
+        assert source["score"] == 0.9123
+
+    def test_source_dict_page_absent_when_not_provided(self):
+        header = "[1] file=doc_002.xlsx sheet=Sheet1 score=0.8"
+        body = "Sheet summary: some table content."
+        sources = parse_sources([f"{header}\n{body}"])
+        assert len(sources) == 1
+        source = sources[0]
+        assert source["page"] is None
+        assert source["sheet"] == "Sheet1"
+
+    def test_quote_strips_prev_next_chunk_neighbor_wrapper(self):
+        """[prev chunk]/[next chunk] context injected by _format_hits for the LLM's
+        benefit must not leak into the citation's quote — it isn't real PDF text,
+        so leaving it in would break fitz.search_for-based highlighting."""
+        header = "[1] file=doc_001.pdf chunk=4 page=12 score=4.6484"
+        body = (
+            "[prev chunk]\nSome earlier paragraph.\n\n"
+            "[this chunk]\nThe actual retrieved passage that matches the PDF.\n\n"
+            "[next chunk]\nSome later paragraph."
+        )
+        sources = parse_sources([f"{header}\n{body}"])
+        assert len(sources) == 1
+        assert sources[0]["quote"] == "The actual retrieved passage that matches the PDF."
+
+    def test_quote_strips_figure_block_synthetic_text(self):
+        """A [FIGURE_START]/[FIGURE_END] block holds a VLM-generated description,
+        not real PDF text — leaving it in the quote breaks fitz.search_for-based
+        highlighting since that text was never on the actual page."""
+        header = "[1] file=doc_001.pdf chunk=4 page=12 score=1.0"
+        body = (
+            "Contracts are used for complex Goods and/or Services. Whenever "
+            "possible, the use of Contracts is preferred.\n\n"
+            "[FIGURE_START]\nThe image displays a logo.\n[FIGURE_END]"
+        )
+        sources = parse_sources([f"{header}\n{body}"])
+        assert len(sources) == 1
+        quote = sources[0]["quote"]
+        assert "FIGURE" not in quote
+        assert "logo" not in quote
+        assert quote.startswith("Contracts are used for complex Goods")

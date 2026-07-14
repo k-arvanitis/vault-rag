@@ -686,6 +686,51 @@ async def document_pdf_page(filename: str, page: int):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@app.get("/documents/{filename:path}/pdf/{page}/highlight")
+async def document_pdf_highlight(filename: str, page: int, quote: str):
+    """Locate a cited passage on a born-digital PDF page and return its bbox.
+
+    Uses fitz's exact text search against the PDF's real text layer — no
+    ingestion-time storage, no external service. Falls back to a shorter
+    prefix of the quote since markdown reformatting (tables, headings) can
+    break an exact match on the full excerpt. Returns bbox=None (never an
+    invented region) when nothing matches.
+    """
+    pdf_path = _resolve_pdf_path(filename)
+    if not pdf_path:
+        raise HTTPException(status_code=404, detail="PDF not found")
+    try:
+        import fitz
+
+        doc = fitz.open(str(pdf_path))
+        if page < 1 or page > len(doc):
+            raise HTTPException(
+                status_code=404, detail=f"Page {page} out of range (1–{len(doc)})"
+            )
+        fitz_page = doc[page - 1]
+        rects = fitz_page.search_for(quote)
+        if not rects:
+            prefix = " ".join(quote.split()[:12])
+            rects = fitz_page.search_for(prefix) if prefix else []
+        # A multi-line match returns one rect per line it spans — union them into
+        # one box covering the whole passage, not just its first line.
+        bbox = (
+            [
+                min(r.x0 for r in rects),
+                min(r.y0 for r in rects),
+                max(r.x1 for r in rects),
+                max(r.y1 for r in rects),
+            ]
+            if rects
+            else None
+        )
+        return {"bbox": bbox, "coordinate_system": "pdf_points" if bbox else None}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @app.get("/documents/{filename:path}/table-sheet/{sheet}")
 async def document_table_sheet(filename: str, sheet: str):
     """Return raw rows and cleaned markdown for one sheet of an Excel/CSV file."""

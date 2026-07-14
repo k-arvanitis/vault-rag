@@ -1,41 +1,40 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { X, FlaskConical, MessageSquareWarning, History, FolderSync } from "lucide-react";
-import { checkHealth, type Conversation } from "@/lib/api";
+import { Compass } from "lucide-react";
+import { toast } from "sonner";
+import { checkHealth, type Conversation, type InspectTarget } from "@/lib/api";
+import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
+import { Button } from "@/components/ui/button";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import Sidebar from "@/components/Sidebar";
+import AppHeader from "@/components/AppHeader";
 import ChatPanel from "@/components/ChatPanel";
-import ToastContainer, { type ToastItem } from "@/components/Toast";
 import InspectorPanel from "@/components/InspectorPanel";
 import EvalPanel from "@/components/EvalPanel";
 import FeedbackPanel from "@/components/FeedbackPanel";
 import GoogleDrivePanel from "@/components/GoogleDrivePanel";
 import HistoryPanel from "@/components/HistoryPanel";
-import ThemeToggle from "@/components/ThemeToggle";
-import TraceSidebar, { type Trace } from "@/components/TraceSidebar";
-
-let toastCounter = 0;
+import { type Trace } from "@/components/TraceSidebar";
+import RightPanelTabs from "@/components/RightPanelTabs";
 
 export default function Home() {
-  const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [offline, setOffline] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [inspecting, setInspecting] = useState<string | null>(null);
+  const [inspecting, setInspecting] = useState<InspectTarget | null>(null);
+  const [lastCited, setLastCited] = useState<InspectTarget | null>(null);
   const [showEval, setShowEval] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
   const [showDrive, setShowDrive] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [showTraceSheet, setShowTraceSheet] = useState(false);
   const [loadedConversation, setLoadedConversation] = useState<Conversation | null>(null);
   const [conversationLoadKey, setConversationLoadKey] = useState(0);
   const [trace, setTrace] = useState<Trace | null>(null);
 
   const addToast = useCallback((message: string, variant?: "error") => {
-    const id = `toast-${++toastCounter}`;
-    setToasts((prev) => [...prev, { id, message, variant }]);
-  }, []);
-
-  const dismissToast = useCallback((id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
+    if (variant === "error") toast.error(message);
+    else toast(message);
   }, []);
 
   useEffect(() => {
@@ -55,94 +54,85 @@ export default function Home() {
   const handleCollectionCleared = useCallback(() => {
     setRefreshKey((k) => k + 1);
     setTrace(null);
+    setLastCited(null);
     addToast("Collection cleared");
   }, [addToast]);
 
   const handleSelectConversation = useCallback((conv: Conversation) => {
     setLoadedConversation(conv);
     setTrace(null);
+    setLastCited(null);
     setConversationLoadKey((k) => k + 1);
   }, []);
 
+  const handleInspect = useCallback((target: InspectTarget) => {
+    setInspecting(target);
+    setLastCited(target);
+  }, []);
+
   return (
-    <div className="flex h-screen flex-col">
-      <header className="flex items-center justify-between border-b border-ink-200 bg-surface px-6 py-2.5">
-        <div className="flex items-baseline gap-3">
-          <span className="text-xl font-bold tracking-tight text-ink-800">Vault RAG</span>
-          <span className="hidden font-mono text-[11px] uppercase tracking-widest text-ink-400 sm:inline">
-            document intelligence
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowHistory(true)}
-            className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-ink-500 transition-colors hover:bg-ink-100 hover:text-ink-800"
-          >
-            <History className="h-3.5 w-3.5" />
-            History
-          </button>
-          <button
-            onClick={() => setShowFeedback(true)}
-            className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-ink-500 transition-colors hover:bg-ink-100 hover:text-ink-800"
-          >
-            <MessageSquareWarning className="h-3.5 w-3.5" />
-            Feedback
-          </button>
-          <button
-            onClick={() => setShowEval(true)}
-            className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-ink-500 transition-colors hover:bg-ink-100 hover:text-ink-800"
-          >
-            <FlaskConical className="h-3.5 w-3.5" />
-            Evaluation
-          </button>
-          <button
-            onClick={() => setShowDrive(true)}
-            className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-ink-500 transition-colors hover:bg-ink-100 hover:text-ink-800"
-          >
-            <FolderSync className="h-3.5 w-3.5" />
-            Drive sync
-          </button>
-          <ThemeToggle />
-        </div>
-      </header>
-
-      {offline && (
-        <div className="flex items-center justify-between border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">
-          <p>
-            <strong>Backend offline</strong> — start the Python server (<code className="font-mono">make api</code>).
-          </p>
-          <button
-            onClick={() => setOffline(false)}
-            className="text-amber-700 hover:text-amber-900"
-            aria-label="Dismiss"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      )}
-
-      <div className="flex flex-1 overflow-hidden">
-        <Sidebar
-          key={refreshKey}
-          onToast={addToast}
-          onInspect={setInspecting}
-          onCollectionCleared={handleCollectionCleared}
-        />
-        <ChatPanel
-          key={`chat-${conversationLoadKey}`}
-          onToast={addToast}
-          resetSignal={refreshKey}
-          onTrace={setTrace}
-          initialMessages={loadedConversation?.messages}
-          initialConversationId={loadedConversation?.id ?? null}
+    <SidebarProvider className="h-screen">
+      <Sidebar
+        key={refreshKey}
+        onToast={addToast}
+        onInspect={(filename) => handleInspect({ filename })}
+        onCollectionCleared={handleCollectionCleared}
+        offline={offline}
+      />
+      <SidebarInset className="overflow-hidden">
+        <AppHeader
+          offline={offline}
+          onDismissOffline={() => setOffline(false)}
+          onShowHistory={() => setShowHistory(true)}
+          onShowFeedback={() => setShowFeedback(true)}
+          onShowEval={() => setShowEval(true)}
+          onShowDrive={() => setShowDrive(true)}
         />
 
-        {inspecting ? (
-          <InspectorPanel filename={inspecting} onClose={() => setInspecting(null)} />
-        ) : (
-          <TraceSidebar trace={trace} />
-        )}
-      </div>
+        <div className="flex flex-1 overflow-hidden">
+          <ChatPanel
+            key={`chat-${conversationLoadKey}`}
+            onToast={addToast}
+            resetSignal={refreshKey}
+            onTrace={setTrace}
+            onInspect={handleInspect}
+            initialMessages={loadedConversation?.messages}
+            initialConversationId={loadedConversation?.id ?? null}
+          />
+
+          {inspecting ? (
+            <InspectorPanel
+              filename={inspecting.filename}
+              page={inspecting.page}
+              sheet={inspecting.sheet}
+              onClose={() => setInspecting(null)}
+            />
+          ) : (
+            <>
+              <div className="hidden h-full lg:flex">
+                <RightPanelTabs trace={trace} onInspect={handleInspect} selectedTarget={lastCited} />
+              </div>
+              <Button
+                variant="outline"
+                size="icon"
+                className="fixed bottom-4 right-4 z-20 rounded-full shadow-md lg:hidden"
+                onClick={() => setShowTraceSheet(true)}
+                aria-label="View trace"
+              >
+                <Compass />
+              </Button>
+              <Sheet open={showTraceSheet} onOpenChange={setShowTraceSheet}>
+                <SheetContent side="right" className="w-full p-0 sm:max-w-sm">
+                  <SheetHeader className="border-b border-border">
+                    <SheetTitle>Sources</SheetTitle>
+                  </SheetHeader>
+                  <RightPanelTabs trace={trace} onInspect={handleInspect} selectedTarget={lastCited} />
+                </SheetContent>
+              </Sheet>
+            </>
+          )}
+        </div>
+      </SidebarInset>
 
       {showEval && <EvalPanel onClose={() => setShowEval(false)} />}
       {showFeedback && <FeedbackPanel onClose={() => setShowFeedback(false)} />}
@@ -150,7 +140,6 @@ export default function Home() {
       {showHistory && (
         <HistoryPanel onClose={() => setShowHistory(false)} onSelect={handleSelectConversation} />
       )}
-      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
-    </div>
+    </SidebarProvider>
   );
 }

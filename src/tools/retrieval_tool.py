@@ -24,6 +24,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote
 
 from langchain_core.tools import StructuredTool
 from langsmith import traceable
@@ -765,8 +766,13 @@ def _make_unified_tool(
                         next_text = next_text[:budget] + "…"
                     content = f"{content}\n\n[next chunk]\n{next_text}"
 
+            page = meta.get("page")
+            doc_id = meta.get("doc_id") or "none"
+            title = quote(meta.get("title") or "none")
+            page_field = f" page={page if page is not None else 'none'}"
             parts.append(
-                f"[{i}] file={file_name} {location} score={score:.4f}\n{content}"
+                f"[{i}] file={file_name} {location}{page_field} score={score:.4f}"
+                f" doc_id={doc_id} title={title}\n{content}"
             )
 
         # Nothing survived the score/format filters.

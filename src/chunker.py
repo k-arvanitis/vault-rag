@@ -264,6 +264,7 @@ def chunk_markdown(
     # land in the same chunk — the reranker then sees the wrong lead content (the
     # heading) and demotes the chunk for table/figure queries.
     _page_marker_re = re.compile(r"(?=<!--\s*PAGE\s+\d+)", re.IGNORECASE)
+    _page_num_re = re.compile(r"<!--\s*PAGE\s+(\d+)", re.IGNORECASE)
 
     def _split_protecting_figures(content: str, metadata: dict) -> list[Chunk]:
         """Split content on token limit while keeping figure blocks atomic."""
@@ -307,6 +308,8 @@ def chunk_markdown(
         page_text = page_text.strip()
         if not page_text:
             continue
+        page_num_m = _page_num_re.search(page_text)
+        page_num = int(page_num_m.group(1)) if page_num_m else None
         for section in header_splitter.split_text(page_text):
             content = section.page_content.strip()
             if not content:
@@ -314,6 +317,7 @@ def chunk_markdown(
 
             # Keep the section as one chunk if small enough; else figure-aware split.
             metadata = dict(section.metadata or {})
+            metadata["page"] = page_num
             token_count = len(tokenizer.encode(content))
             if token_count <= max_tokens:
                 chunks.append(Chunk(content=content, metadata=dict(metadata)))

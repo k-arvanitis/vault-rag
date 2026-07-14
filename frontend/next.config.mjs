@@ -1,5 +1,11 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Default rewrite-proxy timeout is 30s — too short for an agentic RAG query
+  // (multi-tool retrieval + LLM generation routinely exceeds it), which was
+  // silently truncating slower /backend/query calls with a socket hang up.
+  experimental: {
+    proxyTimeout: 300_000,
+  },
   async headers() {
     return [
       {

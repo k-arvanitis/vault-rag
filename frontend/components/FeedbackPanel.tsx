@@ -3,7 +3,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { X, ThumbsUp, ThumbsDown, Loader2 } from "lucide-react";
 import { getFeedback, resolveFeedback, type Feedback } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface Props {
   onClose: () => void;
@@ -15,11 +22,12 @@ const ACTIONS = [
   { value: "dismissed", label: "Dismiss" },
 ];
 
-function FeedbackRow({ item, onResolved }: { item: Feedback; onResolved: (f: Feedback) => void }) {
+function FeedbackDetail({ item, onResolved }: { item: Feedback; onResolved: (f: Feedback) => void }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState(item.note ?? "");
+  const [action, setAction] = useState(ACTIONS[0].value);
 
-  const resolve = async (action: string) => {
+  const resolve = async () => {
     setBusy(true);
     try {
       const updated = await resolveFeedback(item.id, action, note || undefined);
@@ -30,74 +38,64 @@ function FeedbackRow({ item, onResolved }: { item: Feedback; onResolved: (f: Fee
   };
 
   return (
-    <div className="rounded-lg border border-ink-200 bg-surface p-3">
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-1.5">
-          {item.rating === "up" ? (
-            <ThumbsUp className="h-3.5 w-3.5 text-emerald-600" />
-          ) : (
-            <ThumbsDown className="h-3.5 w-3.5 text-red-600" />
-          )}
-          {item.reason && (
-            <span className="rounded bg-ink-100 px-1.5 py-0.5 text-[10px] text-ink-600">
-              {item.reason.replace(/_/g, " ")}
-            </span>
-          )}
-          <span
-            className={cn(
-              "rounded px-1.5 py-0.5 text-[10px]",
-              item.status === "resolved" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
-            )}
-          >
-            {item.status}
-          </span>
-        </div>
-        <span className="shrink-0 text-[10px] text-ink-400">
+    <div className="space-y-3">
+      <div className="flex items-center gap-1.5">
+        {item.rating === "up" ? (
+          <ThumbsUp className="size-3.5 text-emerald-600" />
+        ) : (
+          <ThumbsDown className="size-3.5 text-destructive" />
+        )}
+        {item.reason && <Badge variant="secondary">{item.reason.replace(/_/g, " ")}</Badge>}
+        <Badge variant={item.status === "resolved" ? "default" : "outline"}>{item.status}</Badge>
+        <span className="ml-auto text-[10px] text-muted-foreground">
           {new Date(item.created_at).toLocaleString()}
         </span>
       </div>
 
-      <p className="mt-2 text-xs font-medium text-ink-800">{item.question}</p>
-      <p className="mt-1 line-clamp-3 text-[11px] text-ink-500">{item.answer}</p>
+      <div>
+        <p className="text-xs font-medium text-foreground">{item.question}</p>
+        <p className="mt-1 text-[11px] text-muted-foreground">{item.answer}</p>
+      </div>
 
       {item.sources.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1">
+        <div className="flex flex-wrap gap-1">
           {item.sources.map((s, i) => (
-            <span
-              key={`${s.filename}-${i}`}
-              className="rounded bg-ink-100 px-1.5 py-0.5 text-[10px] text-ink-500"
-              title={s.excerpt || s.quote}
-            >
+            <Badge key={`${s.filename}-${i}`} variant="outline" title={s.excerpt || s.quote}>
               {s.filename}
               {s.page != null ? ` p.${s.page}` : ""}
-            </span>
+            </Badge>
           ))}
         </div>
       )}
 
       {item.status === "open" ? (
-        <>
-          <input
+        <div className="space-y-2">
+          <Textarea
             value={note}
             onChange={(e) => setNote(e.target.value)}
             placeholder="Admin note (optional)"
-            className="mt-2 w-full rounded-md border border-ink-200 bg-surface px-2 py-1 text-[11px] text-ink-700 placeholder:text-ink-400 focus:outline-none focus:ring-1 focus:ring-ink-300"
+            className="min-h-16 text-xs"
           />
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {ACTIONS.map((a) => (
-              <button
-                key={a.value}
-                onClick={() => resolve(a.value)}
-                disabled={busy}
-                className="rounded-md border border-ink-200 px-2 py-1 text-[10px] font-medium text-ink-600 transition-colors hover:bg-ink-100 disabled:opacity-50"
-              >
-                {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : a.label}
-              </button>
-            ))}
+          <div className="flex items-center gap-2">
+            <Select value={action} onValueChange={(v) => v && setAction(v)}>
+              <SelectTrigger className="flex-1">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {ACTIONS.map((a) => (
+                  <SelectItem key={a.value} value={a.value}>
+                    {a.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button size="sm" onClick={resolve} disabled={busy}>
+              {busy ? <Loader2 className="animate-spin" /> : "Resolve"}
+            </Button>
           </div>
-        </>
+        </div>
       ) : (
-        <p className="mt-2 text-[10px] text-ink-400">
+        <p className="text-[10px] text-muted-foreground">
           Resolved: {item.action?.replace(/_/g, " ")}
           {item.note ? ` — ${item.note}` : ""}
         </p>
@@ -109,6 +107,7 @@ function FeedbackRow({ item, onResolved }: { item: Feedback; onResolved: (f: Fee
 export default function FeedbackPanel({ onClose }: Props) {
   const [items, setItems] = useState<Feedback[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Feedback | null>(null);
 
   const load = useCallback(() => {
     getFeedback()
@@ -125,48 +124,86 @@ export default function FeedbackPanel({ onClose }: Props) {
 
   const handleResolved = (updated: Feedback) => {
     setItems((prev) => prev?.map((f) => (f.id === updated.id ? updated : f)) ?? null);
+    setSelected(updated);
   };
 
   const openCount = items?.filter((f) => f.status === "open").length ?? 0;
 
   return (
     <div className="fixed inset-0 z-30 flex">
-      <div className="flex h-full w-full flex-col bg-ink-50">
-        <div className="flex shrink-0 items-center gap-3 border-b border-ink-200 bg-surface px-5 py-3">
+      <div className="flex h-full w-full flex-col bg-background">
+        <div className="flex shrink-0 items-center gap-3 border-b border-border bg-card px-5 py-3">
           <div className="min-w-0 flex-1">
-            <p className="text-xs font-semibold text-ink-800">Feedback queue</p>
-            <p className="text-[10px] text-ink-400">
+            <p className="text-xs font-semibold text-foreground">Feedback queue</p>
+            <p className="text-[10px] text-muted-foreground">
               {items ? `${openCount} open, ${items.length} total` : "Loading…"}
             </p>
           </div>
-          <button
-            onClick={onClose}
-            className="rounded-md p-1.5 text-ink-500 transition-colors hover:bg-ink-100 hover:text-ink-800"
-            aria-label="Close feedback"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label="Close feedback">
+            <X />
+          </Button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-5">
-          {error && <p className="text-sm text-red-600">{error}</p>}
+          {error && (
+            <Alert variant="destructive" className="mx-auto mb-3 max-w-2xl">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
           {!error && !items && (
-            <div className="flex flex-1 items-center justify-center py-20">
-              <Loader2 className="h-5 w-5 animate-spin text-ink-400" />
+            <div className="mx-auto max-w-2xl space-y-2">
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-10 w-full" />
             </div>
           )}
           {items && items.length === 0 && (
-            <p className="text-center text-sm text-ink-400">No feedback yet.</p>
+            <p className="text-center text-sm text-muted-foreground">No feedback yet.</p>
           )}
           {items && items.length > 0 && (
-            <div className="mx-auto grid max-w-2xl gap-2.5">
-              {items.map((f) => (
-                <FeedbackRow key={f.id} item={f} onResolved={handleResolved} />
-              ))}
+            <div className="mx-auto max-w-2xl overflow-hidden rounded-lg border border-border">
+              <Table>
+                <TableBody>
+                  {items.map((f) => (
+                    <TableRow
+                      key={f.id}
+                      className="cursor-pointer"
+                      onClick={() => setSelected(f)}
+                    >
+                      <TableCell className="w-6">
+                        {f.rating === "up" ? (
+                          <ThumbsUp className="size-3.5 text-emerald-600" />
+                        ) : (
+                          <ThumbsDown className="size-3.5 text-destructive" />
+                        )}
+                      </TableCell>
+                      <TableCell className="max-w-0 truncate whitespace-nowrap text-foreground">
+                        {f.question}
+                      </TableCell>
+                      <TableCell className="w-24">
+                        <Badge variant={f.status === "resolved" ? "default" : "outline"}>{f.status}</Badge>
+                      </TableCell>
+                      <TableCell className="w-36 text-right text-[10px] text-muted-foreground">
+                        {new Date(f.created_at).toLocaleDateString()}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </div>
           )}
         </div>
       </div>
+
+      <Dialog open={!!selected} onOpenChange={(open) => !open && setSelected(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Feedback detail</DialogTitle>
+            <DialogDescription className="sr-only">Full question, answer, and resolution controls</DialogDescription>
+          </DialogHeader>
+          {selected && <FeedbackDetail item={selected} onResolved={handleResolved} />}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

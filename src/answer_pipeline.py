@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from urllib.parse import unquote
 
 from src.answer_quality import _is_multi_part_query, _split_multi_part_query
 from src.config import MAX_TOOL_RESULTS, QDRANT_COLLECTION, QDRANT_URL
@@ -96,16 +97,27 @@ _COMPARISON_RETRY_INSTRUCTION = (
     "the other document or topic named in the question before finalizing your answer."
 )
 
-# Chunk header format: "[1] file=name.pdf chunk=5 score=0.8312"
+# Chunk header format: "[1] file=name.pdf chunk=5 page=4 score=0.8312"
 # or                   "[1] file=name.xlsx sheet=Sheet1 score=0.91"
 _HEADER_RE = re.compile(
     r"^\[?\d+\]?\s+file=(?P<file>[^\s]+)"
     r"(?:\s+(?P<loc_key>chunk|sheet|part|repair_query|subquery)=(?P<loc_val>[^\s]+))?"
+    r"(?:\s+page=(?P<page>[^\s]+))?"
     r"(?:\s+score=(?P<score>[^\s]+))?",
 )
 _MD_HEADING_RE = re.compile(r"^#{1,3}\s+(.+)$", re.MULTILINE)
 _TABLE_MARKER_RE = re.compile(r"\[TABLE_START\]|\[TABLE_END\]")
-_PAGE_MARKER_RE = re.compile(r"<!--\s*PAGE\s+(\d+)")
+# A figure's VLM description is synthetic text, not present in the PDF itself —
+# leaving it in a citation's quote would break fitz.search_for-based highlighting.
+_FIGURE_BLOCK_RE = re.compile(r"\[FIGURE_START\].*?\[FIGURE_END\]", re.DOTALL)
+# _format_hits (retrieval_tool.py) sometimes wraps a chunk's own content with
+# "[prev chunk]"/"[next chunk]" neighbor context for the LLM's benefit — that
+# wrapper isn't part of the chunk's real text, so it must not leak into the
+# excerpt/quote a citation shows or fitz text-search would never match the PDF.
+_THIS_CHUNK_RE = re.compile(r"\[this chunk\]\n(.*?)(?:\n\n\[next chunk\]|\Z)", re.DOTALL)
+# doc_id/title trail the header line's fixed file/loc/page/score sequence,
+# so they're picked up separately rather than folded into _HEADER_RE's ordered groups.
+_DOC_META_RE = re.compile(r"\bdoc_id=(?P<doc_id>\S+)\s+title=(?P<title>\S+)")
 
 # The model sometimes copies a raw retrieved-chunk header line
 # ("[1] file=doc.pdf chunk=2 ...") or a dangling "Sources:" label into its final
@@ -165,12 +177,26 @@ def parse_sources(collected: list[str]) -> list[dict]:
             loc_key = m.group("loc_key") or "" if m else ""
             loc_val = m.group("loc_val") or "" if m else ""
             score_str = m.group("score") if m else None
+            page_str = m.group("page") if m else None
+            page = int(page_str) if page_str and page_str.isdigit() else None
+
+            doc_meta_m = _DOC_META_RE.search(lines[0])
+            document_id = (
+                doc_meta_m.group("doc_id")
+                if doc_meta_m and doc_meta_m.group("doc_id") != "none"
+                else None
+            )
+            document_title = (
+                unquote(doc_meta_m.group("title"))
+                if doc_meta_m and doc_meta_m.group("title") != "none"
+                else None
+            )
 
             body_lines = lines[1:] if len(lines) > 1 else []
             body = "\n".join(body_lines).strip()
-
-            page_m = _PAGE_MARKER_RE.search(body)
-            page = int(page_m.group(1)) if page_m else None
+            this_chunk_m = _THIS_CHUNK_RE.search(body)
+            if this_chunk_m:
+                body = this_chunk_m.group(1).strip()
 
             if filename.startswith("eval/data/raw/"):
                 filename = filename[len("eval/data/raw/") :]
@@ -200,7 +226,8 @@ def parse_sources(collected: list[str]) -> list[dict]:
             else:
                 location = ""
 
-            plain = _TABLE_MARKER_RE.sub("", body)
+            plain = _FIGURE_BLOCK_RE.sub("", body)
+            plain = _TABLE_MARKER_RE.sub("", plain)
             plain = re.sub(r"^#{1,3}\s+.+$", "", plain, flags=re.MULTILINE).strip()
             excerpt = " ".join(plain.split())[:350]
 
@@ -223,9 +250,12 @@ def parse_sources(collected: list[str]) -> list[dict]:
             sources.append(
                 {
                     "filename": filename,
+                    "document_id": document_id,
+                    "document_title": document_title or filename,
                     "section": section,
                     "location": location,
                     "page": page,
+                    "sheet": loc_val if loc_key == "sheet" else None,
                     "excerpt": excerpt,
                     "quote": excerpt,
                     "chunk_id": chunk_id,

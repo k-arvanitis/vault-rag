@@ -1,9 +1,13 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { Upload } from "lucide-react";
+import { Upload, CheckCircle2 } from "lucide-react";
 import { ingestFile, getIngestStatus } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface UploadingFile {
   id: string;
@@ -23,12 +27,15 @@ const STAGE_PROGRESS: Record<string, number> = {
 };
 
 const ACCEPTED = ".pdf,.xlsx,.xls,.csv,.docx,.doc,.md,.png,.jpg,.jpeg";
+const ACCEPTED_EXT = ACCEPTED.split(",").map((e) => e.slice(1));
 
 type Pipeline = "auto" | "ocr" | "text";
 
 interface Props {
   onUploaded: () => void;
   onToast: (msg: string, variant?: "error") => void;
+  /** Disables uploads and shows an offline notice while the backend is unreachable. */
+  offline?: boolean;
 }
 
 const PIPELINE_LABELS: Record<Pipeline, string> = {
@@ -37,7 +44,12 @@ const PIPELINE_LABELS: Record<Pipeline, string> = {
   text: "Force Text",
 };
 
-export default function UploadZone({ onUploaded, onToast }: Props) {
+function isAccepted(filename: string) {
+  const ext = filename.split(".").pop()?.toLowerCase();
+  return !!ext && ACCEPTED_EXT.includes(ext);
+}
+
+export default function UploadZone({ onUploaded, onToast, offline }: Props) {
   const [dragging, setDragging] = useState(false);
   const [files, setFiles] = useState<UploadingFile[]>([]);
   const [pipeline, setPipeline] = useState<Pipeline>("auto");
@@ -46,6 +58,16 @@ export default function UploadZone({ onUploaded, onToast }: Props) {
   const processFile = useCallback(
     async (file: File, selectedPipeline: Pipeline) => {
       const id = `${Date.now()}-${file.name}`;
+
+      if (!isAccepted(file.name)) {
+        setFiles((prev) => [
+          ...prev,
+          { id, name: file.name, stage: "Unsupported", progress: 100, error: "Unsupported file type" },
+        ]);
+        onToast(`${file.name}: unsupported file type`, "error");
+        return;
+      }
+
       const entry: UploadingFile = { id, name: file.name, stage: "Parsing", progress: 5 };
       setFiles((prev) => [...prev, entry]);
 
@@ -91,7 +113,7 @@ export default function UploadZone({ onUploaded, onToast }: Props) {
   );
 
   const handleFiles = (list: FileList | null, selectedPipeline: Pipeline) => {
-    if (!list) return;
+    if (!list || offline) return;
     Array.from(list).forEach((f) => processFile(f, selectedPipeline));
   };
 
@@ -102,52 +124,59 @@ export default function UploadZone({ onUploaded, onToast }: Props) {
   };
 
   return (
-    <div className="space-y-2 border-t border-ink-200 pt-3">
+    <div className="space-y-2 border-t border-border pt-3">
+      {offline && (
+        <Alert>
+          <AlertDescription>Backend offline — uploads paused.</AlertDescription>
+        </Alert>
+      )}
+
       <div
         className={cn(
-          "cursor-pointer rounded-lg border-2 border-dashed p-3 text-center transition-colors",
-          dragging
-            ? "border-brand bg-ink-100"
-            : "border-ink-200 hover:border-ink-300 hover:bg-ink-100"
+          "rounded-lg border-2 border-dashed p-3 text-center transition-colors",
+          offline
+            ? "cursor-not-allowed border-border opacity-50"
+            : dragging
+            ? "cursor-pointer border-ring bg-muted"
+            : "cursor-pointer border-border hover:border-foreground/20 hover:bg-muted"
         )}
         onDragOver={(e) => {
+          if (offline) return;
           e.preventDefault();
           setDragging(true);
         }}
         onDragLeave={() => setDragging(false)}
         onDrop={onDrop}
-        onClick={() => inputRef.current?.click()}
+        onClick={() => !offline && inputRef.current?.click()}
       >
-        <Upload className="mx-auto mb-1 h-4 w-4 text-ink-400" />
-        <p className="text-xs font-medium text-ink-700">Upload documents</p>
-        <p className="mt-0.5 text-[10px] text-ink-400">PDF · Excel · CSV · DOCX · MD · Image</p>
+        <Upload className="mx-auto mb-1 size-4 text-muted-foreground" />
+        <p className="text-xs font-medium text-foreground">Upload documents</p>
+        <p className="mt-0.5 text-[10px] text-muted-foreground">PDF · Excel · CSV · DOCX · MD · Image</p>
         <input
           ref={inputRef}
           type="file"
           multiple
           accept={ACCEPTED}
           className="hidden"
+          disabled={offline}
           onChange={(e) => handleFiles(e.target.files, pipeline)}
         />
       </div>
 
       {/* PDF pipeline selector — ignored for non-PDF file types */}
-      <div className="flex items-center gap-1">
-        <span className="shrink-0 text-[10px] text-ink-400">PDF pipeline:</span>
-        <div className="ml-1 flex gap-0.5">
+      <div className="space-y-1">
+        <span className="text-[10px] text-muted-foreground">PDF pipeline:</span>
+        <div className="flex flex-wrap gap-1">
           {(["auto", "ocr", "text"] as Pipeline[]).map((p) => (
-            <button
+            <Button
               key={p}
+              variant={pipeline === p ? "default" : "ghost"}
+              size="xs"
+              disabled={offline}
               onClick={() => setPipeline(p)}
-              className={cn(
-                "rounded px-2 py-0.5 text-[10px] transition-colors",
-                pipeline === p
-                  ? "bg-brand text-white"
-                  : "text-ink-500 hover:bg-ink-100 hover:text-ink-700"
-              )}
             >
               {PIPELINE_LABELS[p]}
-            </button>
+            </Button>
           ))}
         </div>
       </div>
@@ -156,27 +185,42 @@ export default function UploadZone({ onUploaded, onToast }: Props) {
         <div className="space-y-2 pt-1">
           {files.map((f) => (
             <div key={f.id} className="text-xs">
-              <div className="mb-1 flex items-center justify-between">
-                <span className="max-w-[180px] truncate text-ink-700">{f.name}</span>
-                <span className={cn("ml-1 shrink-0 text-[10px]", f.error ? "text-red-600" : "text-ink-500")}>
+              <div className="mb-1 flex items-center justify-between gap-1.5">
+                <Tooltip>
+                  <TooltipTrigger render={<span className="max-w-[180px] truncate text-foreground" />}>
+                    {f.name}
+                  </TooltipTrigger>
+                  <TooltipContent>{f.name}</TooltipContent>
+                </Tooltip>
+                <span className="flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground">
+                  {f.progress === 100 && !f.error && <CheckCircle2 className="size-3 text-emerald-600" />}
                   {f.stage}
                 </span>
               </div>
-              <div className="h-1.5 overflow-hidden rounded-full bg-ink-100">
+              <Progress
+                value={f.progress}
+                className="[&_[data-slot=progress-track]]:h-1.5"
+              >
                 <div
                   className={cn(
-                    "h-full rounded-full transition-all duration-500",
-                    f.error ? "bg-red-500" : f.progress === 100 ? "bg-emerald-500" : "bg-brand"
+                    "sr-only",
+                    f.error && "not-sr-only text-[10px] text-destructive"
                   )}
-                  style={{ width: `${f.progress}%` }}
-                />
-              </div>
+                >
+                  {f.error}
+                </div>
+              </Progress>
+              {f.error && (
+                <Alert variant="destructive" className="mt-1 py-1.5">
+                  <AlertDescription className="text-[10px]">{f.error}</AlertDescription>
+                </Alert>
+              )}
               {f.stage !== "Indexed" && !f.error && (
                 <div className="mt-1 flex gap-1.5">
                   {STAGES.map((s) => (
                     <span
                       key={s}
-                      className={cn("text-[9px]", f.stage === s ? "text-ink-700" : "text-ink-300")}
+                      className={cn("text-[9px]", f.stage === s ? "text-foreground" : "text-muted-foreground/50")}
                     >
                       {s}
                     </span>

@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
 import { ChevronDown, ChevronRight, Database, FileText, Wrench } from "lucide-react";
-import { type Source, type RejectedSource } from "@/lib/api";
+import { type Source, type RejectedSource, type InspectTarget, sourceInspectTarget } from "@/lib/api";
+import { Badge } from "@/components/ui/badge";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import SourceCard from "./SourceCard";
 
 export interface Trace {
@@ -14,6 +15,7 @@ export interface Trace {
 
 interface Props {
   trace: Trace | null;
+  onInspect?: (target: InspectTarget) => void;
 }
 
 const TOOL_META: Record<string, { label: string; icon: typeof Wrench }> = {
@@ -32,37 +34,30 @@ function Panel({
   defaultOpen?: boolean;
   children: React.ReactNode;
 }) {
-  const [open, setOpen] = useState(defaultOpen ?? true);
   return (
-    <div className="overflow-hidden rounded-lg border border-ink-200 bg-surface">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between border-b border-ink-100 px-3 py-2 text-left hover:bg-ink-50"
-      >
-        <span className="text-xs font-semibold uppercase tracking-wide text-ink-500">
+    <Collapsible defaultOpen={defaultOpen ?? true} className="overflow-hidden rounded-lg border border-border bg-card">
+      <CollapsibleTrigger className="group flex w-full items-center justify-between border-b border-border px-3 py-2 text-left hover:bg-muted">
+        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           {title}
           {typeof count === "number" && (
-            <span className="ml-1.5 font-mono text-[10px] text-ink-400">({count})</span>
+            <span className="ml-1.5 font-mono text-[10px] text-muted-foreground/70">({count})</span>
           )}
         </span>
-        {open ? (
-          <ChevronDown className="h-3.5 w-3.5 text-ink-400" />
-        ) : (
-          <ChevronRight className="h-3.5 w-3.5 text-ink-400" />
-        )}
-      </button>
-      {open && <div className="p-3">{children}</div>}
-    </div>
+        <ChevronDown className="size-3.5 text-muted-foreground group-data-[panel-open]:hidden" />
+        <ChevronRight className="hidden size-3.5 text-muted-foreground group-data-[panel-open]:block" />
+      </CollapsibleTrigger>
+      <CollapsibleContent className="p-3">{children}</CollapsibleContent>
+    </Collapsible>
   );
 }
 
-export default function TraceSidebar({ trace }: Props) {
+export default function TraceSidebar({ trace, onInspect }: Props) {
   if (!trace) {
     return (
-      <aside className="hidden w-[320px] shrink-0 overflow-y-auto border-l border-ink-200 bg-ink-50 p-3 lg:block">
-        <div className="rounded-lg border border-dashed border-ink-200 bg-surface px-3 py-6 text-center">
-          <p className="text-[11px] uppercase tracking-wide text-ink-400">Trace</p>
-          <p className="mt-1.5 text-xs text-ink-500">
+      <aside className="h-full w-full overflow-y-auto bg-background p-3 lg:w-[320px] lg:shrink-0 lg:border-l lg:border-border">
+        <div className="rounded-lg border border-dashed border-border bg-card px-3 py-6 text-center">
+          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Trace</p>
+          <p className="mt-1.5 text-xs text-muted-foreground">
             Ask a question — tools, SQL, and retrieved chunks for the latest turn appear here.
           </p>
         </div>
@@ -73,7 +68,7 @@ export default function TraceSidebar({ trace }: Props) {
   const { sources, sql, tools_used, rejected_sources = [] } = trace;
 
   return (
-    <aside className="hidden w-[320px] shrink-0 overflow-y-auto border-l border-ink-200 bg-ink-50 p-3 lg:block">
+    <aside className="h-full w-full overflow-y-auto bg-background p-3 lg:w-[320px] lg:shrink-0 lg:border-l lg:border-border">
       <div className="space-y-3">
         {tools_used.length > 0 && (
           <Panel title="Tools" count={tools_used.length}>
@@ -82,13 +77,10 @@ export default function TraceSidebar({ trace }: Props) {
                 const meta = TOOL_META[t] ?? { label: t, icon: Wrench };
                 const Icon = meta.icon;
                 return (
-                  <span
-                    key={t}
-                    className="inline-flex items-center gap-1 rounded-full border border-ink-200 bg-ink-50 px-2 py-0.5 text-[10px] font-medium text-ink-700"
-                  >
-                    <Icon className="h-3 w-3 text-brand-dark" />
+                  <Badge key={t} variant="secondary" className="gap-1">
+                    <Icon data-icon="inline-start" />
                     {meta.label}
-                  </span>
+                  </Badge>
                 );
               })}
             </div>
@@ -114,7 +106,12 @@ export default function TraceSidebar({ trace }: Props) {
           <Panel title="Retrieved chunks" count={sources.length}>
             <div className="space-y-2">
               {sources.map((s, i) => (
-                <SourceCard key={i} source={s} index={i + 1} />
+                <SourceCard
+                  key={i}
+                  source={s}
+                  index={i + 1}
+                  onInspect={onInspect ? () => onInspect(sourceInspectTarget(s)) : undefined}
+                />
               ))}
             </div>
           </Panel>
@@ -124,23 +121,25 @@ export default function TraceSidebar({ trace }: Props) {
           <Panel title="Retrieved but rejected" count={rejected_sources.length} defaultOpen={false}>
             <ul className="space-y-1.5">
               {rejected_sources.map((r, i) => (
-                <li key={i} className="flex items-center justify-between gap-2 text-[11px] text-ink-500">
+                <li key={i} className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
                   <span className="truncate">{r.filename}</span>
                   {r.score !== null && (
-                    <span className="shrink-0 font-mono text-[10px] text-ink-400">
+                    <span className="shrink-0 font-mono text-[10px] text-muted-foreground/70">
                       {r.score.toFixed(2)}
                     </span>
                   )}
                 </li>
               ))}
             </ul>
-            <p className="mt-2 text-[10px] text-ink-400">Lower reranker relevance than the sources used above.</p>
+            <p className="mt-2 text-[10px] text-muted-foreground/70">
+              Lower reranker relevance than the sources used above.
+            </p>
           </Panel>
         )}
 
         {sources.length === 0 && sql.length === 0 && (
-          <div className="rounded-lg border border-dashed border-ink-200 bg-surface px-3 py-4 text-center">
-            <p className="text-xs text-ink-500">No tool calls for this turn.</p>
+          <div className="rounded-lg border border-dashed border-border bg-card px-3 py-4 text-center">
+            <p className="text-xs text-muted-foreground">No tool calls for this turn.</p>
           </div>
         )}
       </div>

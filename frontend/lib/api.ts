@@ -21,13 +21,31 @@ export interface IngestStatus {
 
 export interface Source {
   filename: string;
+  document_id: string | null;
+  document_title: string;
   section: string;
   location: string;
   page: number | null;
+  sheet: string | null;
   excerpt: string;
   quote: string;
   chunk_id: number | null;
   score: number | null;
+}
+
+export interface InspectTarget {
+  filename: string;
+  page?: number;
+  sheet?: string;
+}
+
+/** Derives an inspector jump target from a citation. */
+export function sourceInspectTarget(s: Source): InspectTarget {
+  return {
+    filename: s.filename,
+    page: s.page ?? undefined,
+    sheet: s.sheet ?? undefined,
+  };
 }
 
 export interface RejectedSource {
@@ -280,6 +298,23 @@ export async function getDocumentMarkdown(filename: string): Promise<MarkdownRes
 
 export async function getPdfPage(filename: string, page: number): Promise<PdfPageResponse> {
   return request<PdfPageResponse>(`/documents/${encodeURIComponent(filename)}/pdf/${page}`);
+}
+
+export interface PdfHighlightResponse {
+  bbox: [number, number, number, number] | null;
+  coordinate_system: string | null;
+}
+
+/** Locates a cited quote on a born-digital PDF page, computed live via exact
+ * text search against the PDF — no ingestion-time storage. */
+export async function getPdfHighlight(
+  filename: string,
+  page: number,
+  quote: string
+): Promise<PdfHighlightResponse> {
+  return request<PdfHighlightResponse>(
+    `/documents/${encodeURIComponent(filename)}/pdf/${page}/highlight?quote=${encodeURIComponent(quote)}`
+  );
 }
 
 export async function getTableSheet(filename: string, sheet: string): Promise<TableSheetResponse> {

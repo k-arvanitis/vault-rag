@@ -3,6 +3,27 @@
 See also `TODO_LITELLM.md` for the three open LiteLLM semantic-cache + Langfuse blockers
 (tracked separately — those are optional enhancements, not blockers for publishing).
 
+## Weak retrieval / ungrounded answer on RFQ-definition question (found 2026-07-12, not fixed)
+
+Asked `doc_001_procurement_policy.pdf` (LACERA procurement policy) "what is RFQ in Lacera doc?"
+against the live API directly (`curl /query`, bypassing the frontend entirely — confirmed not
+a UI bug). Two separate runs of essentially the same question both showed the same failure
+shape:
+- All 8 retrieved chunks scored **-2.19 to -7.6** (reranker scores) — nothing retrieved is a
+  strong match.
+- The generated answer confidently defines RFQ ("itemized list of prices for Goods or
+  Services... hardware") but **no retrieved chunk contains that text** — the model appears to
+  be answering from its own training knowledge of what RFQ generically means in procurement,
+  not from the retrieved context.
+- The cited source chunk (e.g. "Master Agreements... RFSQ") is real and was genuinely
+  retrieved, but doesn't actually support the answer's specific claim either.
+- [ ] Check whether the actual RFQ definition chunk exists in `doc_001_procurement_policy.pdf`
+      at all and why retrieval didn't surface it (embedding quality? chunk boundaries splitting
+      the definition away from the "RFQ" heading? reranker threshold too permissive, letting
+      weak matches through instead of refusing?).
+- [ ] Consider whether the agent should refuse / hedge when all retrieved scores are this weak,
+      instead of answering fluently from parametric knowledge.
+
 ## Session summary (2026-07-06) — eval numbers reconciled, two real bugs fixed
 
 **The eval numbers are now real, current, and synced.** README.md, docs/CASE_STUDY.md, and

@@ -3,6 +3,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { X, Loader2, Play } from "lucide-react";
 import { getEvalSummary, runEval, getEvalStatus, type EvalSummary } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 interface Props {
   onClose: () => void;
@@ -12,27 +28,52 @@ function pct(v: unknown): string {
   return typeof v === "number" ? `${(v * 100).toFixed(1)}%` : String(v);
 }
 
+/** Looks up a known metric name at the top level or one level of nesting —
+ * doesn't assume a fixed schema, just surfaces it as a headline if present. */
+function findMetric(summary: EvalSummary, key: string): number | null {
+  const top = summary[key];
+  if (typeof top === "number") return top;
+  for (const v of Object.values(summary)) {
+    if (v && typeof v === "object" && !Array.isArray(v) && key in (v as Record<string, unknown>)) {
+      const nested = (v as Record<string, unknown>)[key];
+      if (typeof nested === "number") return nested;
+    }
+  }
+  return null;
+}
+
+const HEADLINE_METRICS: { key: string; label: string }[] = [
+  { key: "correctness", label: "Correctness" },
+  { key: "faithfulness", label: "Faithfulness" },
+  { key: "answer_relevancy", label: "Answer relevancy" },
+  { key: "hit_at_5", label: "Hit@5" },
+  { key: "answer_accuracy", label: "Structured accuracy" },
+  { key: "correct_refusal_rate", label: "Refusal rate" },
+];
+
 function MetricTable({ title, metrics }: { title: string; metrics: Record<string, unknown> }) {
   const rows = Object.entries(metrics).filter(([, v]) => typeof v === "number" || typeof v === "string");
   if (rows.length === 0) return null;
   return (
-    <div className="overflow-hidden rounded-lg border border-ink-200 bg-surface">
-      <p className="border-b border-ink-100 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink-500">
-        {title}
-      </p>
-      <table className="w-full text-xs">
-        <tbody>
-          {rows.map(([k, v]) => (
-            <tr key={k} className="border-b border-ink-100 last:border-0">
-              <td className="px-3 py-1.5 text-ink-500">{k.replace(/_/g, " ")}</td>
-              <td className="px-3 py-1.5 text-right font-mono font-medium text-ink-800">
-                {typeof v === "number" && v <= 1 && v >= 0 ? pct(v) : String(v)}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <Card size="sm">
+      <CardHeader>
+        <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">{title}</CardTitle>
+      </CardHeader>
+      <CardContent className="px-0">
+        <Table>
+          <TableBody>
+            {rows.map(([k, v]) => (
+              <TableRow key={k}>
+                <TableCell className="text-muted-foreground">{k.replace(/_/g, " ")}</TableCell>
+                <TableCell className="text-right font-mono font-medium text-foreground">
+                  {typeof v === "number" && v <= 1 && v >= 0 ? pct(v) : String(v)}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -40,6 +81,7 @@ export default function EvalPanel({ onClose }: Props) {
   const [summary, setSummary] = useState<EvalSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
+  const [confirmRun, setConfirmRun] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(() => {
@@ -77,48 +119,95 @@ export default function EvalPanel({ onClose }: Props) {
     }
   }, [load]);
 
+  const headline = summary
+    ? HEADLINE_METRICS.map((m) => ({ ...m, value: findMetric(summary, m.key) })).filter((m) => m.value != null)
+    : [];
+
   return (
     <div className="fixed inset-0 z-30 flex">
-      <div className="flex h-full w-full flex-col bg-ink-50">
-        <div className="flex shrink-0 items-center gap-3 border-b border-ink-200 bg-surface px-5 py-3">
+      <div className="flex h-full w-full flex-col bg-background">
+        <div className="flex shrink-0 items-center gap-3 border-b border-border bg-card px-5 py-3">
           <div className="min-w-0 flex-1">
-            <p className="text-xs font-semibold text-ink-800">Evaluation</p>
-            <p className="text-[10px] text-ink-400">
+            <p className="text-xs font-semibold text-foreground">Evaluation</p>
+            <p className="text-[10px] text-muted-foreground">
               Last computed benchmark results (run <code className="font-mono">make eval</code> to refresh)
             </p>
           </div>
-          <button
-            onClick={handleRun}
-            disabled={running}
-            className="flex items-center gap-1.5 rounded-md border border-ink-200 px-2.5 py-1.5 text-xs font-medium text-ink-600 transition-colors hover:bg-ink-100 disabled:opacity-50"
-          >
-            {running ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-            {running ? "Running…" : "Run eval"}
-          </button>
-          <button
-            onClick={onClose}
-            className="rounded-md p-1.5 text-ink-500 transition-colors hover:bg-ink-100 hover:text-ink-800"
-            aria-label="Close evaluation"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          {running && (
+            <Badge variant="secondary" className="gap-1">
+              <Loader2 className="size-3 animate-spin" />
+              Running
+            </Badge>
+          )}
+          <AlertDialog open={confirmRun} onOpenChange={setConfirmRun}>
+            <Button variant="outline" size="sm" onClick={() => setConfirmRun(true)} disabled={running}>
+              <Play data-icon="inline-start" />
+              Run eval
+            </Button>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Run the evaluation suite?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This invokes real models against the full benchmark set and can take several minutes.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={() => {
+                    setConfirmRun(false);
+                    handleRun();
+                  }}
+                >
+                  Run
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+          <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label="Close evaluation">
+            <X />
+          </Button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-5">
-          {error && <p className="text-sm text-red-600">{error}</p>}
+          {error && (
+            <Alert variant="destructive" className="mx-auto mb-3 max-w-2xl">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
           {!error && !summary && (
-            <div className="flex flex-1 items-center justify-center py-20">
-              <Loader2 className="h-5 w-5 animate-spin text-ink-400" />
+            <div className="mx-auto max-w-2xl space-y-3">
+              <Skeleton className="h-20 w-full" />
+              <Skeleton className="h-32 w-full" />
+              <Skeleton className="h-32 w-full" />
             </div>
           )}
           {summary && (
-            <div className="mx-auto grid max-w-2xl gap-3">
-              <p className="text-xs text-ink-500">{summary.question_count} benchmark questions</p>
-              {Object.entries(summary)
-                .filter(([k, v]) => k !== "question_count" && v && typeof v === "object" && !Array.isArray(v))
-                .map(([key, value]) => (
-                  <MetricTable key={key} title={key.replace(/_/g, " ")} metrics={value as Record<string, unknown>} />
-                ))}
+            <div className="mx-auto max-w-2xl space-y-4">
+              <p className="text-xs text-muted-foreground">{summary.question_count} benchmark questions</p>
+
+              {headline.length > 0 && (
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                  {headline.map((m) => (
+                    <Card key={m.key} size="sm">
+                      <CardContent className="px-3">
+                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{m.label}</p>
+                        <p className="mt-1 text-lg font-semibold text-foreground">
+                          {m.value! <= 1 && m.value! >= 0 ? pct(m.value) : m.value}
+                        </p>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+
+              <div className="grid gap-3">
+                {Object.entries(summary)
+                  .filter(([k, v]) => k !== "question_count" && v && typeof v === "object" && !Array.isArray(v))
+                  .map(([key, value]) => (
+                    <MetricTable key={key} title={key.replace(/_/g, " ")} metrics={value as Record<string, unknown>} />
+                  ))}
+              </div>
             </div>
           )}
         </div>

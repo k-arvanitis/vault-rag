@@ -2,8 +2,9 @@
 
 import { useRef, useState, useCallback, useEffect } from "react";
 import { Send, Loader2, SquarePen } from "lucide-react";
-import { queryDocuments, saveConversation } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { queryDocuments, saveConversation, type InspectTarget } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import MessageList, { type Message } from "./MessageList";
 
 let msgCounter = 0;
@@ -17,6 +18,7 @@ interface Props {
   onToast: (msg: string, variant?: "error") => void;
   resetSignal?: number;
   onTrace?: (trace: Trace | null) => void;
+  onInspect?: (target: InspectTarget) => void;
   initialMessages?: Message[];
   initialConversationId?: string | null;
   onConversationSaved?: (id: string) => void;
@@ -26,6 +28,7 @@ export default function ChatPanel({
   onToast,
   resetSignal = 0,
   onTrace,
+  onInspect,
   initialMessages,
   initialConversationId = null,
   onConversationSaved,
@@ -113,59 +116,44 @@ export default function ChatPanel({
   };
 
   return (
-    <div className="flex h-full min-w-0 flex-1 flex-col bg-ink-50">
-      <div className="flex shrink-0 items-center justify-end border-b border-ink-200 bg-surface px-6 py-2">
-        <button
+    <div className="flex h-full min-w-0 flex-1 flex-col bg-background">
+      <div className="flex shrink-0 items-center justify-end border-b border-border bg-card px-6 py-2">
+        <Button
+          variant="outline"
+          size="sm"
           onClick={newConversation}
           disabled={streaming || messages.length === 0}
-          className={cn(
-            "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors",
-            streaming || messages.length === 0
-              ? "cursor-not-allowed border-ink-200 text-ink-300"
-              : "border-ink-200 text-ink-600 hover:bg-ink-100 hover:text-ink-800"
-          )}
         >
-          <SquarePen className="h-3.5 w-3.5" />
+          <SquarePen data-icon="inline-start" />
           New conversation
-        </button>
+        </Button>
       </div>
 
-      <MessageList messages={messages} streaming={streaming} />
+      <MessageList messages={messages} streaming={streaming} onInspect={onInspect} />
 
       {/* Input bar */}
-      <div className="shrink-0 border-t border-ink-200 px-6 py-4">
-        <div className="flex items-end gap-2 rounded-lg border border-ink-200 bg-surface px-3 py-2 transition-colors focus-within:border-brand">
-          <textarea
+      <div className="shrink-0 border-t border-border px-6 py-4">
+        <div className="flex items-end gap-2 rounded-lg border border-input bg-card px-3 py-2 transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50">
+          <Textarea
             ref={textareaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={onKeyDown}
             placeholder="Ask about your documents…"
             rows={1}
-            className="max-h-40 flex-1 resize-none overflow-y-auto bg-transparent text-sm leading-relaxed text-ink-800 outline-none placeholder:text-ink-400"
-            style={{ minHeight: "24px" }}
-            onInput={(e) => {
-              const el = e.currentTarget;
-              el.style.height = "auto";
-              el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
-            }}
+            className="max-h-40 min-h-0 flex-1 resize-none border-0 bg-transparent px-0 py-0 text-sm leading-relaxed shadow-none focus-visible:ring-0"
             disabled={streaming}
           />
-          <button
+          <Button
             onClick={send}
             disabled={!input.trim() || streaming}
             aria-label="Send"
-            className={cn(
-              "shrink-0 rounded-md p-1.5 transition-colors",
-              input.trim() && !streaming
-                ? "bg-brand text-white hover:bg-brand-dark"
-                : "cursor-not-allowed text-ink-300"
-            )}
+            size="icon-sm"
           >
-            {streaming ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-          </button>
+            {streaming ? <Loader2 className="animate-spin" /> : <Send />}
+          </Button>
         </div>
-        <p className="mt-1.5 text-center text-[10px] text-ink-400">
+        <p className="mt-1.5 text-center text-[10px] text-muted-foreground">
           Enter to send · Shift+Enter for newline
         </p>
       </div>
