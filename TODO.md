@@ -1,5 +1,37 @@
 # vault-rag — TODO to portfolio-ready
 
+## Session summary (2026-07-14) — evidence panel shipped, open items before wrap-up
+
+Committed: PDF bbox highlighting + evidence panel, figure-image return (crop endpoint,
+see "Return the actual figure image" below — now implemented), removed unused
+`src/integrations/drive_sync.py` stub, added frontend typecheck to CI, added one
+Playwright e2e smoke test (`frontend/e2e/golden-path.spec.ts`, local-only, not in CI).
+
+- [ ] **Re-run the full 109-question eval** and reconcile `eval/results/summary.json` —
+      ingest/chunker/vlm changed since the last committed run (hit@5 0.959, correctness
+      0.847). A partial 20-question `cross_document_compare`-only run was discarded
+      uncommitted during this session; do not let a partial run overwrite the real numbers.
+- [ ] **Push to origin** — ~19 commits ahead of `origin/master`, all unpushed.
+- [ ] **Retrieval flakiness broader than the RFQ case documented below.** Observed during
+      this session: the exact same question against the exact same document
+      (`doc_001` procurement-approval question) returned wildly inconsistent results
+      across repeated calls — 6 sources with a real answer, then empty answer/0 sources,
+      then a real answer with 0 sources, then empty again. Not caused by this session's
+      code changes (verified: unrelated questions answer fine and fast; no exception
+      swallowing added). Looks related to `GENERATION_API_BASE` pointing directly at
+      OpenRouter (rate limits?) combined with `stream_agent`/`run_once` in
+      `src/answer_pipeline.py` never surfacing a failed/empty generation as an error —
+      it just silently returns `answer: ""` with `200 OK`. Worth root-causing before
+      calling the demo reliable: (1) add logging/error surfacing when the token stream
+      produces nothing, (2) check whether this is OpenRouter rate-limiting.
+- [ ] `TODO_LITELLM.md`/older sections of this file reference Postgres and `app.py` —
+      stale, current `docker-compose.yaml` uses Redis and the entrypoint is `api.py`.
+      Cosmetic cleanup, low priority.
+- [ ] Frontend still has near-zero unit/component test coverage (one e2e smoke test
+      now exists; `SourceCard`, `EvidencePanel` bbox math, etc. have no unit tests).
+      Not blocking — common for a portfolio project to skip this — but note it if asked
+      about test coverage in an interview.
+
 See also `TODO_LITELLM.md` for the three open LiteLLM semantic-cache + Langfuse blockers
 (tracked separately — those are optional enhancements, not blockers for publishing).
 
@@ -375,19 +407,17 @@ there's no eval slice that isolates OCR quality from the rest of the pipeline.
       no PDF wrapper, so each image needs wrapping into a single-page PDF (or feeding straight to
       `src/ingestion/ocr.py`) to use it here.
 
-### Return the actual figure image for figure-grounding questions (not fixed yet — feature request)
+### Return the actual figure image for figure-grounding questions (implemented 2026-07-14)
 Right now a figure/chart question only ever gets a VLM-generated text description of the
 figure (`src/ingestion/vlm.py`), never the image itself. When a user asks something like
 "show me Figure 4" or the answer would be clearer as a picture, the agent has no path to
 return the source image — it can only paraphrase what the VLM described at ingest time.
-- [ ] At ingest time, save each detected figure/chart as its own image file (e.g.
-      `data/output/figures/doc_XXX_pY_figN.png`) alongside the VLM-generated text description,
-      keyed by doc_id + page + figure index in the chunk metadata.
-- [ ] Add a way for the agent (or the API layer) to return that image path/bytes back to the
-      caller when a figure-grounding question is answered — e.g. the API response includes an
-      `image_url`/`image_path` field the frontend can render inline next to the text answer.
-      Next.js `document inspector` pane is the natural place to show it, and the Slack bot could
-      attach the image file directly.
-- [ ] Out of scope for the VLM/figure-quality work already deliberately deferred (see the
-      figure_grounding eval score, left alone this session per explicit instruction) — this is a
-      separate capability (returning the source image), not a fix to the VLM description quality.
+- [x] At ingest time, the figure bbox is captured (`src/parser/pdf_parser.py`) and embedded
+      as an HTML comment in the `[FIGURE_START]` marker; `src/chunker.py` extracts it into
+      `metadata["figure_bbox"]`.
+- [x] `src/answer_pipeline.py`'s `parse_sources` surfaces `figure_bbox` on each source; new
+      `GET /documents/{file}/pdf/{page}/crop?bbox=...` endpoint (`api.py`) crops and returns
+      it as PNG. `EvidencePanel.tsx` renders it when present.
+- [ ] **Existing ingested docs need reingestion** — old Qdrant points predate this field and
+      have `figure_bbox: null`, so old figure sources still show no image until reingested.
+- [ ] Slack bot doesn't attach the image yet — only the web evidence panel does.
