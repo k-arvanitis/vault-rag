@@ -583,6 +583,13 @@ WhatsApp-specific) are in [`integrations/n8n/`](integrations/n8n/), with an impo
 uv run pytest tests/ -v
 ```
 
+**E2E smoke test** (not run in CI — needs the full live stack: Qdrant, embedding, generation):
+
+```bash
+make api && make ui   # in separate terminals
+cd frontend && npm run test:e2e
+```
+
 ---
 
 ## Project structure
