@@ -10,6 +10,7 @@ from src.config import (
     FREE_LLM_API_KEY,
     GROQ_API_KEY,
     LITELLM_MASTER_KEY,
+    LLM_REQUEST_TIMEOUT_S,
     OPENROUTER_API_KEY,
 )
 
@@ -26,7 +27,9 @@ def _get_openai_client(base_url: str, api_key: str):
     """
     import openai
 
-    return openai.OpenAI(base_url=base_url, api_key=api_key)
+    return openai.OpenAI(
+        base_url=base_url, api_key=api_key, timeout=LLM_REQUEST_TIMEOUT_S
+    )
 
 
 def _make_groq_llm_fn() -> Callable[[str], str]:

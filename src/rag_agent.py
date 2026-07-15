@@ -45,6 +45,7 @@ from src.config import (
     GENERATION_MODEL,
     GROQ_API_KEY,
     LITELLM_MASTER_KEY,
+    LLM_REQUEST_TIMEOUT_S,
     MAX_TOOL_RESULTS,
     OPENROUTER_API_KEY,
     POST_GENERATION_VERIFY_ENABLED,
@@ -359,6 +360,7 @@ def build_rag_agent(
         temperature=0,
         max_tokens=2048,
         max_retries=3,
+        timeout=LLM_REQUEST_TIMEOUT_S,
     )
 
     # Filename -> doc_id lookup used to resolve titles the LLM passes instead of ids.

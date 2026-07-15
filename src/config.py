@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     qdrant_collection: str = "documents_chunks"
     generation_api_base: str = "http://localhost:4000/v1"
     generation_model: str = "qwen/qwen3-32b"
+    # Per-request timeout for all query-time LLM calls (agent turns, HyDE, excel
+    # sub-agent). No client-side timeout previously meant a stalled provider call
+    # could block for the SDK default (~10 min); comparison questions chain
+    # several such calls sequentially, so one slow turn could hang a whole request.
+    llm_request_timeout_s: float = 60.0
 
     # Secrets
     groq_api_key: SecretStr = SecretStr("")
@@ -135,6 +140,7 @@ QDRANT_URL: str = _s.qdrant_url
 QDRANT_COLLECTION: str = _s.qdrant_collection
 GENERATION_API_BASE: str = _s.generation_api_base
 GENERATION_MODEL: str = _s.generation_model
+LLM_REQUEST_TIMEOUT_S: float = _s.llm_request_timeout_s
 
 GROQ_API_KEY: str = _s.groq_api_key.get_secret_value()
 NVIDIA_API_KEY: str = _s.nvidia_api_key.get_secret_value()
