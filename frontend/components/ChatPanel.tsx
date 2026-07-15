@@ -43,7 +43,9 @@ export default function ChatPanel({
   const [streaming, setStreaming] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(initialConversationId);
   const [documents, setDocuments] = useState<Document[]>([]);
-  const [scopedDocId, setScopedDocId] = useState<string | null>(initialScopedDocId);
+  const [scopedDocIds, setScopedDocIds] = useState<string[]>(
+    initialScopedDocId ? [initialScopedDocId] : []
+  );
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -58,7 +60,7 @@ export default function ChatPanel({
   // its own effect, after this component's first mount already captured the
   // prop's initial value) — react to it changing, not just its initial value.
   useEffect(() => {
-    if (initialScopedDocId) setScopedDocId(initialScopedDocId);
+    if (initialScopedDocId) setScopedDocIds([initialScopedDocId]);
   }, [initialScopedDocId]);
 
   useEffect(() => {
@@ -96,7 +98,7 @@ export default function ChatPanel({
     setStreaming(true);
 
     try {
-      const data = await queryDocuments(question, scopedDocId);
+      const data = await queryDocuments(question, scopedDocIds);
       const assistantMsg: Message = {
         id: nextId(),
         role: "assistant",
@@ -119,7 +121,7 @@ export default function ChatPanel({
     } finally {
       setStreaming(false);
     }
-  }, [input, streaming, onToast, onTrace, persist, scopedDocId]);
+  }, [input, streaming, onToast, onTrace, persist, scopedDocIds]);
 
   const newConversation = useCallback(() => {
     if (streaming) return;
@@ -140,7 +142,7 @@ export default function ChatPanel({
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col bg-background">
       <div className="flex shrink-0 items-center justify-between border-b border-border bg-card px-6 py-2">
-        <SourceScope documents={documents} scopedDocId={scopedDocId} onChange={setScopedDocId} />
+        <SourceScope documents={documents} scopedDocIds={scopedDocIds} onChange={setScopedDocIds} />
         <Button
           variant="outline"
           size="sm"

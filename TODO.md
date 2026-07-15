@@ -69,14 +69,14 @@ in TODO item 2 and CLAUDE.md's vLLM cheatsheet. Config-only change, not backend 
        `/feedback` etc. — those routes exist (`app/feedback/page.tsx`,
        `app/connectors/google-drive/page.tsx`) but are unused by the header; wiring
        them up properly is still open (see phase 6).
-5. [x] Source-scope control (§3A) — "Ask across: All sources / one document" shipped
-       (`SourceScope.tsx`, `QueryRequest.doc_id`, `FORCED_DOC_ID` contextvar in
-       `retrieval_tool.py` hard-overriding the model's tool-call argument — the prompt
-       directive alone was verified unreliable, see the commit message). Multi-select
-       "selected sources" NOT implemented — needs the same override extended to a list
-       plus a Qdrant filter change across `retriever.py`'s ~10 `scope_doc_id` call
-       sites. query_excel has no per-source scoping param at all, so a forced
-       spreadsheet document still relies on the soft prompt directive only.
+5. [x] Source-scope control (§3A) — "Ask across: All sources / one or more documents"
+       shipped (`SourceScope.tsx` checkbox multi-select, `QueryRequest.doc_id: str |
+       list[str] | None`, `FORCED_DOC_ID` contextvar in `retrieval_tool.py` accepting
+       a list and bypassing single-doc inference to OR across all selected ids — same
+       hard-override precedent as the single-doc case; the prompt directive alone was
+       verified unreliable, see the commit message). query_excel still has no
+       per-source scoping param, so a forced spreadsheet document relies on the soft
+       prompt directive only (unaffected by this change).
 6. [x] Sources screen (§7) — `app/sources/page.tsx`, a real table (name, type,
        status, last updated, actions: Open/Ask about this source/Reprocess/Delete)
        complementing the persistent sidebar list. Wired header's Quality/Integrations
