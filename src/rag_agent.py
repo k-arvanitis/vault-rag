@@ -480,14 +480,15 @@ def _apply_grounding_check(
     api_base: str | None,
     model_name: str | None,
     excel_only: bool = False,
+    skip: bool = False,
     trace: Any = None,
 ) -> str:
     """Downgrade to Unsupported if the post-generation grounding check fails.
 
     No-op when the flag is off, the answer is already Unsupported, there was
     no retrieved context to check against, the endpoint/model isn't known
-    (e.g. called before the agent's metadata attributes are set), or the answer
-    came only from query_excel.
+    (e.g. called before the agent's metadata attributes are set), the answer
+    came only from query_excel, or skip is set.
 
     The excel_only skip matters: query_excel's tool result is the final
     extracted VALUE (e.g. "Doncaster Mbc"), not row evidence — there's no prose
@@ -502,6 +503,16 @@ def _apply_grounding_check(
     already exempts Excel questions from faithfulness for the same reason
     (see run_eval.py's _is_excel_question); this brings the runtime check in
     line with that.
+
+    The skip flag covers a separate case: comparison questions, which already
+    get a dedicated doc-coverage retry in answer_pipeline.py. Reproduced live
+    with gpt-oss-120b: its grounding judge is stricter on inferential/
+    comparative claims than the generation model itself, flagging a correct
+    answer ("X has the longer extension, based on Y vs Z") as ungrounded and
+    downgrading it to Unsupported ~1/3 of the time even with both documents
+    present in tool_contexts. The dedicated retry already checks the thing
+    that matters here (does the answer cover every named document) without
+    this false-positive risk.
     """
     if (
         not POST_GENERATION_VERIFY_ENABLED
@@ -511,6 +522,7 @@ def _apply_grounding_check(
         or not api_base
         or not model_name
         or excel_only
+        or skip
     ):
         return answer
     grounded = _verify_grounded(query, answer, tool_contexts, api_base, model_name)
@@ -780,6 +792,7 @@ def stream_agent(
     tool_calls: list[str] | None = None,
     rejected_chunks: list[dict] | None = None,
     trace: Any = None,
+    skip_grounding_check: bool = False,
 ) -> Generator[str, None, None]:
     """Stream the agent's final answer token-by-token.
 
@@ -796,6 +809,13 @@ def stream_agent(
         rejected_chunks: If provided, reranked-but-not-selected candidates from
             search_knowledge_base calls are appended to this list (UI-only).
         trace: Optional Langfuse trace/span to record the grounding-check verdict on.
+        skip_grounding_check: Comparison questions already get a dedicated
+            doc-coverage retry in answer_pipeline.py -- the grounding check is
+            redundant safety there, and was reproduced live flagging correct
+            comparative answers ("X has the longer extension, based on Y vs Z")
+            as ungrounded and downgrading them to Unsupported (gpt-oss-120b's
+            judge is stricter on inferential/comparative claims than the
+            generation model itself). Passed True for comparison questions.
     """
     # Guard: questions with an empty reference slot are unanswerable by construction.
     if _has_empty_reference_placeholder(query):
@@ -1006,6 +1026,7 @@ def stream_agent(
             api_base,
             model_name,
             excel_only=_tool_names_used == {"query_excel"},
+            skip=skip_grounding_check,
             trace=trace,
         )
         yield answer

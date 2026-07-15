@@ -838,7 +838,21 @@ def _load_questions_for_run(
     else:
         questions = load_questions(QA_PAIRS_DIR)
     if category_filter:
+        available = sorted({q.get("question_type") for q in questions})
         questions = [q for q in questions if q.get("question_type") == category_filter]
+        # An exact-match typo here (e.g. "cross_document" instead of the real
+        # "cross_document_compare") used to silently produce 0 questions --
+        # generate_answers() would then write nothing, and judge_answers()
+        # (which doesn't check freshness) would silently re-score whatever
+        # stale raw_answers.jsonl was already on disk, with zero warning that
+        # nothing had actually been re-run. Reproduced live (2026-07-15): an
+        # entire session's worth of "before/after" eval comparisons were
+        # unknowingly judging the same frozen answers from days earlier.
+        if not questions:
+            raise ValueError(
+                f"--category {category_filter!r} matched 0 questions. "
+                f"Available question_type values: {available}"
+            )
     return questions
 
 

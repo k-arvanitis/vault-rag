@@ -115,5 +115,12 @@ def _llm_call(
         extra_body=_openrouter_provider_extra_body(api_base),
     )
     raw = resp.choices[0].message.content
+    # None when a reasoning model (e.g. gpt-oss) spends the whole max_tokens
+    # budget on hidden chain-of-thought before emitting any visible content
+    # (finish_reason="length", content=None) -- degrade to "" rather than
+    # crash the re.sub below, so a starved call fails soft like any other
+    # empty answer instead of raising out of the whole pipeline.
+    if raw is None:
+        return ""
     # Strip <think> blocks emitted by reasoning models (Qwen3, QwQ, DeepSeek-R1, etc.)
     return re.sub(r"(?s)<think>.*?</think>", "", raw).strip()

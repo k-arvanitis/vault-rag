@@ -344,13 +344,22 @@ def parse_sources(collected: list[str]) -> list[dict]:
 
 
 def run_once(
-    agent: Any, question: str, attempt: str = "initial", trace: Any = None
+    agent: Any,
+    question: str,
+    attempt: str = "initial",
+    trace: Any = None,
+    skip_grounding_check: bool = False,
 ) -> tuple[str, list[str], dict]:
     """Run the agent once for a question; return (answer, collected chunks, trace dict).
 
     Emits one Langfuse span per tool call actually made (name + retrieved
     chunk group, or the SQL for query_excel calls) plus one span for the
     attempt itself, so retries show up as distinct, inspectable steps.
+
+    skip_grounding_check: passed through to stream_agent — set for comparison
+    questions, whose own doc-coverage retry (see answer_one) already checks
+    what matters here without the grounding judge's false-positive risk on
+    comparative claims (see stream_agent's docstring).
     """
     collected: list[str] = []
     tokens: list[str] = []
@@ -365,6 +374,7 @@ def run_once(
         tool_calls=tool_calls,
         rejected_chunks=rejected,
         trace=trace,
+        skip_grounding_check=skip_grounding_check,
     ):
         tokens.append(token)
     answer = "".join(tokens).strip()
@@ -451,7 +461,9 @@ def answer_one(
     if is_forced_doc_modality == "document":
         token = FORCED_DOC_ID.set(forced_doc_id)
     try:
-        ans, coll, tr = run_once(agent, q, attempt="initial", trace=trace)
+        ans, coll, tr = run_once(
+            agent, q, attempt="initial", trace=trace, skip_grounding_check=is_comparison
+        )
         if is_comparison:
             # One unified check-and-retry pass. Reproduced live: a flat
             # "Unsupported" first attempt used to be caught by an earlier,
@@ -484,6 +496,7 @@ def answer_one(
                     q + retry_instruction,
                     attempt="comparison-retry",
                     trace=trace,
+                    skip_grounding_check=True,
                 )
                 r_flat = r_ans.strip().lower() == "unsupported"
                 r_missing, r_has_partial, r_sources = _comparison_incompleteness(

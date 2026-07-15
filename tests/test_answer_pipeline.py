@@ -157,6 +157,29 @@ class TestParseSourcesContract:
         assert "doc_b.pdf" in filenames
 
 
+class TestComparisonSkipsGroundingCheck:
+    """Reproduced live with gpt-oss-120b: the post-generation grounding check
+    flagged correct comparative answers as ungrounded and downgraded them to
+    Unsupported ~1/3 of the time, even with both named documents present in
+    the retrieved context. Comparison questions already get their own
+    doc-coverage retry (see _comparison_incompleteness), so the grounding
+    check is redundant there and actively harmful -- must be skipped."""
+
+    def test_comparison_question_skips_grounding_check(self):
+        with patch(
+            "src.answer_pipeline.run_once", return_value=("An answer.", [], {})
+        ) as mock_run_once:
+            answer_one(agent=object(), question="Compare doc_009 and doc_010")
+        assert mock_run_once.call_args.kwargs["skip_grounding_check"] is True
+
+    def test_non_comparison_question_runs_grounding_check(self):
+        with patch(
+            "src.answer_pipeline.run_once", return_value=("An answer.", [], {})
+        ) as mock_run_once:
+            answer_one(agent=object(), question="What is the total invoice amount?")
+        assert mock_run_once.call_args.kwargs["skip_grounding_check"] is False
+
+
 class TestForcedDocScope:
     """The UI's source-scope control (Ask across: one document) forces routing
     to a specific doc_id instead of the semantic auto-detection route_question

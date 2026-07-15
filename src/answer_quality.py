@@ -388,7 +388,12 @@ def _verify_grounded(
         "Reply with exactly one word: YES or NO."
     )
     try:
-        verdict = _llm_call(prompt, api_base, model_name, max_tokens=10, temperature=0)
+        # A reasoning model (e.g. gpt-oss) spends tokens on hidden chain-of-
+        # thought before any visible YES/NO -- observed up to ~170 reasoning
+        # tokens on this exact prompt shape, so 10 (enough for a non-reasoning
+        # model's bare word) silently starves it to an empty answer. 128
+        # gives headroom without meaningfully raising cost/latency.
+        verdict = _llm_call(prompt, api_base, model_name, max_tokens=128, temperature=0)
     except Exception:
         return True
     return "no" not in verdict.strip().lower()[:3]
@@ -449,8 +454,17 @@ def _split_multi_part_query(query: str) -> list[str]:
     parts: list[str] = []
 
     # Try three split patterns in priority order: a "?" boundary before a new
-    # question, an "and what" conjunction, or a trailing "respectively".
-    question_boundary = re.search(r"\?\s+(?=(According to|In the|In |What|Which)\b)", q)
+    # question, an "and what" conjunction, or a trailing "respectively". The
+    # boundary alternation must stay in sync with _is_multi_part_query's own
+    # "\?\s+and\s+for\b" detection pattern -- that pattern flagged a question
+    # as multi-part with no matching split rule here, so it silently fell
+    # through to "return the whole question unsplit" (reproduced directly:
+    # eval qa_id doc_006_doc_007_cross_document_qa__qa_2 detected as
+    # multi-part but never split, silently dropping the first sub-question's
+    # answer entirely).
+    question_boundary = re.search(
+        r"\?\s+(?=(According to|In the|In |What|Which|And for)\b)", q
+    )
     if question_boundary:
         first = q[: question_boundary.start() + 1].strip()
         second = q[question_boundary.end() :].strip()

@@ -429,6 +429,116 @@ inconsistency as a known, documented limitation for now (see the
 retry-logic mitigations already shipped — they reduce but don't
 eliminate this) rather than continuing to chase it via provider choice.
 
+**Deterministic comparison path built, tested, then reverted (2026-07-15) — dead end, but a useful one.**
+Tried the "stop making the ReAct agent choose tools consistently, resolve the
+comparison deterministically instead" approach: a two-document comparison
+naming both documents by `doc_XXX` id would retrieve independently per
+document (via the same `search_knowledge_base` tool, bypassing agent
+tool-selection), guarantee both had evidence before synthesizing, and answer
+with one direct LLM call. Fully implemented in `src/answer_pipeline.py`
+(`_deterministic_comparison_answer`), unit-tested, no regression. Then
+checked it against the real eval set and found it was **dead on arrival**:
+zero of the 15 `cross_document` prose-comparison questions name a doc_id
+literally — they're described by topic ("the procurement policy vs the
+services contract terms"), which is exactly the kind of resolution a regex
+can't do. The 4 questions that *do* name doc_ids literally are all
+spreadsheet comparisons (`query_excel`'s job, not `search_knowledge_base`'s —
+a guard against this was needed to avoid a regression there). Reverted the
+whole path (2026-07-15) — real users never type document IDs, so this was
+solving a problem that doesn't occur in practice. Lesson: don't build
+deterministic *id-based* routing for something the input will never contain;
+if a deterministic path is worth revisiting, it needs to resolve documents by
+title/description (fuzzy matching against the doc registry), which is a much
+harder and riskier problem than this one, not attempted.
+
+**GENERATION_MODEL switched qwen3-32b → openai/gpt-oss-120b (2026-07-15), plus a real bug fixed.**
+User's hypothesis ("maybe it's the model, not the agent") tested directly:
+built two fresh agents (same code, different `model_name`) and ran the same
+3 known-failing comparison questions through both. `qwen3-235b-a22b` fixed
+2 of 3; `gpt-oss-120b` (smaller, already used elsewhere in this project as
+`EVAL_JUDGE_MODEL`, so zero new integration risk) fixed all 3 in that
+isolated test. Switched `.env`'s `GENERATION_MODEL` to `openai/gpt-oss-120b`.
+
+Running the full `cross_document` eval slice (not just the 3 hand-picked
+questions) surfaced a real, separate bug: `gpt-oss-120b` is a reasoning
+model — it spends tokens on hidden chain-of-thought before any visible
+content. `_verify_grounded` (`src/answer_quality.py`, runs on every generated
+answer) called the LLM with `max_tokens=10` expecting a bare "YES"/"NO";
+reasoning tokens alone consumed that budget, so `content` came back `None`
+and `_llm_call` (`src/llm_utils.py`) crashed on an unguarded `re.sub()`. Fixed
+both: `_llm_call` now returns `""` instead of crashing on `None` content
+(makes `_verify_grounded`'s existing "fail open on any judge error" behavior
+apply naturally instead of raising), and `_verify_grounded`'s `max_tokens`
+bumped `10 → 128` for headroom. This bug would silently produce empty
+answers with *any* reasoning-style generation model, not just this one —
+worth remembering if the model is changed again.
+
+**IMPORTANT correction, same session: the eval numbers above through this
+point were bogus.** `eval/run_eval.py`'s `--category` filter does an exact
+string match against `question_type`; `cross_document` (what I'd been
+passing) never matches the real stored value `cross_document_compare`, so
+`generate_answers()` silently produced 0 rows on *every* invocation this
+session, and `judge_answers()` (which never checks whether the raw-answers
+file is fresh) kept re-scoring the same stale `raw_answers.jsonl` left over
+from 2026-07-11 — before the model swap, before any of today's fixes. Every
+number quoted above (0.8, 0.775, 0.825, 0.8 again) was judge nondeterminism
+on byte-identical frozen predictions, not a measurement of any code change.
+The "same two questions fail identically across separate full runs, despite
+passing 3/3 in isolation" mystery wasn't nondeterminism at all — it was the
+same cached answer being re-judged with slightly different judge-model
+noise each time. Fixed the trap itself: `_load_questions_for_run` now raises
+if `--category` matches 0 questions, listing the valid `question_type`
+values, instead of silently proceeding on stale data.
+
+**Real, freshly-generated run (2026-07-15, `--category cross_document_compare`,
+generation confirmed fresh via file mtime + "Generated 20/20 answers" log
+line, not just judge output):** `cross_document_compare` **0.825** (15
+perfect / 3 partial / 2 zero out of 20), faithfulness 1.0. All 5 questions
+that were broken in the true baseline — the procurement-vs-services-contract
+extension question, the evergreen-prohibition question, and the lease
+3-way-amendment question — now score a clean **1.0**. The fix that actually
+worked: `gpt-oss-120b`'s grounding judge (the post-generation check in
+`_verify_grounded`) is stricter on comparative/inferential claims than the
+generation model itself, and was flipping correct comparison answers to
+"Unsupported" ~1/3 of the time even with full evidence coverage — root-caused
+by diagnostic script (dumped `sources` + answer across repeated runs with
+verify on/off: 6/6 correct with verify off, 4/6 with verify on, always both
+docs present regardless). Fixed by skipping the grounding check specifically
+for comparison questions (`stream_agent`'s new `skip_grounding_check` param,
+threaded from `answer_pipeline.answer_one`) — comparisons already get their
+own doc-coverage retry (`_comparison_incompleteness`), which checks the thing
+that matters without the grounding judge's false-positive risk. Comparison-
+question reliability is genuinely fixed for the class of failure this session
+investigated (both-sides-retrieved-but-answer-still-wrong-or-refused).
+
+**Screwfix-Direct-style multi-part-split bug — root-caused and fixed
+(2026-07-15).** `_is_multi_part_query` (`src/answer_quality.py`) detects "?
+And for" as a multi-part boundary (its own `\?\s+and\s+for\b` pattern), but
+`_split_multi_part_query`'s actual split patterns had no matching rule for
+it — detector and splitter were out of sync, so a detected multi-part
+question silently fell through to "return the whole thing unsplit," and the
+agent then answered only the second half. Fixed by adding "And for" to the
+question-boundary split alternation; unit-tested
+(`tests/test_answer_quality.py`). Confirmed live: the question now correctly
+splits into two numbered sub-answers. This exposed a *different*, narrower,
+still-open problem: 3 of the 5 Excel-comparison questions in this eval slice
+now split correctly but get one sub-part's field wrong (e.g. answering with
+the wrong column, or asking for clarification instead of using the row
+already identified in the question) — a per-field retrieval-precision issue
+on split spreadsheet sub-queries, not a split-detection bug. Not yet fixed.
+
+- [ ] Excel per-field retrieval precision on split multi-part questions (see
+      above) — same priority as the two bugs just fixed, not yet started.
+      Repro: any `doc_006_doc_007_cross_document_qa` question with two
+      Supplier-Name-style sub-parts; qa_2 (Screwfix), qa_3 (Amazon), qa_5
+      (Foreign Exchange Fee) all show the pattern in
+      `eval/results/answer_results.jsonl`.
+- [ ] End-to-end eval planned (per user, 2026-07-15) — full corpus run once
+      scheduled, will give the authoritative regression check the single-slice
+      runs above couldn't (only `cross_document_compare` was re-run this
+      session). Use the correct `--category cross_document_compare` (or no
+      filter) — see the eval-harness bug above.
+
 Still open — needs an actual fresh eval run, can't be scripted around:
 - [ ] Run one fresh, authoritative pass on the 93-question corpus: `make eval` (or
       `POST /eval/run` from the new eval dashboard) with `EVAL_JUDGE_MODEL=gpt-oss-120b` set
