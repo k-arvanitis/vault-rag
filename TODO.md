@@ -581,32 +581,45 @@ secondary screens (Feedback, Quality Evaluation, Google Drive) into dropdown
 groups, distinct from the two top-level actions (Sources, Conversations) that
 support the core flow. Confirmed adequate by inspection; nothing to fix.
 
-**Model swap validation status: PROVISIONAL, not yet complete.** Every
-number above (0.68 qwen3-32b, 0.815-0.825 gpt-oss-120b) is from the
-`cross_document_compare` slice only — 20 of 109 questions. The other ~89
-(table_lookup, numeric_reasoning, ocr_extraction, single_doc_factoid,
-unanswerable, etc.) have never run on `gpt-oss-120b`. A swap that fixed
-comparisons but regressed a different category would be a net loss not
-visible in anything measured so far. Full-corpus run (`--phase full
---resume`, resume support added this session so a killed multi-hour run
-doesn't lose progress — see `generate_answers`'s `resume` param) kicked off
-in the background 2026-07-15 ~20:50; ~109 questions serially, no
-parallelism in the harness, expect several hours. **Do not treat the
-gpt-oss-120b swap as final until this lands.** When reading the result: the
-leak-stripping fix only catches the cosmetic glued-marker case, not the deep
-variant — eyeball any category that dips before reading it as a real
-regression, since a leak-garbled-but-content-correct answer (like Screwfix
-scored 0.5 pre-fix) can look like a capability regression when it isn't.
+**Model swap validation status: CONFIRMED, full-corpus run landed
+2026-07-16.** Clean 109/109 run (no resume, fresh `raw_answers.jsonl`),
+generation + judging both completed with no crashes. Aggregate:
+correctness 0.838, faithfulness 0.861, answer_relevancy 0.869.
+`correctness_by_question_type`:
 
-Still open — needs an actual fresh eval run, can't be scripted around:
-- [ ] Run one fresh, authoritative pass on the 93-question corpus: `make eval` (or
-      `POST /eval/run` from the new eval dashboard) with `EVAL_JUDGE_MODEL=gpt-oss-120b` set
-      (matches what the README claims)
+| category | n | correctness |
+|---|---|---|
+| table_grounding | 3 | 1.000 |
+| numeric_lookup | 6 | 0.917 |
+| table_lookup | 16 | 0.938 |
+| ocr_extraction | 25 | 0.860 |
+| single_doc_factoid | 17 | 0.812 |
+| unanswerable | 10 | 0.800 |
+| negation_check | 5 | 0.800 |
+| cross_document_compare | 20 | 0.775 |
+| numeric_reasoning | 4 | 0.750 |
+| figure_grounding | 3 | 0.667 |
+
+No category collapsed. `cross_document_compare` at 0.775 on the full 20 is
+consistent with the earlier 0.815-0.825 slice estimate within known judge
+noise (±0.02-0.05 observed on identical data earlier this session — see
+above). `figure_grounding` is the lowest at 0.667 but n=3 (2/3 correct) —
+too small to read as a regression signal one way or the other; this
+category was never separately benchmarked pre-swap, so there's no prior
+number to compare against. Structured (Excel/DuckDB) answer_accuracy
+0.762 (n=21), unanswerable correct-refusal-rate 0.786 (n=14) — both
+reasonable, no guardrail failure. Retrieval metrics (PDF/OCR side,
+n=74): hit@5 0.986, MRR 0.854, evidence_recall@10 0.944 — retrieval was
+never the bottleneck, consistent with earlier findings.
+
+**Conclusion: gpt-oss-120b swap is a net win, no regression found. Closing
+this as final.**
+
+Still open — README/case-study transcription, not a correctness question:
 - [ ] Update `README.md` and `docs/CASE_STUDY.md` so both quote the *same* run as
-      `eval/results/summary.json`
+      `eval/results/summary.json` (2026-07-16 run above)
 - [ ] Paste the new `correctness_by_question_type` breakdown into the README/CASE_STUDY
-      Evaluation sections (data will exist in summary.json after the run above — just needs
-      transcribing, do not hand-type numbers before the run produces them)
+      Evaluation sections
 - [ ] The ablation table (baseline dense-only → +hybrid → +rerank → +doc-routing → final) is
       already tracked below under "Pipeline improvement story" — do it in the same pass since
       it requires the same kind of fresh eval run(s)
