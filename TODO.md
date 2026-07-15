@@ -392,15 +392,27 @@ being correctly retrieved every time, confirmed via the `sources` field).
 This rules out cross-provider routing as the dominant cause and points at
 DeepInfra's fp8 quantization itself. Reverted the pin (strictly worse
 than the unpinned mixed-but-sometimes-correct baseline).
-- [ ] Test pinning to Alibaba specifically (likely the model's original
-      publisher, closest candidate for actual full precision) — set
-      `OPENROUTER_PROVIDER_PIN=Alibaba` in `.env` and rerun the same 5x
-      comparison-question test
-- [ ] If Alibaba is also bad or unavailable, the "unquantized on
-      OpenRouter" assumption in the GENERATION_API_BASE comment is false
-      for this model entirely — worth reconsidering whether a paid,
-      confirmed-full-precision endpoint is needed for this failure mode
-      to actually go away, vs. accepting it as a known limitation
+**Alibaba tested too (2026-07-15), also inconclusive/worse.** Pinned to
+Alibaba (the model's original publisher, best candidate for actual full
+precision) and ran the identical 5x comparison-question test. Result:
+*more* variable than DeepInfra, not less — 3/5 runs retrieved only
+doc_009 (flat "Unsupported"), 2/5 retrieved only doc_010 (a real,
+reasoned partial answer explicitly noting doc_009 "was not retrieved").
+Neither which document gets dropped nor the response style was stable
+across runs. Reverted the pin (same as DeepInfra — worse than baseline).
+
+Conclusion: quantization was a reasonable hypothesis (DeepInfra's
+clean-but-wrong 5/5 fit it) but Alibaba's noisier, differently-shaped
+failures don't fit "compression is the cause" — a genuinely full-
+precision provider should be at least as stable as a quantized one, not
+less. The instability more likely sits in how the *agent's own tool-
+calling* decides which document(s) to search on a comparison question
+(sometimes both, sometimes only one, inconsistently) rather than purely
+in generation quality. That's a LangGraph/tool-orchestration question,
+out of scope for a provider pin. Accepting comparison-question
+inconsistency as a known, documented limitation for now (see the
+retry-logic mitigations already shipped — they reduce but don't
+eliminate this) rather than continuing to chase it via provider choice.
 
 Still open — needs an actual fresh eval run, can't be scripted around:
 - [ ] Run one fresh, authoritative pass on the 93-question corpus: `make eval` (or
