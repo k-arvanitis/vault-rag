@@ -19,9 +19,9 @@
     "correct_refusal_rate": null
   },
   "agent_answer_metrics": {
-    "correctness": 0.825,
-    "faithfulness": 1.0,
-    "answer_relevancy": 0.85
+    "correctness": 0.8150000000000001,
+    "faithfulness": 0.8599999999999999,
+    "answer_relevancy": 0.825
   },
   "judge_breakdown": {
     "custom_llm_judge": 19,
@@ -33,7 +33,7 @@
   "correctness_by_question_type": {
     "cross_document_compare": {
       "count": 20,
-      "correctness": 0.825
+      "correctness": 0.8150000000000001
     }
   },
   "answer_result_file": "/home/karvanitis/vault-rag/eval/results/answer_results.jsonl",

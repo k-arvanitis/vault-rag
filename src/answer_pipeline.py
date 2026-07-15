@@ -190,6 +190,19 @@ _LEAKED_HEADER_RE = re.compile(
 _INLINE_CITATION_RE = re.compile(r"[ \t]*\[(\d+)\]")
 _BLANK_LINES_RE = re.compile(r"\n{3,}")
 
+# gpt-oss's "harmony" response format splits output into named channels
+# (analysis = hidden chain-of-thought, final = the real answer); reproduced
+# live via OpenRouter streaming that this channel boundary isn't always
+# cleanly stripped before content reaches the client, leaking the bare
+# channel-name word glued directly onto the real answer with no space
+# ("1. final5239.0", "finalJuly 1 2024 ..."). Matched only when glued with no
+# separating whitespace to an uppercase letter or digit -- genuine prose use
+# of these words ("the final amount", "further analysis shows") always has a
+# space after, so this can't strip real content.
+_LEAKED_CHANNEL_MARKER_RE = re.compile(r"\b(?:analysis|final)(?=[A-Z0-9])")
+_INLINE_CITATION_RE = re.compile(r"[ \t]*\[(\d+)\]")
+_BLANK_LINES_RE = re.compile(r"\n{3,}")
+
 
 def _strip_inline_citation(match: re.Match) -> str:
     """Drop a [N] marker only when N is a plausible retrieved-chunk index."""
@@ -197,9 +210,11 @@ def _strip_inline_citation(match: re.Match) -> str:
 
 
 def strip_leaked_headers(text: str) -> str:
-    """Remove raw chunk-header lines and inline [N] citation markers the LLM
-    echoes into its answer — the trace panel/eval evidence is the source list."""
+    """Remove raw chunk-header lines, leaked reasoning-channel markers, and
+    inline [N] citation markers the LLM echoes into its answer — the trace
+    panel/eval evidence is the source list."""
     cleaned = _LEAKED_HEADER_RE.sub("", text)
+    cleaned = _LEAKED_CHANNEL_MARKER_RE.sub("", cleaned)
     cleaned = _INLINE_CITATION_RE.sub(_strip_inline_citation, cleaned)
     cleaned = _BLANK_LINES_RE.sub("\n\n", cleaned)
     return cleaned.strip()

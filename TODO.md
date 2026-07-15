@@ -527,12 +527,47 @@ the wrong column, or asking for clarification instead of using the row
 already identified in the question) — a per-field retrieval-precision issue
 on split spreadsheet sub-queries, not a split-detection bug. Not yet fixed.
 
-- [ ] Excel per-field retrieval precision on split multi-part questions (see
-      above) — same priority as the two bugs just fixed, not yet started.
-      Repro: any `doc_006_doc_007_cross_document_qa` question with two
-      Supplier-Name-style sub-parts; qa_2 (Screwfix), qa_3 (Amazon), qa_5
-      (Foreign Exchange Fee) all show the pattern in
-      `eval/results/answer_results.jsonl`.
+**Excel per-field retrieval precision on split sub-questions — root-caused
+and fixed (2026-07-15).** The Screwfix repro's SQL: `WHERE "Department"
+ILIKE 'PLACE / STREET SCENE'`. But per the gold row data, Directorate="PLACE"
+and Department="STREET SCENE" are two *separate* columns — the question's
+"PLACE / STREET SCENE" phrasing is a display convention joining them, not a
+literal stored value. Filtering the whole joined string against one column
+matches zero rows, which is why the row lookup silently failed (or, worse,
+one variant filtered the joined value against the wrong column entirely:
+`"Purchase of Expenditure" ILIKE 'PLACE / STREET SCENE'`). Fixed by adding a
+rule to `SQL_PROMPT_HEADER` (`src/prompts.py`): a "/"-joined value in the
+question is often two separate field values that need two separate column
+filters, with the existing Directorate/Department pair given as the worked
+example. Confirmed live: Screwfix now returns the exact gold values
+(MATERIALS, 39.54) for the previously-failing sub-part.
+
+**New, separate bug found while re-verifying the SQL fix: gpt-oss-120b
+leaks its "harmony" reasoning-channel markers into visible answers
+(2026-07-15).** gpt-oss's response format names its hidden chain-of-thought
+channel "analysis" and the real-answer channel "final"; reproduced live via
+OpenRouter streaming that this boundary isn't always cleanly separated
+before content reaches the client, leaking the bare channel-name word glued
+directly onto real content with no space ("1. final5239.0", "finalJuly 1
+2024 ..."). Intermittent, not deterministic — an isolated repro of the exact
+same question came back clean on one run, leaked on another, consistent with
+the OpenRouter per-call provider-routing variance already documented above.
+Fixed the cosmetic case: `strip_leaked_headers` (`src/answer_pipeline.py`)
+now strips a bare "analysis"/"final" only when glued with no space to an
+uppercase letter or digit (legitimate prose use always has a space after,
+so this can't strip real content) — unit-tested. A second, deeper variant of
+the same root cause was also seen once: one row's *entire* answer was leaked
+raw reasoning text, never reaching the final channel at all (same shape as
+the earlier `_verify_grounded` max_tokens-starvation bug, but in the main
+agent's own synthesis call). Not fixed — the real fix is either raising
+`ChatOpenAI`'s `max_tokens=2048` (`src/rag_agent.py`'s `build_rag_agent`) or
+setting OpenRouter's `reasoning: {effort: "low"}` for this model, both of
+which are cost/latency tradeoffs that need a decision, not just a bug fix.
+
+- [ ] Decide on the deeper reasoning-token-starvation variant above (raise
+      main-agent max_tokens vs. cap gpt-oss reasoning effort via
+      `extra_body`) — not yet fixed, needs a call on the cost/latency
+      tradeoff.
 - [ ] End-to-end eval planned (per user, 2026-07-15) — full corpus run once
       scheduled, will give the authoritative regression check the single-slice
       runs above couldn't (only `cross_document_compare` was re-run this

@@ -10,6 +10,7 @@ from src.answer_pipeline import (
     answer_one,
     answer_query,
     parse_sources,
+    strip_leaked_headers,
 )
 
 
@@ -79,6 +80,40 @@ class TestTitleShortcutAnswer:
         assert result["answer"] == "CUSTOMER INVOICE"
         assert result["sql"] == []
         assert result["sources"][0]["filename"].startswith("doc_005")
+
+
+class TestLeakedReasoningChannelMarker:
+    """gpt-oss's harmony response format names its hidden chain-of-thought
+    channel "analysis" and the real answer channel "final" -- reproduced live
+    via OpenRouter streaming that this boundary isn't always cleanly stripped,
+    leaking the bare channel-name word glued directly onto the real answer
+    with no space ("1. final5239.0"). Must not strip legitimate prose use of
+    either word, which always has a space after it."""
+
+    def test_strips_leaked_final_marker_glued_to_digit(self):
+        assert strip_leaked_headers("1. final5239.0") == "1. 5239.0"
+
+    def test_strips_leaked_final_marker_glued_to_word(self):
+        assert (
+            strip_leaked_headers("finalJuly 1 2024 – September 30 2024")
+            == "July 1 2024 – September 30 2024"
+        )
+
+    def test_strips_leaked_analysis_marker(self):
+        assert (
+            strip_leaked_headers("2. analysisThe query_excel returned X")
+            == "2. The query_excel returned X"
+        )
+
+    def test_does_not_strip_legitimate_prose_use_of_final(self):
+        assert strip_leaked_headers("The final amount due is 500.00.") == (
+            "The final amount due is 500.00."
+        )
+
+    def test_does_not_strip_legitimate_prose_use_of_analysis(self):
+        assert strip_leaked_headers(
+            "Further analysis shows the lease expired in 2024."
+        ) == "Further analysis shows the lease expired in 2024."
 
 
 class TestParseSourcesContract:
