@@ -450,7 +450,7 @@ async def delete_conversation_endpoint(conversation_id: str):
 
 class QueryRequest(BaseModel):
     question: str
-    doc_id: str | None = None
+    doc_id: str | list[str] | None = None
 
 
 @app.post("/query")

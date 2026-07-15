@@ -201,6 +201,41 @@ def get_chunks_by_file(url: str, collection: str, source_file: str) -> list[dict
     return payloads
 
 
+def get_source_by_duckdb_table(
+    url: str, collection: str, duckdb_table: str
+) -> dict | None:
+    """Return {"source_file", "sheet_name"} for a DuckDB table name, or None.
+
+    Every spreadsheet sheet gets exactly one sheet_summary point carrying its
+    duckdb_table, source_file and sheet_name (src/ingest_table_rows.py) — used
+    to attribute a query_excel answer back to its original file for citations.
+    """
+    base = url.rstrip("/")
+    body = {
+        "filter": {
+            "must": [{"key": "metadata.duckdb_table", "match": {"value": duckdb_table}}]
+        },
+        "limit": 1,
+        "with_payload": True,
+        "with_vector": False,
+    }
+    try:
+        result = _request(
+            "POST", f"{base}/collections/{collection}/points/scroll", body
+        )
+    except RuntimeError:
+        return None
+    points = result.get("result", {}).get("points", [])
+    if not points:
+        return None
+    meta = points[0].get("payload", {}).get("metadata", {})
+    source_file = meta.get("source_file")
+    sheet_name = meta.get("sheet_name")
+    if not source_file or not sheet_name:
+        return None
+    return {"source_file": source_file, "sheet_name": sheet_name}
+
+
 def delete_by_file(url: str, collection: str, file_name: str) -> int:
     """Delete all PDF chunk points for a given file_name. Returns deleted count."""
     base = url.rstrip("/")

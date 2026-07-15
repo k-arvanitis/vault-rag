@@ -41,6 +41,8 @@ from src.config import (
     EXCEL_AGENT_API_BASE,
     EXCEL_AGENT_API_KEY,
     EXCEL_AGENT_MODEL,
+    QDRANT_COLLECTION,
+    QDRANT_URL,
 )
 from src.duckdb_store import (
     DuckDBStore,
@@ -55,6 +57,7 @@ from src.prompts import (
     SQL_PROMPT_HEADER,
     SQL_RETRY_HINT,
 )
+from src.vector_store import get_source_by_duckdb_table
 
 _MAX_SQL_ATTEMPTS = 3
 _ROW_LIMIT = 50
@@ -742,6 +745,7 @@ class _OuterState(TypedDict):
     candidate_tables_per_sub: list[list[str]]
     answers: Annotated[list[str], operator.add]
     sql_trace: Annotated[list[str], operator.add]
+    table_trace: Annotated[list[str], operator.add]
     final_answer: str
 
 
@@ -801,11 +805,14 @@ def _build_outer_graph(store: DuckDBStore) -> Any:
             result = inner.invoke(state, config={"recursion_limit": 60})
         except Exception:
             return {"answers": ["Unsupported"], "sql_trace": []}
-        # Collect the answer and the generated SQL for the UI trace.
+        # Collect the answer, the generated SQL, and the table it ran against
+        # for the UI trace / citation lookup.
         sql = (result.get("final_sql") or "").strip()
+        table = (result.get("selected_table") or "").strip()
         return {
             "answers": [result.get("answer") or "Unsupported"],
             "sql_trace": [sql] if sql else [],
+            "table_trace": [table] if sql and table else [],
         }
 
     def synthesize_node(state: _OuterState) -> dict:
@@ -892,16 +899,34 @@ def build_excel_agent_tools(store: DuckDBStore) -> list[StructuredTool]:
                     "candidate_tables_per_sub": [],
                     "answers": [],
                     "sql_trace": [],
+                    "table_trace": [],
                     "final_answer": "",
                 }
             )
         except Exception as exc:
             return f"Excel agent error: {exc}", {}
         # Package the generated SQL and subquestions as the UI-only artifact.
-        artifact = {
+        artifact: dict[str, Any] = {
             "sql": list(result.get("sql_trace") or []),
             "subquestions": list(result.get("subquestions") or []),
         }
+        # Attribute the answer to its source spreadsheet — only when the question
+        # wasn't decomposed into multiple sub-questions, since a synthesized
+        # multi-part answer has no single source table to point at (a wrong
+        # citation here is worse than none, so this stays conservative rather
+        # than guessing which sub-answer's table to cite).
+        subqs = result.get("subquestions") or []
+        tables = result.get("table_trace") or []
+        final_answer = result.get("final_answer") or "Unsupported"
+        if (
+            len(subqs) == 1
+            and len(tables) == 1
+            and final_answer.strip().lower() != "unsupported"
+            and not final_answer.startswith("Clarify:")
+        ):
+            source = get_source_by_duckdb_table(QDRANT_URL, QDRANT_COLLECTION, tables[0])
+            if source:
+                artifact["citation"] = source
         return result.get("final_answer") or "Unsupported", artifact
 
     return [

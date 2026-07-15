@@ -51,7 +51,9 @@ _RETRIEVAL_DEBUG = bool(os.getenv("RETRIEVAL_DEBUG"))
 # ContextVar rather than a module-global: each API request runs its own
 # executor thread (see api.py's run_in_executor), and a plain global would
 # leak one request's forced scope into a concurrent request on another thread.
-FORCED_DOC_ID: ContextVar[str | None] = ContextVar("FORCED_DOC_ID", default=None)
+FORCED_DOC_ID: ContextVar[str | list[str] | None] = ContextVar(
+    "FORCED_DOC_ID", default=None
+)
 
 # ---------------------------------------------------------------------------
 # Scope plan — the routing decision passed from _resolve_scope to _fetch_docs
@@ -65,7 +67,7 @@ class _ScopePlan:
     search_query: str
     retrieval_query: str
     chunk_types: Any
-    effective_scope: str | None
+    effective_scope: str | list[str] | None
     parallel_doc_ids: list[str]
     explicitly_mentioned_doc_ids: set[str]
     filter_token: str | None
@@ -486,9 +488,27 @@ def _make_unified_tool(
     # UI-only, for the "retrieved but rejected" trust panel. Not read by the LLM.
     _last_rejected: list[dict] = []
 
-    def _resolve_scope(query: str, doc_id: str) -> _ScopePlan:
+    def _resolve_scope(query: str, doc_id: str | list[str]) -> _ScopePlan:
         """Resolve retrieval scope, parallel fan-out, filter token and the
         stage-1 doc-routing boosts from the query."""
+        # A list of doc_ids is the UI's multi-select source scope, forced in via
+        # FORCED_DOC_ID — already-validated ids, not LLM-inferred text, so skip
+        # the single-doc regex/fuzzy-match/stage1-routing inference below entirely
+        # and search across exactly those documents (same precedent as the
+        # existing single-doc hard override).
+        if isinstance(doc_id, list):
+            doc_ids = [d for d in doc_id if d]
+            return _ScopePlan(
+                search_query=query,
+                retrieval_query=query,
+                chunk_types=None,
+                effective_scope=doc_ids or None,
+                parallel_doc_ids=[],
+                explicitly_mentioned_doc_ids=set(),
+                filter_token=None,
+                stage1_doc_ids=set(),
+                stem_match_doc_ids=set(),
+            )
         # Accept the passed doc_id only if it matches the doc_XXX id pattern.
         doc_id = (doc_id or "").strip()
         valid_doc_scope = doc_id if _DOC_ID_RE.fullmatch(doc_id) else ""
@@ -800,7 +820,7 @@ def _make_unified_tool(
         name="fetch-docs",
         metadata={"top_k": retrieval_top_k, "rerank_top_n": rerank_top_n},
     )
-    def _fetch_docs(query: str, doc_id: str = "") -> str | None:
+    def _fetch_docs(query: str, doc_id: str | list[str] = "") -> str | None:
         """Retrieve, rerank and format knowledge-base chunks for one query; return the formatted block, or None when nothing relevant is found."""
         _last_rejected.clear()
         if _RETRIEVAL_DEBUG:

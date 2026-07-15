@@ -328,7 +328,10 @@ _TABLE_EXTS = (".xlsx", ".xls", ".csv")
 
 
 def answer_one(
-    agent: Any, question: str, trace: Any = None, forced_doc_id: str | None = None
+    agent: Any,
+    question: str,
+    trace: Any = None,
+    forced_doc_id: str | list[str] | None = None,
 ) -> tuple[str, list[str], dict]:
     """Answer one question, with a forced retry on a bare Unsupported.
 
@@ -354,7 +357,14 @@ def answer_one(
     """
     is_comparison = bool(_COMPARISON_RE.search(question))
     is_forced_doc_modality = None
-    if forced_doc_id:
+    if isinstance(forced_doc_id, list):
+        # Multi-select source scope: always text documents (query_excel has no
+        # multi-source scoping), and there's no single filename to name in the
+        # directive, so nudge generically — the hard tool-layer enforcement below
+        # is what actually constrains retrieval, not this prompt text.
+        is_forced_doc_modality = "document"
+        route = {"modality": "document", "source_file": "the selected documents"}
+    elif forced_doc_id:
         is_forced_doc_modality = (
             "excel" if forced_doc_id.lower().endswith(_TABLE_EXTS) else "document"
         )
@@ -408,7 +418,10 @@ def answer_one(
 
 
 def answer_query(
-    agent: Any, question: str, trace: Any = None, forced_doc_id: str | None = None
+    agent: Any,
+    question: str,
+    trace: Any = None,
+    forced_doc_id: str | list[str] | None = None,
 ) -> dict:
     """Full answer pipeline: split, answer each part, merge, and format sources.
 

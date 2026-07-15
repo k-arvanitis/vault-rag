@@ -9,7 +9,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from src.tools import retrieval_tool
-from src.tools.retrieval_tool import _make_unified_tool
+from src.tools.retrieval_tool import FORCED_DOC_ID, _make_unified_tool
 
 
 class FakeRanker:
@@ -128,6 +128,23 @@ class TestRetrievalToolBehavior:
             _build_tool().func("compare doc_001 and doc_002 on payment terms")
         assert "doc_001" in scopes
         assert "doc_002" in scopes
+
+    def test_forced_doc_id_list_ors_scope_across_docs(self):
+        """FORCED_DOC_ID set to a list (UI multi-select) bypasses single-doc
+        inference and scopes retrieval to exactly those doc_ids, OR'd."""
+        scopes: list = []
+        retrieve_fn = _make_retrieve(
+            content=[_hit("content", doc_id="doc_001")],
+            spy=lambda kw: scopes.append(kw.get("scope_doc_id")),
+        )
+        token = FORCED_DOC_ID.set(["doc_001", "doc_002"])
+        try:
+            with patch.object(retrieval_tool, "retrieve", side_effect=retrieve_fn), \
+                 patch.object(retrieval_tool, "_fetch_neighbor_chunks", return_value={}):
+                _build_tool().func("unrelated question text")
+        finally:
+            FORCED_DOC_ID.reset(token)
+        assert ["doc_001", "doc_002"] in scopes
 
     def test_hyde_expansion_issues_extra_retrieval(self):
         queries: list = []
