@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 import json
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 from src.config import EVAL_REGRESSION_CANDIDATES_PATH, FEEDBACK_PATH
+
+# Guards the load-modify-save sequence in add_feedback/resolve_feedback -- without
+# it, two concurrent requests (FastAPI's threadpool executor can run handlers in
+# parallel) can both read the same on-disk state and the second write silently
+# discards the first's change (lost update).
+_lock = threading.Lock()
 
 
 def _path() -> Path:
@@ -78,9 +85,10 @@ def add_feedback(
         "note": None,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
-    items = _load()
-    items.append(item)
-    _save(items)
+    with _lock:
+        items = _load()
+        items.append(item)
+        _save(items)
     return item
 
 
@@ -91,14 +99,15 @@ def list_feedback() -> list[dict]:
 
 def resolve_feedback(feedback_id: str, action: str, note: str | None) -> dict:
     """Mark a feedback record resolved with the admin's chosen action; raises KeyError if not found."""
-    items = _load()
-    for item in items:
-        if item["id"] == feedback_id:
-            item["status"] = "resolved"
-            item["action"] = action
-            item["note"] = note
-            _save(items)
-            if action == "add_to_eval_set":
-                _append_regression_candidate(item)
-            return item
+    with _lock:
+        items = _load()
+        for item in items:
+            if item["id"] == feedback_id:
+                item["status"] = "resolved"
+                item["action"] = action
+                item["note"] = note
+                _save(items)
+                if action == "add_to_eval_set":
+                    _append_regression_candidate(item)
+                return item
     raise KeyError(feedback_id)

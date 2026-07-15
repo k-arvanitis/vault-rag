@@ -2,7 +2,38 @@
 
 from __future__ import annotations
 
-from src.tools.excel import _column_matches_question, _target_field_phrase
+from src.tools.excel import _column_matches_question, _extract_sql, _target_field_phrase
+
+
+class TestSqlInjectionGuard:
+    """query_excel is a read-only lookup tool over the shared DuckDB file.
+    Confirmed live that DuckDB's execute() runs semicolon-stacked statements
+    by default ("SELECT 1; DROP TABLE t;" actually drops t) -- a
+    prompt-injected SQL-generation call must not be able to reach anything
+    but a single SELECT/WITH statement."""
+
+    def test_rejects_statement_stacked_drop(self):
+        assert _extract_sql("```sql\nSELECT 1; DROP TABLE t;\n```") is None
+
+    def test_rejects_statement_stacked_delete(self):
+        assert _extract_sql("```sql\nSELECT * FROM x; DELETE FROM x;\n```") is None
+
+    def test_rejects_bare_drop_table(self):
+        assert _extract_sql("```sql\nDROP TABLE doc_006_transactions;\n```") is None
+
+    def test_rejects_update(self):
+        assert _extract_sql("```sql\nUPDATE t SET x = 1;\n```") is None
+
+    def test_allows_plain_select(self):
+        sql = '```sql\nSELECT "NET Amount" FROM t WHERE "Supplier Name" ILIKE \'x\';\n```'
+        assert _extract_sql(sql) is not None
+
+    def test_allows_select_without_fence(self):
+        assert _extract_sql("SELECT * FROM t") == "SELECT * FROM t"
+
+    def test_allows_cte_with_clause(self):
+        sql = "```sql\nWITH cte AS (SELECT 1 AS x) SELECT * FROM cte;\n```"
+        assert _extract_sql(sql) is not None
 
 
 def test_target_field_phrase_drops_row_qualifier_clause():

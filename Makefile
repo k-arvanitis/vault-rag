@@ -48,10 +48,16 @@ eval:
 	uv run python eval/run_eval.py
 
 eval-cross:
-	uv run python eval/run_eval.py --category cross_document
+	uv run python eval/run_eval.py --category cross_document_compare
 
 test:
 	uv run pytest tests/ -v --tb=short
+
+# Real end-to-end check against live Qdrant/DuckDB/LLM -- not mocked, not part
+# of `make test`. Run before a release or after touching ingestion/retrieval/
+# generation code.
+smoke:
+	uv run python scripts/smoke_test.py
 
 lint:
 	uv run ruff check src/ api.py slack_app.py eval/

@@ -11,9 +11,9 @@ No sheet_table or sheet_row chunks are stored in Qdrant.
 Called by: the document-ingestion entry points and the CLI `python -m
 src.ingest_table_rows`.
 Calls: src.ingest_tables.load_sheets (raw sheet rows), src.duckdb_store
-(_table_name, _normalize_dates), src.llm_utils._make_groq_llm_fn (Groq LLM
-factory), src.preprocessing.excel_cleaner.process_file (LLM cleaning), the
-Ollama embedding API, and the Qdrant REST API for upserts.
+(_table_name, _normalize_dates), src.llm_utils._make_excel_cleaner_llm_fn
+(LLM factory, EXCEL_AGENT_* endpoint), src.preprocessing.excel_cleaner.process_file
+(LLM cleaning), the Ollama embedding API, and the Qdrant REST API for upserts.
 
 Usage:
     python -m src.ingest_table_rows data/myfile.xlsx
@@ -570,14 +570,14 @@ def _load_into_duckdb(
     import duckdb
 
     from src.duckdb_store import _normalize_dates, _table_name
-    from src.llm_utils import _make_groq_llm_fn
+    from src.llm_utils import _make_excel_cleaner_llm_fn
     from src.preprocessing.excel_cleaner import process_file
 
-    # Open the persistent DuckDB file and build the Groq LLM callable for cleaning.
+    # Open the persistent DuckDB file and build the LLM callable for cleaning.
     db_path = os.getenv("DUCKDB_PATH", DUCKDB_PATH)
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect(db_path)
-    llm_fn = _make_groq_llm_fn()
+    llm_fn = _make_excel_cleaner_llm_fn()
 
     # Run LLM-assisted cleaning; abort this file (not the run) if it fails.
     try:

@@ -7,6 +7,9 @@ from functools import lru_cache
 from typing import Callable
 
 from src.config import (
+    EXCEL_AGENT_API_BASE,
+    EXCEL_AGENT_API_KEY,
+    EXCEL_AGENT_MODEL,
     FREE_LLM_API_KEY,
     GROQ_API_KEY,
     LITELLM_MASTER_KEY,
@@ -48,24 +51,36 @@ def _get_openai_client(base_url: str, api_key: str):
     )
 
 
-def _make_groq_llm_fn() -> Callable[[str], str]:
-    """Return a Groq LLM callable for excel_cleaner.process_file."""
+def _make_excel_cleaner_llm_fn() -> Callable[[str], str]:
+    """Return an LLM callable for excel_cleaner.process_file.
+
+    Uses the same EXCEL_AGENT_* endpoint as query_excel's own SQL generation
+    (src/tools/excel.py), not a hardcoded Groq client. This used to be
+    hardcoded to Groq directly with no config override -- reproduced live
+    (2026-07-15) that Groq's org is billing-restricted (the same restriction
+    already documented in TODO.md for GENERATION_API_BASE, but this path was
+    never migrated when that one was), so every Excel/CSV ingest was silently
+    skipping the LLM-cleaning step and falling through to "Skipping DuckDB
+    load" -- a newly uploaded spreadsheet would get a Qdrant summary but no
+    queryable rows, with no error surfaced to the user.
+    """
     import openai
 
-    # Build the Groq OpenAI-compatible client once and close over it.
     client = openai.OpenAI(
-        base_url="https://api.groq.com/openai/v1",
-        api_key=GROQ_API_KEY,
+        base_url=_to_openai_base(EXCEL_AGENT_API_BASE),
+        api_key=EXCEL_AGENT_API_KEY,
     )
 
     def _call(prompt: str) -> str:
-        """Send one prompt to the Groq model and return the text completion."""
+        """Send one prompt to the excel-agent model and return the text completion."""
         resp = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model=EXCEL_AGENT_MODEL,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.0,
+            extra_body=_openrouter_provider_extra_body(EXCEL_AGENT_API_BASE),
         )
-        return resp.choices[0].message.content
+        raw = resp.choices[0].message.content
+        return raw if raw is not None else ""
 
     return _call
 

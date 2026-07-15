@@ -407,14 +407,37 @@ class _SQLState(TypedDict):
     final_sql: str
 
 
+def _is_readonly_select(sql: str) -> bool:
+    """True if sql is exactly one SELECT/WITH statement, no statement stacking.
+
+    query_excel is a lookup tool over user-uploaded data; nothing should ever
+    write to or drop from the shared DuckDB file through it. Confirmed live
+    that DuckDB's execute() runs semicolon-stacked statements by default
+    ("SELECT 1; DROP TABLE t;" actually drops t) -- a SQL-generation call
+    that's been prompt-injected (via a malicious question, or adversarial
+    retrieved content in its history/samples) could otherwise destroy data
+    for the whole app, not just answer wrong. Reject anything but a single
+    read-only statement rather than trying to sanitize it.
+    """
+    statements = [s.strip() for s in sql.split(";") if s.strip()]
+    if len(statements) != 1:
+        return False
+    return bool(re.match(r"^(SELECT|WITH)\b", statements[0], re.IGNORECASE))
+
+
 def _extract_sql(text: str) -> str | None:
-    """Pull the first ```sql ... ``` block, falling back to a SELECT-prefixed line."""
+    """Pull the first ```sql ... ``` block, falling back to a SELECT-prefixed line.
+
+    Returns None (treated the same as "no SQL extracted") for anything that
+    isn't a single read-only SELECT/WITH statement -- see _is_readonly_select.
+    """
     m = re.search(r"```sql\s*(.*?)```", text, re.DOTALL | re.IGNORECASE)
-    if m and m.group(1).strip():
-        return m.group(1).strip()
-    if text.strip().upper().startswith("SELECT"):
-        return text.strip()
-    return None
+    candidate = m.group(1).strip() if m and m.group(1).strip() else None
+    if candidate is None and text.strip().upper().startswith("SELECT"):
+        candidate = text.strip()
+    if candidate is None or not _is_readonly_select(candidate):
+        return None
+    return candidate
 
 
 # Column-name words too common to signal a real match on their own — two genuinely

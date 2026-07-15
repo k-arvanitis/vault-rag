@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import json
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 from src.config import CONVERSATION_PATH
+
+# Same lost-update race as src/feedback_store.py -- guards the load-modify-save
+# sequence against FastAPI's threadpool executor running handlers concurrently.
+_lock = threading.Lock()
 
 
 def _path() -> Path:
@@ -41,26 +46,27 @@ def _title_from_messages(messages: list[dict]) -> str:
 
 def save_conversation(conversation_id: str | None, messages: list[dict]) -> dict:
     """Create or update a conversation record; returns the stored record."""
-    items = _load()
-    now = datetime.now(timezone.utc).isoformat()
-    if conversation_id:
-        for item in items:
-            if item["id"] == conversation_id:
-                item["messages"] = messages
-                item["title"] = _title_from_messages(messages)
-                item["updated_at"] = now
-                _save(items)
-                return item
-    item = {
-        "id": conversation_id or str(uuid.uuid4()),
-        "title": _title_from_messages(messages),
-        "messages": messages,
-        "created_at": now,
-        "updated_at": now,
-    }
-    items.append(item)
-    _save(items)
-    return item
+    with _lock:
+        items = _load()
+        now = datetime.now(timezone.utc).isoformat()
+        if conversation_id:
+            for item in items:
+                if item["id"] == conversation_id:
+                    item["messages"] = messages
+                    item["title"] = _title_from_messages(messages)
+                    item["updated_at"] = now
+                    _save(items)
+                    return item
+        item = {
+            "id": conversation_id or str(uuid.uuid4()),
+            "title": _title_from_messages(messages),
+            "messages": messages,
+            "created_at": now,
+            "updated_at": now,
+        }
+        items.append(item)
+        _save(items)
+        return item
 
 
 def list_conversations() -> list[dict]:
@@ -88,8 +94,9 @@ def get_conversation(conversation_id: str) -> dict:
 
 def delete_conversation(conversation_id: str) -> None:
     """Remove a conversation record; raises KeyError if not found."""
-    items = _load()
-    remaining = [i for i in items if i["id"] != conversation_id]
-    if len(remaining) == len(items):
-        raise KeyError(conversation_id)
-    _save(remaining)
+    with _lock:
+        items = _load()
+        remaining = [i for i in items if i["id"] != conversation_id]
+        if len(remaining) == len(items):
+            raise KeyError(conversation_id)
+        _save(remaining)

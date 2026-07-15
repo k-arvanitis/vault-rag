@@ -170,6 +170,16 @@ def _run_ingest_sync(
                     _json.loads(Path(chunks_path).read_text())
                 )
         _jobs[job_id].update({"status": "done", "stage": "indexed"})
+        # Refresh the cached agent so its doc_registry (filename/title -> doc_id,
+        # built once at agent-construction time) picks up this document. Must
+        # happen on actual completion, not when the background job is queued --
+        # reindex_document() used to clear the cache immediately at request time,
+        # before the async ingest even started, so a query arriving after the
+        # job *finished* still got the pre-ingest registry. New uploads via
+        # /ingest never cleared it at all, so a freshly uploaded document was
+        # invisible to title-based routing until something else (a delete, a
+        # reindex of a different file) happened to rebuild the agent.
+        _get_agent.cache_clear()
     except Exception as exc:
         _jobs[job_id].update({"status": "failed", "stage": "failed", "error": str(exc)})
 
@@ -542,7 +552,6 @@ async def reindex_document(filename: str, pipeline: str = Form("auto")):
     force_pipeline = pipeline if pipeline in {"ocr", "text"} else None
     loop = asyncio.get_running_loop()
     loop.run_in_executor(_executor, _run_ingest_sync, job_id, dest, force_pipeline)
-    _get_agent.cache_clear()
     return {"job_id": job_id, "status": "processing"}
 
 
