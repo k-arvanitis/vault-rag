@@ -58,7 +58,11 @@ from src.config import (
     RETRIEVAL_TOP_K,
 )
 from src.duckdb_store import DuckDBStore
-from src.llm_utils import _is_thinking_model, _to_openai_base
+from src.llm_utils import (
+    _is_thinking_model,
+    _openrouter_provider_extra_body,
+    _to_openai_base,
+)
 from src.prompts import PROMPT_VERSION, compose_system_prompt
 from src.reranker import BGEReranker, QwenReranker
 from src.retriever import (
@@ -361,6 +365,7 @@ def build_rag_agent(
         max_tokens=2048,
         max_retries=3,
         timeout=LLM_REQUEST_TIMEOUT_S,
+        extra_body=_openrouter_provider_extra_body(generation_api_base),
     )
 
     # Filename -> doc_id lookup used to resolve titles the LLM passes instead of ids.

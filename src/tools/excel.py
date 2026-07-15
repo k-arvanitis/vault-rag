@@ -50,7 +50,11 @@ from src.duckdb_store import (
     _normalize_sql,
     _truncate_ilike,
 )
-from src.llm_utils import _get_openai_client, _is_thinking_model
+from src.llm_utils import (
+    _get_openai_client,
+    _is_thinking_model,
+    _openrouter_provider_extra_body,
+)
 from src.prompts import (
     DECOMPOSE_PROMPT,
     FORMAT_PROMPT,
@@ -151,6 +155,7 @@ def _llm_chat(
         messages=messages,
         temperature=temperature,
         max_tokens=max_tokens,
+        extra_body=_openrouter_provider_extra_body(EXCEL_AGENT_API_BASE),
     )
     return _strip_think(resp.choices[0].message.content or "")
 

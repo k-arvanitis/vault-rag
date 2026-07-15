@@ -373,6 +373,35 @@ directly at OpenRouter (the eval judge client bypasses the proxy entirely regard
 `_judge_config()`). Langfuse cost logging on generation calls is not happening while this
 bypass is in place.
 
+**Comparison-question false-Unsupported, root-caused 2026-07-15.** The
+`GENERATION_API_BASE` comment above (line ~15) assumed OpenRouter serves
+`qwen/qwen3-32b` unquantized, escaping the ~19% false-"Unsupported" rate
+found on the local AWQ-quantized vLLM. That assumption was never verified
+and is likely wrong: `GET /models/qwen/qwen3-32b/endpoints` shows every
+OpenRouter provider except Alibaba/Groq (both "unknown", not confirmed
+full-precision) serving fp8 — DeepInfra, Nebius, SiliconFlow. OpenRouter
+also silently varies WHICH provider serves a given call ("provider" field
+in the response flipped between Nebius and DeepInfra across identical
+requests), adding routing variance on top of quantization.
+Experiment (`src/llm_utils._openrouter_provider_extra_body`,
+`OPENROUTER_PROVIDER_PIN` env var, currently unset/off): pinned every
+generation call to DeepInfra only and ran the same comparison question
+("Compare the leave policies in doc_009 and doc_010") 5x. Result: 5/5
+identical — but 5/5 wrong (flat "Unsupported" despite both documents
+being correctly retrieved every time, confirmed via the `sources` field).
+This rules out cross-provider routing as the dominant cause and points at
+DeepInfra's fp8 quantization itself. Reverted the pin (strictly worse
+than the unpinned mixed-but-sometimes-correct baseline).
+- [ ] Test pinning to Alibaba specifically (likely the model's original
+      publisher, closest candidate for actual full precision) — set
+      `OPENROUTER_PROVIDER_PIN=Alibaba` in `.env` and rerun the same 5x
+      comparison-question test
+- [ ] If Alibaba is also bad or unavailable, the "unquantized on
+      OpenRouter" assumption in the GENERATION_API_BASE comment is false
+      for this model entirely — worth reconsidering whether a paid,
+      confirmed-full-precision endpoint is needed for this failure mode
+      to actually go away, vs. accepting it as a known limitation
+
 Still open — needs an actual fresh eval run, can't be scripted around:
 - [ ] Run one fresh, authoritative pass on the 93-question corpus: `make eval` (or
       `POST /eval/run` from the new eval dashboard) with `EVAL_JUDGE_MODEL=gpt-oss-120b` set

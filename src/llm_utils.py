@@ -12,7 +12,23 @@ from src.config import (
     LITELLM_MASTER_KEY,
     LLM_REQUEST_TIMEOUT_S,
     OPENROUTER_API_KEY,
+    OPENROUTER_PROVIDER_PIN,
 )
+
+
+def _openrouter_provider_extra_body(api_base: str) -> dict | None:
+    """extra_body pinning OpenRouter to one backend provider, or None.
+
+    OpenRouter can route "the same" model call to different actual backends
+    per request (observed live: qwen/qwen3-32b served by Nebius on one call,
+    DeepInfra on another) -- different engines/quantizations behind one model
+    name is a plausible source of answer-to-answer variance beyond ordinary
+    temp=0 sampling noise. Only applies when OPENROUTER_PROVIDER_PIN is set
+    and api_base is actually OpenRouter.
+    """
+    if not OPENROUTER_PROVIDER_PIN or "openrouter.ai" not in api_base.lower():
+        return None
+    return {"provider": {"order": [OPENROUTER_PROVIDER_PIN], "allow_fallbacks": False}}
 
 
 @lru_cache(maxsize=16)
@@ -96,6 +112,7 @@ def _llm_call(
         messages=[{"role": "user", "content": prompt}],
         max_tokens=max_tokens,
         temperature=temperature,
+        extra_body=_openrouter_provider_extra_body(api_base),
     )
     raw = resp.choices[0].message.content
     # Strip <think> blocks emitted by reasoning models (Qwen3, QwQ, DeepSeek-R1, etc.)

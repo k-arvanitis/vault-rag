@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     # could block for the SDK default (~10 min); comparison questions chain
     # several such calls sequentially, so one slow turn could hang a whole request.
     llm_request_timeout_s: float = 60.0
+    # Pin OpenRouter to one named backend provider (e.g. "DeepInfra"), empty =
+    # no pin (OpenRouter picks per-request, can silently vary the actual engine/
+    # quantization serving "the same" model call to call). Only applies when
+    # generation_api_base is openrouter.ai. See TODO.md for why this exists.
+    openrouter_provider_pin: str = ""
 
     # Secrets
     groq_api_key: SecretStr = SecretStr("")
@@ -141,6 +146,7 @@ QDRANT_COLLECTION: str = _s.qdrant_collection
 GENERATION_API_BASE: str = _s.generation_api_base
 GENERATION_MODEL: str = _s.generation_model
 LLM_REQUEST_TIMEOUT_S: float = _s.llm_request_timeout_s
+OPENROUTER_PROVIDER_PIN: str = _s.openrouter_provider_pin
 
 GROQ_API_KEY: str = _s.groq_api_key.get_secret_value()
 NVIDIA_API_KEY: str = _s.nvidia_api_key.get_secret_value()
