@@ -91,11 +91,63 @@ _COMPARISON_RE = re.compile(
     re.IGNORECASE,
 )
 
+# doc_XXX ids named directly in a comparison question -- used to check whether
+# the final answer actually has evidence for every document the question asked
+# about. More robust than pattern-matching the answer's wording for a refusal:
+# reproduced live, the model wrote off a side with several different phrasings
+# across runs ("Unsupported", "No details ... are provided") -- a keyword check
+# alone misses whichever phrasing wasn't anticipated, but checking "does the
+# named document actually appear in the sources" doesn't depend on wording.
+_MENTIONED_DOC_ID_RE = re.compile(r"\bdoc_\d+\b", re.IGNORECASE)
+
+
+def _missing_mentioned_docs(question_text: str, srcs: list[dict]) -> list[str]:
+    """doc_XXX ids named in the question with no matching source."""
+    mentioned = {m.lower() for m in _MENTIONED_DOC_ID_RE.findall(question_text)}
+    if len(mentioned) < 2:
+        return []
+    covered = {(s.get("document_id") or "").lower() for s in srcs} | {
+        s["filename"].lower() for s in srcs
+    }
+    return [d for d in mentioned if not any(d in c for c in covered)]
+
+
+def _comparison_incompleteness(
+    question_text: str, ans: str, coll: list[str]
+) -> tuple[list[str], bool, int]:
+    """(missing_named_docs, has_partial_unsupported_fragment, n_distinct_sources)."""
+    sources = parse_sources(coll)
+    n_sources = len({s["filename"] for s in sources})
+    missing = _missing_mentioned_docs(question_text, sources)
+    has_partial = (
+        ans.strip().lower() != "unsupported" and "unsupported" in ans.lower()
+    )
+    return missing, has_partial, n_sources
+
 _COMPARISON_RETRY_INSTRUCTION = (
     "\n\nIMPORTANT: This is a retry. This is a two-part comparison question and the "
     "previous attempt only retrieved evidence from one source. Do NOT answer the other "
     "part from general knowledge. Make a second search_knowledge_base call scoped to "
     "the other document or topic named in the question before finalizing your answer."
+)
+
+# Distinct from the retry above: evidence for BOTH sides was already retrieved
+# (both documents appear in the source list) but the answer still wrote off one
+# side as Unsupported — reproduced directly: a document whose relevant content
+# was split across several related sub-topics (e.g. multiple distinct leave
+# types) got 12 real chunks back, yet the answer said "Unsupported" for it
+# instead of picking the most relevant sub-topic. Telling the model to search
+# again wouldn't help here since it already has the evidence; the fix is a
+# synthesis instruction, not a retrieval one.
+_COMPARISON_PARTIAL_RETRY_INSTRUCTION = (
+    "\n\nIMPORTANT: This is a retry. The previous attempt already retrieved relevant "
+    "content for both documents in this comparison, but still answered one side as "
+    "Unsupported. If a document's retrieved content covers several related "
+    "sub-topics instead of one single answer (e.g. multiple distinct leave types, "
+    "multiple different clauses), do not default to Unsupported — pick the most "
+    "directly relevant sub-topic and answer using it, briefly noting that other "
+    "related sub-topics exist if that's genuinely useful. Only answer Unsupported "
+    "for a side if nothing relevant was actually retrieved for it."
 )
 
 # Chunk header format: "[1] file=name.pdf chunk=5 page=4 score=0.8312"
@@ -272,7 +324,23 @@ def parse_sources(collected: list[str]) -> list[dict]:
                     "figure_bbox": figure_bbox,
                 }
             )
-    return sources[:8]
+    # Cap at 8, but guarantee every distinct file that produced a chunk keeps at
+    # least one slot before a second chunk from an already-represented file
+    # takes one -- reproduced directly: in a two-document comparison, a
+    # redundant re-query of the document that already had a good answer filled
+    # the cap with more of its own chunks (it's processed first, being the
+    # latest call) and silently dropped the other document's genuinely
+    # retrieved chunks from the source list entirely.
+    seen_files: set[str] = set()
+    diverse: list[dict] = []
+    rest: list[dict] = []
+    for s in sources:
+        if s["filename"] not in seen_files:
+            seen_files.add(s["filename"])
+            diverse.append(s)
+        else:
+            rest.append(s)
+    return (diverse + rest)[:8]
 
 
 def run_once(
@@ -384,33 +452,59 @@ def answer_one(
         token = FORCED_DOC_ID.set(forced_doc_id)
     try:
         ans, coll, tr = run_once(agent, q, attempt="initial", trace=trace)
-        if ans.lower() == "unsupported":
-            # A comparison question that comes back flat Unsupported needs the
-            # "go find the other document" instruction, not the generic single-doc
-            # retry -- the generic one never tells the agent a second source is
-            # missing (reproduced: doc_001_doc_002_qa_1/qa_4 both short-circuited
-            # here before the comparison-retry branch below ever ran).
-            retry_instruction = (
-                _COMPARISON_RETRY_INSTRUCTION if is_comparison else _RETRY_INSTRUCTION
+        if is_comparison:
+            # One unified check-and-retry pass. Reproduced live: a flat
+            # "Unsupported" first attempt used to be caught by an earlier,
+            # separate check that returned the OLD retry's result immediately
+            # -- before the partial/missing-doc checks below ever ran on it,
+            # so an incomplete retry answer (e.g. still missing one named
+            # document) went out unexamined. All three failure signals now
+            # feed into the same accept-or-keep-original decision.
+            is_flat_unsupported = ans.strip().lower() == "unsupported"
+            missing, has_partial, n_sources = _comparison_incompleteness(
+                question, ans, coll
             )
+            if is_flat_unsupported or missing or n_sources < 2 or has_partial:
+                if missing:
+                    retry_instruction = (
+                        f"\n\nIMPORTANT: This is a retry. This comparison question names "
+                        f"{', '.join(missing)}, but the previous answer has no evidence "
+                        f"from {'it' if len(missing) == 1 else 'them'}. Make a "
+                        f"search_knowledge_base call scoped to {' and '.join(missing)} "
+                        "(pass it as the doc_id argument). If its relevant content covers "
+                        "several related sub-topics, pick the most directly relevant one "
+                        "and answer using it instead of skipping that document."
+                    )
+                elif is_flat_unsupported or n_sources < 2:
+                    retry_instruction = _COMPARISON_RETRY_INSTRUCTION
+                else:
+                    retry_instruction = _COMPARISON_PARTIAL_RETRY_INSTRUCTION
+                r_ans, r_coll, r_tr = run_once(
+                    agent,
+                    q + retry_instruction,
+                    attempt="comparison-retry",
+                    trace=trace,
+                )
+                r_flat = r_ans.strip().lower() == "unsupported"
+                r_missing, r_has_partial, r_sources = _comparison_incompleteness(
+                    question, r_ans, r_coll
+                )
+                improved = (
+                    (is_flat_unsupported and not r_flat)
+                    or len(r_missing) < len(missing)
+                    or r_sources > n_sources
+                    or (has_partial and not r_has_partial)
+                )
+                if r_ans and improved:
+                    return r_ans, r_coll, r_tr
+            return ans, coll, tr
+        if ans.lower() == "unsupported":
             r_ans, r_coll, r_tr = run_once(
-                agent, q + retry_instruction, attempt="unsupported-retry", trace=trace
+                agent, q + _RETRY_INSTRUCTION, attempt="unsupported-retry", trace=trace
             )
             if r_ans.lower() != "unsupported" and r_ans:
                 return r_ans, r_coll, r_tr
             return ans, coll, tr
-        if is_comparison:
-            n_sources = len({s["filename"] for s in parse_sources(coll)})
-            if n_sources < 2:
-                r_ans, r_coll, r_tr = run_once(
-                    agent,
-                    q + _COMPARISON_RETRY_INSTRUCTION,
-                    attempt="comparison-retry",
-                    trace=trace,
-                )
-                r_sources = len({s["filename"] for s in parse_sources(r_coll)})
-                if r_ans and r_sources > n_sources:
-                    return r_ans, r_coll, r_tr
     finally:
         if token is not None:
             FORCED_DOC_ID.reset(token)

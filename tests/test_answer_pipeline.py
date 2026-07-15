@@ -140,6 +140,22 @@ class TestParseSourcesContract:
         assert "logo" not in quote
         assert quote.startswith("Contracts are used for complex Goods")
 
+    def test_eight_cap_preserves_one_slot_per_distinct_file(self):
+        """A redundant re-query of a document that already has plenty of chunks
+        must not crowd a different document's genuinely retrieved chunk out of
+        the capped list entirely -- reproduced in a cross-document comparison
+        where a wasted re-query of the already-answered document filled all 8
+        slots before the other document's chunk was ever considered."""
+        many_doc_a_chunks = [
+            f"[1] file=doc_a.pdf chunk={i} page={i}\nChunk body text number {i}."
+            for i in range(9)
+        ]
+        one_doc_b_chunk = "[1] file=doc_b.pdf chunk=0 page=1\nThe only doc_b chunk."
+        sources = parse_sources(many_doc_a_chunks + [one_doc_b_chunk])
+        filenames = {s["filename"] for s in sources}
+        assert len(sources) == 8
+        assert "doc_b.pdf" in filenames
+
 
 class TestForcedDocScope:
     """The UI's source-scope control (Ask across: one document) forces routing
@@ -198,3 +214,142 @@ class TestForcedDocScope:
                 forced_doc_id="doc_001_procurement_policy.pdf",
             )
         mock_shortcut.assert_not_called()
+
+
+def _src(filename: str, document_id: str | None = None) -> dict:
+    return {
+        "filename": filename,
+        "document_id": document_id,
+        "page": 1,
+        "quote": "x",
+        "section": None,
+    }
+
+
+class TestComparisonMissingMentionedDocRetry:
+    """Reproduced live: the model wrote off a comparison's missing side with
+    different wording each run ("Unsupported", "No details ... are provided"),
+    so a keyword check on the answer text is unreliable. The doc_id-coverage
+    check doesn't depend on wording at all -- it just checks whether every
+    doc_id named in the question actually has a matching source."""
+
+    def test_missing_named_doc_triggers_retry_regardless_of_answer_wording(self):
+        with (
+            patch("src.answer_pipeline.parse_sources") as mock_parse,
+            patch(
+                "src.answer_pipeline.run_once",
+                side_effect=[
+                    (
+                        "doc_010 says leave is unpaid. No details about leave "
+                        "policies are provided in the retrieved content from doc_009.",
+                        [],
+                        {},
+                    ),
+                    (
+                        "doc_009: compassionate leave is paid up to 5 days.\n"
+                        "doc_010: leave is unpaid.",
+                        [],
+                        {},
+                    ),
+                ],
+            ) as mock_run_once,
+        ):
+            mock_parse.side_effect = [
+                [_src("doc_010_handbook.pdf", "doc_010")],
+                [
+                    _src("doc_009_hr.pdf", "doc_009"),
+                    _src("doc_010_handbook.pdf", "doc_010"),
+                ],
+            ]
+            ans, _coll, _tr = answer_one(
+                agent=object(),
+                question="Compare the leave policies in doc_009 and doc_010",
+            )
+        assert mock_run_once.call_count == 2
+        retry_question = mock_run_once.call_args_list[1][0][1]
+        assert "doc_009" in retry_question
+        assert "no evidence" in retry_question
+        assert "compassionate leave" in ans
+
+    def test_no_retry_when_both_named_docs_covered(self):
+        with (
+            patch("src.answer_pipeline.parse_sources") as mock_parse,
+            patch(
+                "src.answer_pipeline.run_once",
+                return_value=("doc_009: a. doc_010: b.", [], {}),
+            ) as mock_run_once,
+        ):
+            mock_parse.return_value = [
+                _src("doc_009_hr.pdf", "doc_009"),
+                _src("doc_010_handbook.pdf", "doc_010"),
+            ]
+            answer_one(
+                agent=object(),
+                question="Compare the leave policies in doc_009 and doc_010",
+            )
+        mock_run_once.assert_called_once()
+
+
+class TestComparisonPartialUnsupportedRetry:
+    """A comparison answer can name both documents (n_sources >= 2) yet still
+    write off one side as "Unsupported" in the synthesized text -- reproduced
+    live: both documents were actually retrieved, but the model gave up on one
+    side because its content spanned several related sub-topics. The retry
+    trigger must catch this even though the retrieved-source-count check alone
+    doesn't see a problem."""
+
+    def test_partial_unsupported_with_two_sources_triggers_retry(self):
+        with (
+            patch("src.answer_pipeline.parse_sources") as mock_parse,
+            patch(
+                "src.answer_pipeline.run_once",
+                side_effect=[
+                    ("doc_009: Unsupported\ndoc_010: real answer.", [], {}),
+                    ("doc_009: a real answer.\ndoc_010: real answer.", [], {}),
+                ],
+            ) as mock_run_once,
+        ):
+            mock_parse.return_value = [_src("doc_009_hr.pdf"), _src("doc_010_handbook.pdf")]
+            ans, _coll, _tr = answer_one(
+                agent=object(),
+                question="Compare the leave policies in doc_009 and doc_010",
+            )
+        assert mock_run_once.call_count == 2
+        retry_question = mock_run_once.call_args_list[1][0][1]
+        assert "already retrieved relevant content for both documents" in retry_question
+        assert ans == "doc_009: a real answer.\ndoc_010: real answer."
+
+    def test_no_retry_when_no_unsupported_fragment(self):
+        with (
+            patch("src.answer_pipeline.parse_sources") as mock_parse,
+            patch(
+                "src.answer_pipeline.run_once",
+                return_value=("doc_009: a. doc_010: b.", [], {}),
+            ) as mock_run_once,
+        ):
+            mock_parse.return_value = [_src("doc_009_hr.pdf"), _src("doc_010_handbook.pdf")]
+            answer_one(
+                agent=object(),
+                question="Compare the leave policies in doc_009 and doc_010",
+            )
+        mock_run_once.assert_called_once()
+
+    def test_retry_keeps_original_when_still_partial(self):
+        """If the retry doesn't actually fix it, keep the first answer rather
+        than silently swapping in an equally-broken retry."""
+        with (
+            patch("src.answer_pipeline.parse_sources") as mock_parse,
+            patch(
+                "src.answer_pipeline.run_once",
+                side_effect=[
+                    ("doc_009: Unsupported\ndoc_010: real answer.", [], {}),
+                    ("doc_009: Unsupported\ndoc_010: real answer.", [], {}),
+                ],
+            ),
+        ):
+            mock_parse.return_value = [_src("doc_009_hr.pdf"), _src("doc_010_handbook.pdf")]
+            ans, _coll, _tr = answer_one(
+                agent=object(),
+                question="Compare the leave policies in doc_009 and doc_010",
+            )
+        assert ans == "doc_009: Unsupported\ndoc_010: real answer."
