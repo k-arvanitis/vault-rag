@@ -859,6 +859,7 @@ def _load_questions_for_run(
 def generate_answers(
     category_filter: str | None = None,
     qa_files: list[str] | None = None,
+    resume: bool = False,
 ) -> list[dict[str, Any]]:
     """Phase 1: run the full agent on every question and save raw predicted answers.
 
@@ -867,6 +868,12 @@ def generate_answers(
     eval/results/retrieval_results.jsonl (no LLM involved) and
     eval/results/raw_answers.jsonl (qa_id, question, gold_answer, predicted
     answer, retrieved context — everything judge_answers() needs).
+
+    resume: skip qa_ids already present in an existing raw_answers.jsonl
+    instead of regenerating them. The full corpus is ~109 questions at
+    ~1-1.5 min each (no parallelism) -- a killed run previously meant losing
+    everything and restarting from zero. With resume=True, re-running the
+    same command after an interruption only pays for the remaining questions.
     """
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     questions = _load_questions_for_run(category_filter, qa_files)
@@ -877,11 +884,28 @@ def generate_answers(
         encoding="utf-8",
     )
 
+    total_questions = len(questions)
+    done_rows: list[dict[str, Any]] = []
+    if resume and RAW_ANSWERS_PATH.exists():
+        done_rows = [
+            json.loads(line)
+            for line in RAW_ANSWERS_PATH.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        done_ids = {row["qa_id"] for row in done_rows}
+        questions = [q for q in questions if q["qa_id"] not in done_ids]
+        if done_rows:
+            print(f"Resuming: {len(done_rows)} already-generated answers found, {len(questions)} remaining.")
+
+    if not questions:
+        print(f"\nAll {len(done_rows)} answers already present -> {RAW_ANSWERS_PATH}")
+        return done_rows
+
     agent = build_rag_agent()
     reflection_pipeline = build_reflection_pipeline(agent)
     decomposition_pipeline = build_decomposition_pipeline(agent)
 
-    raw_rows: list[dict[str, Any]] = []
+    raw_rows: list[dict[str, Any]] = list(done_rows)
 
     for idx, question in enumerate(questions, start=1):
         query = question["question"]
@@ -966,7 +990,7 @@ def generate_answers(
             encoding="utf-8",
         )
 
-    print(f"\nGenerated {len(raw_rows)}/{len(questions)} answers -> {RAW_ANSWERS_PATH}")
+    print(f"\nGenerated {len(raw_rows)}/{total_questions} answers -> {RAW_ANSWERS_PATH}")
     print("Run judge_answers() (or `--phase judge`) next to score them.")
     return raw_rows
 
@@ -1118,13 +1142,14 @@ def judge_answers(raw_answers_path: Path = RAW_ANSWERS_PATH) -> dict[str, Any]:
 def run(
     category_filter: str | None = None,
     qa_files: list[str] | None = None,
+    resume: bool = False,
 ) -> dict[str, Any]:
     """Run the full benchmark end-to-end: generate every answer, then judge all of them.
 
     Prefer generate_answers() + judge_answers() separately when you want to
     inspect raw answers before spending judge-model calls on them.
     """
-    generate_answers(category_filter=category_filter, qa_files=qa_files)
+    generate_answers(category_filter=category_filter, qa_files=qa_files, resume=resume)
     return judge_answers()
 
 
@@ -1150,16 +1175,31 @@ if __name__ == "__main__":
             "full: both, in sequence (default)."
         ),
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Skip qa_ids already present in raw_answers.jsonl instead of "
+            "regenerating them -- re-run the same command after an "
+            "interrupted long run to only pay for what's left."
+        ),
+    )
     args = parser.parse_args()
 
     if args.phase == "generate":
-        generate_answers(category_filter=args.category, qa_files=args.qa_files)
+        generate_answers(
+            category_filter=args.category, qa_files=args.qa_files, resume=args.resume
+        )
     elif args.phase == "judge":
         print(json.dumps(judge_answers(), ensure_ascii=False, indent=2))
     else:
         print(
             json.dumps(
-                run(category_filter=args.category, qa_files=args.qa_files),
+                run(
+                    category_filter=args.category,
+                    qa_files=args.qa_files,
+                    resume=args.resume,
+                ),
                 ensure_ascii=False,
                 indent=2,
             )

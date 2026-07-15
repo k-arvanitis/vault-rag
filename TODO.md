@@ -564,15 +564,39 @@ agent's own synthesis call). Not fixed — the real fix is either raising
 setting OpenRouter's `reasoning: {effort: "low"}` for this model, both of
 which are cost/latency tradeoffs that need a decision, not just a bug fix.
 
-- [ ] Decide on the deeper reasoning-token-starvation variant above (raise
-      main-agent max_tokens vs. cap gpt-oss reasoning effort via
-      `extra_body`) — not yet fixed, needs a call on the cost/latency
-      tradeoff.
-- [ ] End-to-end eval planned (per user, 2026-07-15) — full corpus run once
-      scheduled, will give the authoritative regression check the single-slice
-      runs above couldn't (only `cross_document_compare` was re-run this
-      session). Use the correct `--category cross_document_compare` (or no
-      filter) — see the eval-harness bug above.
+**Deep reasoning-leak variant — closed by decision, not fixed (2026-07-15).**
+Tested `reasoning: {"effort": "low"}` via OpenRouter's `extra_body` directly
+against the real endpoint: only ~10% reduction in reasoning-token count at
+realistic budgets (70→63 tokens), useless at small budgets (still starves at
+`max_tokens=10` even with `effort=low`). Not a real lever. Advisor call: this
+variant was seen exactly once, cost 0.5pt not a full miss, and an isolated
+repro of the same question came back clean on retry — an n=1 sighting, not a
+measured pattern. `max_tokens`/reasoning-effort are global knobs that add
+cost/latency to *every* call in the app; not worth spending on an unquantified
+single sighting. Documented, not pursued further. Reopen only if the full
+corpus run below shows this recurring at meaningful frequency.
+
+**Finding 5 (feature sprawl) — closed, no code change.** Nav already demotes
+secondary screens (Feedback, Quality Evaluation, Google Drive) into dropdown
+groups, distinct from the two top-level actions (Sources, Conversations) that
+support the core flow. Confirmed adequate by inspection; nothing to fix.
+
+**Model swap validation status: PROVISIONAL, not yet complete.** Every
+number above (0.68 qwen3-32b, 0.815-0.825 gpt-oss-120b) is from the
+`cross_document_compare` slice only — 20 of 109 questions. The other ~89
+(table_lookup, numeric_reasoning, ocr_extraction, single_doc_factoid,
+unanswerable, etc.) have never run on `gpt-oss-120b`. A swap that fixed
+comparisons but regressed a different category would be a net loss not
+visible in anything measured so far. Full-corpus run (`--phase full
+--resume`, resume support added this session so a killed multi-hour run
+doesn't lose progress — see `generate_answers`'s `resume` param) kicked off
+in the background 2026-07-15 ~20:50; ~109 questions serially, no
+parallelism in the harness, expect several hours. **Do not treat the
+gpt-oss-120b swap as final until this lands.** When reading the result: the
+leak-stripping fix only catches the cosmetic glued-marker case, not the deep
+variant — eyeball any category that dips before reading it as a real
+regression, since a leak-garbled-but-content-correct answer (like Screwfix
+scored 0.5 pre-fix) can look like a capability regression when it isn't.
 
 Still open — needs an actual fresh eval run, can't be scripted around:
 - [ ] Run one fresh, authoritative pass on the 93-question corpus: `make eval` (or
