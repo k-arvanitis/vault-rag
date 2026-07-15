@@ -130,18 +130,33 @@ Playwright e2e smoke test (`frontend/e2e/golden-path.spec.ts`, local-only, not i
       0.847). A partial 20-question `cross_document_compare`-only run was discarded
       uncommitted during this session; do not let a partial run overwrite the real numbers.
 - [ ] **Push to origin** — ~19 commits ahead of `origin/master`, all unpushed.
-- [ ] **Retrieval flakiness broader than the RFQ case documented below.** Observed during
-      this session: the exact same question against the exact same document
-      (`doc_001` procurement-approval question) returned wildly inconsistent results
-      across repeated calls — 6 sources with a real answer, then empty answer/0 sources,
-      then a real answer with 0 sources, then empty again. Not caused by this session's
-      code changes (verified: unrelated questions answer fine and fast; no exception
-      swallowing added). Looks related to `GENERATION_API_BASE` pointing directly at
-      OpenRouter (rate limits?) combined with `stream_agent`/`run_once` in
-      `src/answer_pipeline.py` never surfacing a failed/empty generation as an error —
-      it just silently returns `answer: ""` with `200 OK`. Worth root-causing before
-      calling the demo reliable: (1) add logging/error surfacing when the token stream
-      produces nothing, (2) check whether this is OpenRouter rate-limiting.
+- [x] **Retrieval flakiness, investigated 2026-07-15 — narrower than this note assumed.**
+      Re-tested the exact single-doc procurement-approval question 5x live: identical
+      sources every time, no flakiness reproduced. The instability is real but scoped
+      to **cross-document comparison questions** specifically ("compare X and Y"), not
+      single-doc Q&A generally — this note's original framing was too broad. Fixed
+      along the way: a `parse_sources()` truncation bug that could silently drop a
+      document's genuinely-retrieved chunks from the source list (commit `10a5678`),
+      and unified the comparison-retry logic so a retry's own answer gets the same
+      completeness check as the initial attempt (same commit). Root cause of the
+      remaining instability is NOT `GENERATION_API_BASE`/OpenRouter rate limiting as
+      guessed here, and not model quantization either — tested both:
+  - [x] Pinned `OPENROUTER_PROVIDER_PIN=DeepInfra` (fp8-quantized), ran the same
+        comparison question 5x: 5/5 identical, but 5/5 wrong (flat "Unsupported"
+        despite both docs correctly retrieved). Commit `e54b079`.
+  - [x] Pinned `OPENROUTER_PROVIDER_PIN=Alibaba` (likely full precision, the model's
+        publisher): *more* variable, not less — 3/5 dropped doc_009, 2/5 dropped
+        doc_010, with different response styles. Rules out quantization as the cause
+        (a full-precision provider should be at least as stable). Commit `31f77ee`.
+  - [ ] **Not yet investigated: the agent's own tool-calling decision on comparison
+        questions** (how many `search_knowledge_base` calls it makes, and for which
+        document) appears to be the actual unstable part, independent of which
+        provider generates the final text. Would need tracing actual tool-call
+        sequences across repeated identical runs to confirm (start in
+        `src/rag_agent.py`'s ReAct loop / `create_react_agent` config).
+      Current state: accepted as a known, documented limitation. The retry-logic
+      fixes above reduce how often it happens but don't eliminate it. Single-document
+      Q&A (the product's core flow) is unaffected and verified deterministic.
 - [ ] `TODO_LITELLM.md`/older sections of this file reference Postgres and `app.py` —
       stale, current `docker-compose.yaml` uses Redis and the entrypoint is `api.py`.
       Cosmetic cleanup, low priority.
