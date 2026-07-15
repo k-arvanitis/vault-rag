@@ -2,16 +2,9 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { FileText, FileSpreadsheet, Image, FileCode, File, ScanSearch, Trash2, RefreshCw } from "lucide-react";
-import {
-  getDocuments,
-  getStats,
-  deleteDocument,
-  reindexDocument,
-  clearCollection,
-  type Document,
-  type Stats,
-} from "@/lib/api";
-import { toSourceLibraryItem, SOURCE_STATUS_LABEL, type SourceStatus } from "@/lib/product";
+import { getDocuments, getStats, deleteDocument, type Document, type Stats } from "@/lib/api";
+import { toSourceLibraryItem, SOURCE_STATUS_LABEL, SOURCE_STATUS_BADGE_VARIANT } from "@/lib/product";
+import { useJobTracker } from "@/lib/jobTracker";
 import {
   Sidebar as SidebarRoot,
   SidebarContent,
@@ -32,14 +25,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import ReprocessDialog from "./ReprocessDialog";
 import UploadZone from "./UploadZone";
-
-const STATUS_BADGE: Record<SourceStatus, "default" | "secondary" | "destructive"> = {
-  ready: "default",
-  processing: "secondary",
-  attention: "destructive",
-  failed: "destructive",
-};
 
 function fileExt(name: string) {
   return name.split("/").pop()?.split(".").pop()?.toLowerCase() ?? "";
@@ -59,14 +46,15 @@ const INSPECTABLE = new Set(["pdf", "xlsx", "xls", "csv"]);
 interface Props {
   onToast: (msg: string, variant?: "error") => void;
   onInspect: (filename: string) => void;
-  onCollectionCleared: () => void;
   offline?: boolean;
 }
 
-export default function Sidebar({ onToast, onInspect, onCollectionCleared, offline }: Props) {
+export default function Sidebar({ onToast, onInspect, offline }: Props) {
   const [docs, setDocs] = useState<Document[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
-  const [confirmClear, setConfirmClear] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [reprocessTarget, setReprocessTarget] = useState<string | null>(null);
+  const jobs = useJobTracker();
 
   const refresh = useCallback(async () => {
     try {
@@ -83,40 +71,17 @@ export default function Sidebar({ onToast, onInspect, onCollectionCleared, offli
     refresh();
   }, [refresh]);
 
+  // Job completion settles the shared tracker a couple seconds after success
+  // (see lib/jobTracker.ts) — re-fetch then so the row picks up the new
+  // last_indexed_at / chunk state instead of staying on stale data.
+  useEffect(() => {
+    refresh();
+  }, [jobs, refresh]);
+
   return (
     <SidebarRoot collapsible="offcanvas">
       <SidebarHeader className="flex-row items-center justify-between px-3 py-3">
         <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Sources</span>
-        <AlertDialog open={confirmClear} onOpenChange={setConfirmClear}>
-          <Button variant="ghost" size="xs" onClick={() => setConfirmClear(true)}>
-            <Trash2 data-icon="inline-start" />
-            Clear all
-          </Button>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Clear the collection?</AlertDialogTitle>
-              <AlertDialogDescription>
-                This deletes every source. This cannot be undone.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={async () => {
-                  try {
-                    await clearCollection();
-                    onCollectionCleared();
-                    refresh();
-                  } catch (e) {
-                    onToast(e instanceof Error ? e.message : "Clear failed", "error");
-                  }
-                }}
-              >
-                Confirm
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
       </SidebarHeader>
 
       <SidebarContent className="px-3">
@@ -130,7 +95,7 @@ export default function Sidebar({ onToast, onInspect, onCollectionCleared, offli
                 const basename = doc.filename.split("/").pop() ?? doc.filename;
                 const typeLabel = doc.file_type || ext.toUpperCase();
                 const canInspect = INSPECTABLE.has(ext);
-                const status = toSourceLibraryItem(doc).status;
+                const status = toSourceLibraryItem(doc, jobs.get(doc.filename)).status;
                 return (
                   <div
                     key={doc.filename}
@@ -145,7 +110,7 @@ export default function Sidebar({ onToast, onInspect, onCollectionCleared, offli
                         <Badge variant="outline" className="uppercase">
                           {typeLabel}
                         </Badge>
-                        <Badge variant={STATUS_BADGE[status]}>{SOURCE_STATUS_LABEL[status]}</Badge>
+                        <Badge variant={SOURCE_STATUS_BADGE_VARIANT[status]}>{SOURCE_STATUS_LABEL[status]}</Badge>
                         {doc.last_indexed_at && (
                           <span className="text-[10px] text-muted-foreground">
                             {new Date(doc.last_indexed_at).toLocaleDateString()}
@@ -160,22 +125,14 @@ export default function Sidebar({ onToast, onInspect, onCollectionCleared, offli
                             <Button
                               variant="ghost"
                               size="icon-xs"
-                              aria-label="Re-index document"
-                              onClick={async () => {
-                                try {
-                                  await reindexDocument(doc.filename);
-                                  onToast(`Re-indexing ${basename}…`);
-                                  refresh();
-                                } catch (e) {
-                                  onToast(e instanceof Error ? e.message : "Re-index failed", "error");
-                                }
-                              }}
+                              aria-label="Reprocess document"
+                              onClick={() => setReprocessTarget(doc.filename)}
                             />
                           }
                         >
                           <RefreshCw />
                         </TooltipTrigger>
-                        <TooltipContent>Re-index document</TooltipContent>
+                        <TooltipContent>Reprocess document</TooltipContent>
                       </Tooltip>
                       {canInspect && (
                         <Tooltip>
@@ -202,16 +159,7 @@ export default function Sidebar({ onToast, onInspect, onCollectionCleared, offli
                               size="icon-xs"
                               className="hover:text-destructive"
                               aria-label="Delete document"
-                              onClick={async () => {
-                                if (!confirm(`Delete "${basename}" from the collection?`)) return;
-                                try {
-                                  await deleteDocument(doc.filename);
-                                  onToast(`Deleted ${basename}`);
-                                  refresh();
-                                } catch (e) {
-                                  onToast(e instanceof Error ? e.message : "Delete failed", "error");
-                                }
-                              }}
+                              onClick={() => setDeleteTarget(doc.filename)}
                             />
                           }
                         >
@@ -239,6 +187,48 @@ export default function Sidebar({ onToast, onInspect, onCollectionCleared, offli
         )}
         <UploadZone onUploaded={refresh} onToast={onToast} offline={offline} />
       </SidebarFooter>
+
+      {reprocessTarget && (
+        <ReprocessDialog
+          filename={reprocessTarget}
+          open={!!reprocessTarget}
+          onOpenChange={(open) => !open && setReprocessTarget(null)}
+          onReprocessed={refresh}
+          onToast={onToast}
+        />
+      )}
+
+      <AlertDialog open={deleteTarget !== null} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this source?</AlertDialogTitle>
+            <AlertDialogDescription>
+              &ldquo;{deleteTarget?.split("/").pop()}&rdquo; will be removed from the collection. This cannot be
+              undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={async () => {
+                if (!deleteTarget) return;
+                const basename = deleteTarget.split("/").pop() ?? deleteTarget;
+                try {
+                  await deleteDocument(deleteTarget);
+                  onToast(`Deleted ${basename}`);
+                  refresh();
+                } catch (e) {
+                  onToast(e instanceof Error ? e.message : "Delete failed", "error");
+                } finally {
+                  setDeleteTarget(null);
+                }
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </SidebarRoot>
   );
 }

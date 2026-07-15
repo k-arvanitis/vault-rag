@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { MoreVertical, ScanSearch, MessageCircle, RefreshCw, Trash2, ArrowLeft } from "lucide-react";
-import { getDocuments, deleteDocument, reindexDocument, type Document } from "@/lib/api";
-import { toSourceLibraryItem, SOURCE_STATUS_LABEL, type SourceStatus } from "@/lib/product";
+import { getDocuments, deleteDocument, clearCollection, type Document } from "@/lib/api";
+import { toSourceLibraryItem, SOURCE_STATUS_LABEL, SOURCE_STATUS_BADGE_VARIANT } from "@/lib/product";
+import { useJobTracker } from "@/lib/jobTracker";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
@@ -19,14 +20,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import ReprocessDialog from "@/components/ReprocessDialog";
 import { toast } from "sonner";
-
-const STATUS_BADGE: Record<SourceStatus, "default" | "secondary" | "destructive"> = {
-  ready: "default",
-  processing: "secondary",
-  attention: "destructive",
-  failed: "destructive",
-};
 
 const INSPECTABLE = new Set(["pdf", "xlsx", "xls", "csv"]);
 
@@ -37,12 +32,17 @@ function fileExt(name: string) {
 /** "Source Library" — the full Sources screen (product spec §7), a table view
  * complementing the persistent sidebar list rather than replacing it. Uses
  * lib/product.ts's status mapping so this table and the sidebar never drift
- * into showing different terminology for the same backend status. */
+ * into showing different terminology for the same backend status. Also the
+ * home of "Clear all" — a whole-collection destructive action belongs on the
+ * management screen, not one click away in the everyday sidebar. */
 export default function SourcesPage() {
   const router = useRouter();
   const [docs, setDocs] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [pendingDelete, setPendingDelete] = useState<Document | null>(null);
+  const [reprocessTarget, setReprocessTarget] = useState<Document | null>(null);
+  const [confirmClearAll, setConfirmClearAll] = useState(false);
+  const jobs = useJobTracker();
 
   const refresh = useCallback(async () => {
     try {
@@ -59,6 +59,10 @@ export default function SourcesPage() {
     refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    refresh();
+  }, [jobs, refresh]);
+
   const askAbout = (filename: string) => {
     router.push(`/?doc=${encodeURIComponent(filename)}`);
   };
@@ -73,6 +77,12 @@ export default function SourcesPage() {
           <p className="text-sm font-semibold text-foreground">Sources</p>
           <p className="text-[11px] text-muted-foreground">{docs.length} source{docs.length === 1 ? "" : "s"}</p>
         </div>
+        {docs.length > 0 && (
+          <Button variant="outline" size="sm" onClick={() => setConfirmClearAll(true)}>
+            <Trash2 data-icon="inline-start" />
+            Clear all
+          </Button>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto p-5">
@@ -94,7 +104,7 @@ export default function SourcesPage() {
               </TableHeader>
               <TableBody>
                 {docs.map((doc) => {
-                  const item = toSourceLibraryItem(doc);
+                  const item = toSourceLibraryItem(doc, jobs.get(doc.filename));
                   const ext = fileExt(doc.filename);
                   const canInspect = INSPECTABLE.has(ext);
                   return (
@@ -106,7 +116,9 @@ export default function SourcesPage() {
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        <Badge variant={STATUS_BADGE[item.status]}>{SOURCE_STATUS_LABEL[item.status]}</Badge>
+                        <Badge variant={SOURCE_STATUS_BADGE_VARIANT[item.status]}>
+                          {SOURCE_STATUS_LABEL[item.status]}
+                        </Badge>
                       </TableCell>
                       <TableCell className="text-muted-foreground">
                         {item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : "—"}
@@ -129,17 +141,7 @@ export default function SourcesPage() {
                               <MessageCircle data-icon="inline-start" />
                               Ask about this source
                             </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={async () => {
-                                try {
-                                  await reindexDocument(doc.filename);
-                                  toast(`Reprocessing ${item.name}…`);
-                                  refresh();
-                                } catch (e) {
-                                  toast.error(e instanceof Error ? e.message : "Reprocess failed");
-                                }
-                              }}
-                            >
+                            <DropdownMenuItem onClick={() => setReprocessTarget(doc)}>
                               <RefreshCw data-icon="inline-start" />
                               Reprocess
                             </DropdownMenuItem>
@@ -159,12 +161,23 @@ export default function SourcesPage() {
         </div>
       </div>
 
+      {reprocessTarget && (
+        <ReprocessDialog
+          filename={reprocessTarget.filename}
+          open={!!reprocessTarget}
+          onOpenChange={(open) => !open && setReprocessTarget(null)}
+          onReprocessed={refresh}
+          onToast={(msg, variant) => (variant === "error" ? toast.error(msg) : toast(msg))}
+        />
+      )}
+
       <AlertDialog open={!!pendingDelete} onOpenChange={(open) => !open && setPendingDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this source?</AlertDialogTitle>
             <AlertDialogDescription>
-              "{pendingDelete?.filename.split("/").pop()}" will be permanently removed. This cannot be undone.
+              &ldquo;{pendingDelete?.filename.split("/").pop()}&rdquo; will be permanently removed. This cannot be
+              undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -183,6 +196,34 @@ export default function SourcesPage() {
               }}
             >
               Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={confirmClearAll} onOpenChange={setConfirmClearAll}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear the entire collection?</AlertDialogTitle>
+            <AlertDialogDescription>
+              All {docs.length} source{docs.length === 1 ? "" : "s"} will be removed. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={async () => {
+                try {
+                  await clearCollection();
+                  toast("Collection cleared");
+                  setConfirmClearAll(false);
+                  refresh();
+                } catch (e) {
+                  toast.error(e instanceof Error ? e.message : "Clear failed");
+                }
+              }}
+            >
+              Clear all
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

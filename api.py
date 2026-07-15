@@ -529,7 +529,7 @@ async def delete_document(filename: str):
 
 
 @app.post("/documents/{filename:path}/reindex", dependencies=[Depends(require_api_key)])
-async def reindex_document(filename: str):
+async def reindex_document(filename: str, pipeline: str = Form("auto")):
     """Re-run ingestion on a file already stored in data/input — idempotent point
     IDs overwrite its existing Qdrant points in place rather than duplicating them."""
     dest = INPUT_DIR / filename
@@ -539,8 +539,9 @@ async def reindex_document(filename: str):
         )
     job_id = str(uuid.uuid4())
     _jobs[job_id] = {"status": "pending", "stage": "parsing", "chunks_created": 0}
+    force_pipeline = pipeline if pipeline in {"ocr", "text"} else None
     loop = asyncio.get_running_loop()
-    loop.run_in_executor(_executor, _run_ingest_sync, job_id, dest, None)
+    loop.run_in_executor(_executor, _run_ingest_sync, job_id, dest, force_pipeline)
     _get_agent.cache_clear()
     return {"job_id": job_id, "status": "processing"}
 

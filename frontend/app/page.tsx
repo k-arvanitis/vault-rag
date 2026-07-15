@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Compass } from "lucide-react";
 import { toast } from "sonner";
-import { checkHealth, type Conversation, type InspectTarget } from "@/lib/api";
+import { checkHealth, type Conversation, type InspectTarget, type Source } from "@/lib/api";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -19,13 +19,19 @@ export default function Home() {
   const [offline, setOffline] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [inspecting, setInspecting] = useState<InspectTarget | null>(null);
-  const [lastCited, setLastCited] = useState<InspectTarget | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [showTraceSheet, setShowTraceSheet] = useState(false);
   const [loadedConversation, setLoadedConversation] = useState<Conversation | null>(null);
   const [conversationLoadKey, setConversationLoadKey] = useState(0);
   const [trace, setTrace] = useState<Trace | null>(null);
   const [initialScopedDocId, setInitialScopedDocId] = useState<string | null>(null);
+
+  // Evidence is deliberately NOT derived from `trace` (the latest turn) —
+  // it's whichever citation the user actually clicked, which can belong to
+  // an older message. See MessageList's onSelectEvidence / review item A.
+  const [evidenceSources, setEvidenceSources] = useState<Source[]>([]);
+  const [selectedCitation, setSelectedCitation] = useState<InspectTarget | null>(null);
+  const [rightPanelTab, setRightPanelTab] = useState<"evidence" | "technical">("evidence");
 
   // Picks up "Open" / "Ask about this source" links from /sources — read directly
   // from the URL rather than useSearchParams(), which requires wrapping this page
@@ -58,23 +64,38 @@ export default function Home() {
     };
   }, []);
 
-  const handleCollectionCleared = useCallback(() => {
-    setRefreshKey((k) => k + 1);
-    setTrace(null);
-    setLastCited(null);
-    addToast("Collection cleared");
-  }, [addToast]);
-
   const handleSelectConversation = useCallback((conv: Conversation) => {
     setLoadedConversation(conv);
     setTrace(null);
-    setLastCited(null);
+    setEvidenceSources([]);
+    setSelectedCitation(null);
     setConversationLoadKey((k) => k + 1);
   }, []);
 
-  const handleInspect = useCallback((target: InspectTarget) => {
+  // A new answer arriving: show its own evidence by default (no citation
+  // highlighted yet — the user hasn't clicked one for THIS turn). Clicking an
+  // older message's citation afterward overrides this via handleSelectEvidence.
+  const handleTrace = useCallback((t: Trace | null) => {
+    setTrace(t);
+    setEvidenceSources(t?.sources ?? []);
+    setSelectedCitation(null);
+  }, []);
+
+  // Primary citation action — select this citation's evidence and switch to
+  // the Evidence tab. Deliberately does not open the full inspector or leave
+  // the chat (see review item A: "the citation click itself should first
+  // update the Evidence panel").
+  const handleSelectEvidence = useCallback((target: InspectTarget, messageSources: Source[]) => {
+    setEvidenceSources(messageSources);
+    setSelectedCitation(target);
+    setRightPanelTab("evidence");
+  }, []);
+
+  // Secondary action — opens the full-screen document inspector. Used by
+  // "Open full source" links, the sidebar's inspect icon, and Sources-screen
+  // row actions. Does not touch evidence/citation selection.
+  const handleOpenFullSource = useCallback((target: InspectTarget) => {
     setInspecting(target);
-    setLastCited(target);
   }, []);
 
   return (
@@ -82,8 +103,7 @@ export default function Home() {
       <Sidebar
         key={refreshKey}
         onToast={addToast}
-        onInspect={(filename) => handleInspect({ filename })}
-        onCollectionCleared={handleCollectionCleared}
+        onInspect={(filename) => handleOpenFullSource({ filename })}
         offline={offline}
       />
       <SidebarInset className="overflow-hidden">
@@ -98,8 +118,9 @@ export default function Home() {
             key={`chat-${conversationLoadKey}`}
             onToast={addToast}
             resetSignal={refreshKey}
-            onTrace={setTrace}
-            onInspect={handleInspect}
+            onTrace={handleTrace}
+            onSelectEvidence={handleSelectEvidence}
+            onOpenFullSource={handleOpenFullSource}
             initialMessages={loadedConversation?.messages}
             initialConversationId={loadedConversation?.id ?? null}
             initialScopedDocId={initialScopedDocId}
@@ -115,7 +136,14 @@ export default function Home() {
           ) : (
             <>
               <div className="hidden h-full lg:flex">
-                <RightPanelTabs trace={trace} onInspect={handleInspect} selectedTarget={lastCited} />
+                <RightPanelTabs
+                  trace={trace}
+                  evidenceSources={evidenceSources}
+                  onOpenFullSource={handleOpenFullSource}
+                  selectedTarget={selectedCitation}
+                  tab={rightPanelTab}
+                  onTabChange={setRightPanelTab}
+                />
               </div>
               <Button
                 variant="outline"
@@ -131,7 +159,14 @@ export default function Home() {
                   <SheetHeader className="border-b border-border">
                     <SheetTitle>Sources</SheetTitle>
                   </SheetHeader>
-                  <RightPanelTabs trace={trace} onInspect={handleInspect} selectedTarget={lastCited} />
+                  <RightPanelTabs
+                    trace={trace}
+                    evidenceSources={evidenceSources}
+                    onOpenFullSource={handleOpenFullSource}
+                    selectedTarget={selectedCitation}
+                    tab={rightPanelTab}
+                    onTabChange={setRightPanelTab}
+                  />
                 </SheetContent>
               </Sheet>
             </>

@@ -114,11 +114,17 @@ function FigureCrop({ source }: { source: Source }) {
   if (!imgSrc) return null;
 
   return (
-    <img
-      src={imgSrc}
-      alt="Source figure"
-      className="mt-2 w-full rounded border border-border"
-    />
+    <div className="mt-2">
+      <img
+        src={imgSrc}
+        alt="Source figure"
+        className="w-full rounded border border-border"
+      />
+      <p className="mt-1 text-[10px] text-muted-foreground">
+        Cropped directly from the source page — the AI-generated description used to make this figure
+        searchable isn&apos;t shown separately here yet.
+      </p>
+    </div>
   );
 }
 
@@ -208,11 +214,11 @@ function SpreadsheetEvidence({ source }: { source: Source }) {
           </TableBody>
         </Table>
       </div>
-      {matchedIdx < 0 && (
-        <p className="mt-1 text-[10px] text-muted-foreground">
-          Exact row unavailable — showing the sheet's first rows and the quoted summary below.
-        </p>
-      )}
+      <p className="mt-1 text-[10px] text-muted-foreground">
+        {matchedIdx < 0
+          ? "Exact row unavailable — showing the sheet's first rows and the quoted summary below."
+          : "Highlighted row is a best-effort text match, not a stored cell reference — check it against the quote below."}
+      </p>
     </div>
   );
 }

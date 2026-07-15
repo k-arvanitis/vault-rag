@@ -91,9 +91,7 @@ export default function AppHeader(props: Props) {
 
       {props.offline && (
         <div className="flex items-center justify-between border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
-          <p>
-            <strong>Backend offline</strong> — start the Python server (<code className="font-mono">make api</code>).
-          </p>
+          <p>The document service is temporarily unavailable. Please try again shortly.</p>
           <Button variant="ghost" size="icon-xs" onClick={props.onDismissOffline} aria-label="Dismiss">
             <X />
           </Button>

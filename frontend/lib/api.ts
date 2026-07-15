@@ -171,13 +171,15 @@ export async function getIngestStatus(jobId: string): Promise<IngestStatus> {
 
 export async function queryDocuments(
   question: string,
-  docId?: string | string[] | null
+  docId?: string | string[] | null,
+  signal?: AbortSignal
 ): Promise<QueryResponse> {
   const doc_id = Array.isArray(docId) ? (docId.length ? docId : null) : docId ?? null;
   return request<QueryResponse>("/query", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ question, doc_id }),
+    signal,
   });
 }
 
@@ -192,9 +194,15 @@ export async function deleteDocument(filename: string): Promise<void> {
   if (!res.ok) throw new Error(`Delete failed (${res.status})`);
 }
 
-export async function reindexDocument(filename: string): Promise<IngestResponse> {
+export async function reindexDocument(
+  filename: string,
+  pipeline: "auto" | "ocr" | "text" = "auto"
+): Promise<IngestResponse> {
+  const form = new FormData();
+  form.append("pipeline", pipeline);
   return request<IngestResponse>(`/documents/${encodeURIComponent(filename)}/reindex`, {
     method: "POST",
+    body: form,
   });
 }
 

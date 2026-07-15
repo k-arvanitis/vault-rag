@@ -1,8 +1,8 @@
 "use client";
 
 import { useRef, useState, useCallback, useEffect } from "react";
-import { Send, Loader2, SquarePen } from "lucide-react";
-import { queryDocuments, saveConversation, getDocuments, type Document, type InspectTarget } from "@/lib/api";
+import { Send, Square, SquarePen } from "lucide-react";
+import { queryDocuments, saveConversation, getDocuments, type Document, type InspectTarget, type Source } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import MessageList, { type Message } from "./MessageList";
@@ -19,7 +19,11 @@ interface Props {
   onToast: (msg: string, variant?: "error") => void;
   resetSignal?: number;
   onTrace?: (trace: Trace | null) => void;
-  onInspect?: (target: InspectTarget) => void;
+  /** Primary citation action — selects a specific citation's evidence,
+   * scoped to the message it came from (see MessageList.tsx). */
+  onSelectEvidence?: (target: InspectTarget, messageSources: Source[]) => void;
+  /** Secondary action — opens the full-screen document inspector. */
+  onOpenFullSource?: (target: InspectTarget) => void;
   initialMessages?: Message[];
   initialConversationId?: string | null;
   /** Preselects the source-scope control — e.g. arriving from a Sources
@@ -32,7 +36,8 @@ export default function ChatPanel({
   onToast,
   resetSignal = 0,
   onTrace,
-  onInspect,
+  onSelectEvidence,
+  onOpenFullSource,
   initialMessages,
   initialConversationId = null,
   initialScopedDocId = null,
@@ -41,12 +46,27 @@ export default function ChatPanel({
   const [messages, setMessages] = useState<Message[]>(initialMessages ?? []);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [conversationId, setConversationId] = useState<string | null>(initialConversationId);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [scopedDocIds, setScopedDocIds] = useState<string[]>(
     initialScopedDocId ? [initialScopedDocId] : []
   );
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  // Elapsed-time counter for the honest waiting state (see MessageList) — no
+  // fake sequential "searching... verifying..." progress, just how long the
+  // real request has actually been running.
+  useEffect(() => {
+    if (!streaming) {
+      setElapsedSeconds(0);
+      return;
+    }
+    const start = Date.now();
+    const id = setInterval(() => setElapsedSeconds(Math.floor((Date.now() - start) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [streaming]);
 
   useEffect(() => {
     getDocuments()
@@ -55,6 +75,16 @@ export default function ChatPanel({
         // Backend unreachable — the source-scope control degrades to "All sources" only.
       });
   }, [resetSignal]);
+
+  const hasSources = documents.length > 0;
+
+  // Focus the question input as soon as there's something to ask about — but
+  // only on the empty-conversation state, not on every documents refetch.
+  useEffect(() => {
+    if (hasSources && messages.length === 0) {
+      textareaRef.current?.focus();
+    }
+  }, [hasSources, messages.length]);
 
   // initialScopedDocId arrives asynchronously (page.tsx reads it from the URL in
   // its own effect, after this component's first mount already captured the
@@ -97,8 +127,11 @@ export default function ChatPanel({
     setMessages((prev) => [...prev, userMsg]);
     setStreaming(true);
 
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
-      const data = await queryDocuments(question, scopedDocIds);
+      const data = await queryDocuments(question, scopedDocIds, controller.signal);
       const assistantMsg: Message = {
         id: nextId(),
         role: "assistant",
@@ -117,11 +150,20 @@ export default function ChatPanel({
         tools_used: data.tools_used ?? [],
       });
     } catch (err) {
-      onToast((err as Error).message || "Query failed", "error");
+      if ((err as Error).name === "AbortError") {
+        onToast("Cancelled");
+      } else {
+        onToast((err as Error).message || "Query failed", "error");
+      }
     } finally {
+      abortRef.current = null;
       setStreaming(false);
     }
   }, [input, streaming, onToast, onTrace, persist, scopedDocIds]);
+
+  const cancel = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
 
   const newConversation = useCallback(() => {
     if (streaming) return;
@@ -154,7 +196,18 @@ export default function ChatPanel({
         </Button>
       </div>
 
-      <MessageList messages={messages} streaming={streaming} onInspect={onInspect} />
+      <MessageList
+        messages={messages}
+        streaming={streaming}
+        elapsedSeconds={elapsedSeconds}
+        onSelectEvidence={onSelectEvidence}
+        onOpenFullSource={onOpenFullSource}
+        hasSources={hasSources}
+        onExamplePick={(text) => {
+          setInput(text);
+          textareaRef.current?.focus();
+        }}
+      />
 
       {/* Input bar */}
       <div className="shrink-0 border-t border-border px-6 py-4">
@@ -164,19 +217,20 @@ export default function ChatPanel({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="Ask about your documents…"
+            placeholder={hasSources ? "Ask about your documents…" : "Add a source to get started…"}
             rows={1}
             className="max-h-40 min-h-0 flex-1 resize-none border-0 bg-transparent px-0 py-0 text-sm leading-relaxed shadow-none focus-visible:ring-0"
-            disabled={streaming}
+            disabled={streaming || !hasSources}
           />
-          <Button
-            onClick={send}
-            disabled={!input.trim() || streaming}
-            aria-label="Send"
-            size="icon-sm"
-          >
-            {streaming ? <Loader2 className="animate-spin" /> : <Send />}
-          </Button>
+          {streaming ? (
+            <Button onClick={cancel} variant="outline" aria-label="Cancel" size="icon-sm">
+              <Square className="fill-current" />
+            </Button>
+          ) : (
+            <Button onClick={send} disabled={!input.trim() || !hasSources} aria-label="Send" size="icon-sm">
+              <Send />
+            </Button>
+          )}
         </div>
         <p className="mt-1.5 text-center text-[10px] text-muted-foreground">
           Enter to send · Shift+Enter for newline

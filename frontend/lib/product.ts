@@ -6,6 +6,7 @@
  * only touches the adapter functions below, not every component.
  */
 import type { Document, Source as ApiSource, QueryResponse, RejectedSource } from "./api";
+import type { TrackedJob } from "./jobTracker";
 
 export type SourceType = "pdf" | "spreadsheet" | "image" | "document";
 
@@ -85,7 +86,7 @@ export function toAnswerTrace(data: QueryResponse): AnswerTrace {
   };
 }
 
-export type SourceStatus = "processing" | "ready" | "attention" | "failed";
+export type SourceStatus = "ready" | "processing" | "updating" | "attention" | "failed";
 
 export interface SourceLibraryItem {
   id: string;
@@ -102,21 +103,53 @@ const STATUS_MAP: Record<Document["status"], SourceStatus> = {
   failed: "failed",
 };
 
-/** User-facing label for a SourceStatus — never the backend's internal term. */
+/** User-facing label for a SourceStatus — never the backend's internal term.
+ * The only 5 words allowed anywhere a source's status is shown; every screen
+ * (sidebar, Sources table, reprocess dialog) reads this same map, not its own
+ * copy — see toSourceLibraryItem below for the one place status is decided. */
 export const SOURCE_STATUS_LABEL: Record<SourceStatus, string> = {
   ready: "Ready",
   processing: "Processing",
+  updating: "Updating",
   attention: "Needs attention",
   failed: "Failed",
 };
 
-export function toSourceLibraryItem(d: Document): SourceLibraryItem {
+/** Single place that decides a document's displayed status. `job` is this
+ * file's in-flight ingest/reindex job, if any (see lib/jobTracker.ts) — the
+ * backend's /documents list alone can't distinguish a first-time ingest from
+ * a reprocess, or a reprocess-failed-but-old-version-still-searchable state
+ * from a total failure, so that signal has to be merged in here. */
+export function toSourceLibraryItem(d: Document, job?: TrackedJob): SourceLibraryItem {
+  let status: SourceStatus;
+  if (job?.status === "processing") {
+    status = job.kind === "reindex" ? "updating" : "processing";
+  } else if (job?.status === "failed") {
+    // A failed reprocess on a document that was already indexed leaves the
+    // prior version searchable — that's degraded, not down, hence "attention"
+    // rather than "failed".
+    status = d.status === "indexed" ? "attention" : "failed";
+  } else {
+    status = STATUS_MAP[d.status] ?? "processing";
+  }
   return {
     id: d.filename,
     name: d.filename.split("/").pop() ?? d.filename,
     type: inferSourceType(d.filename),
-    status: STATUS_MAP[d.status] ?? "processing",
+    status,
     createdAt: d.last_indexed_at,
     updatedAt: d.last_indexed_at,
   };
 }
+
+/** Badge color tier — shared so every screen renders the same status the same way. */
+export const SOURCE_STATUS_BADGE_VARIANT: Record<
+  SourceStatus,
+  "default" | "secondary" | "destructive" | "outline"
+> = {
+  ready: "default",
+  processing: "secondary",
+  updating: "secondary",
+  attention: "destructive",
+  failed: "destructive",
+};

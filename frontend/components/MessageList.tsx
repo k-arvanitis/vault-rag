@@ -21,26 +21,62 @@ export interface Message {
 interface Props {
   messages: Message[];
   streaming: boolean;
-  onInspect?: (target: InspectTarget) => void;
+  elapsedSeconds?: number;
+  /** Primary citation action: selects this specific citation's evidence (and
+   * the message's full source list, so Evidence shows the right set even for
+   * an older turn) and switches the right panel to Evidence — does NOT leave
+   * the chat. */
+  onSelectEvidence?: (target: InspectTarget, messageSources: Source[]) => void;
+  /** Secondary action: opens the full-screen document inspector. Only reached
+   * via an explicit "Open source" link, never the citation click itself. */
+  onOpenFullSource?: (target: InspectTarget) => void;
+  /** Whether at least one source is indexed — drives the empty state's copy
+   * and whether the example prompts are clickable. */
+  hasSources?: boolean;
+  onExamplePick?: (text: string) => void;
 }
 
-function LoadingPill() {
-  return <Skeleton className="h-2 w-12 rounded-full" />;
+const EXAMPLE_PROMPTS = [
+  "Summarize the key points of this document.",
+  "What are the payment terms, and where do they appear?",
+  "Compare the two most recent versions — what changed?",
+];
+
+/** Honest waiting state: one neutral message plus how long the request has
+ * actually been running — no fake sequential "searching... verifying..."
+ * steps, since the backend doesn't emit real progress events (see review
+ * item H). The elapsed counter is the only truthful signal available. */
+function WaitingIndicator({ elapsedSeconds }: { elapsedSeconds: number }) {
+  return (
+    <div className="flex items-center gap-2">
+      <Skeleton className="h-2 w-2 rounded-full" />
+      <p className="text-xs text-muted-foreground">
+        Searching and verifying sources…{elapsedSeconds > 0 && ` (${elapsedSeconds}s)`}
+      </p>
+    </div>
+  );
 }
 
 /** A compact numbered citation button. Hover or focus opens a Popover with the
- * exact supporting quote — click selects the citation and opens the Evidence
- * panel on it (see product-level Citation type, lib/product.ts). Citations
- * currently only render as a summary after the answer, not inline after each
- * claim, because the backend doesn't map individual claims to sources (see
+ * title, page/sheet, section, and exact supporting quote. Clicking the chip
+ * itself (or the row label) is the PRIMARY action — it selects this citation
+ * in the Evidence panel and switches to it, staying in the chat. "Open
+ * source" inside the popover is a deliberately separate, secondary action
+ * that leaves the chat for the full document inspector. Citations currently
+ * only render as a summary after the answer, not inline after each claim,
+ * because the backend doesn't map individual claims to sources (see
  * TODO.md) — a fragile client-side text match was rejected in favor of this
  * honest fallback, which the product spec explicitly allows. */
 function CitationChip({
   citation,
-  onSelect,
+  messageSources,
+  onSelectEvidence,
+  onOpenFullSource,
 }: {
   citation: Citation;
-  onSelect?: (target: InspectTarget) => void;
+  messageSources: Source[];
+  onSelectEvidence?: (target: InspectTarget, messageSources: Source[]) => void;
+  onOpenFullSource?: (target: InspectTarget) => void;
 }) {
   const [open, setOpen] = useState(false);
   const target: InspectTarget = { filename: citation.sourceId, page: citation.page, sheet: citation.sheet };
@@ -55,7 +91,7 @@ function CitationChip({
             onMouseLeave={() => setOpen(false)}
             onFocus={() => setOpen(true)}
             onBlur={() => setOpen(false)}
-            onClick={() => onSelect?.(target)}
+            onClick={() => onSelectEvidence?.(target, messageSources)}
             className="inline-flex size-4 items-center justify-center rounded-full bg-muted font-mono text-[10px] font-medium text-muted-foreground hover:bg-primary hover:text-primary-foreground"
           />
         }
@@ -72,9 +108,9 @@ function CitationChip({
         <p className="mt-1.5 whitespace-pre-wrap border-l-2 border-border pl-2 italic leading-relaxed text-muted-foreground">
           {citation.quote || "—"}
         </p>
-        {onSelect && (
-          <Button variant="link" size="xs" className="mt-1 h-auto p-0" onClick={() => onSelect(target)}>
-            Open source
+        {onOpenFullSource && (
+          <Button variant="link" size="xs" className="mt-1 h-auto p-0" onClick={() => onOpenFullSource(target)}>
+            Open full source
           </Button>
         )}
       </PopoverContent>
@@ -83,8 +119,18 @@ function CitationChip({
 }
 
 /** "Sources used · N" compact summary — one row per source, not the full
- * retrieved-chunk cards (those live under Technical details). */
-function SourcesUsed({ sources, onInspect }: { sources: Source[]; onInspect?: (target: InspectTarget) => void }) {
+ * retrieved-chunk cards (those live under Technical details). Every row's
+ * primary click selects Evidence; only the popover's "Open full source" link
+ * leaves the chat. */
+function SourcesUsed({
+  sources,
+  onSelectEvidence,
+  onOpenFullSource,
+}: {
+  sources: Source[];
+  onSelectEvidence?: (target: InspectTarget, messageSources: Source[]) => void;
+  onOpenFullSource?: (target: InspectTarget) => void;
+}) {
   if (sources.length === 0) return null;
   const citations = sources.map((s, i) => toCitation(s, i + 1));
 
@@ -94,11 +140,16 @@ function SourcesUsed({ sources, onInspect }: { sources: Source[]; onInspect?: (t
       <div className="mt-1 space-y-1">
         {citations.map((c) => (
           <div key={c.id} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-            <CitationChip citation={c} onSelect={onInspect} />
+            <CitationChip
+              citation={c}
+              messageSources={sources}
+              onSelectEvidence={onSelectEvidence}
+              onOpenFullSource={onOpenFullSource}
+            />
             <button
               type="button"
               className="min-w-0 flex-1 truncate text-left hover:text-foreground hover:underline"
-              onClick={() => onInspect?.({ filename: c.sourceId, page: c.page, sheet: c.sheet })}
+              onClick={() => onSelectEvidence?.({ filename: c.sourceId, page: c.page, sheet: c.sheet }, sources)}
             >
               {c.sourceName}
               {c.page != null && ` · Page ${c.page}`}
@@ -202,7 +253,15 @@ function FeedbackWidget({ question, answer, sources }: { question: string; answe
   );
 }
 
-export default function MessageList({ messages, streaming, onInspect }: Props) {
+export default function MessageList({
+  messages,
+  streaming,
+  elapsedSeconds = 0,
+  onSelectEvidence,
+  onOpenFullSource,
+  hasSources,
+  onExamplePick,
+}: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -212,20 +271,28 @@ export default function MessageList({ messages, streaming, onInspect }: Props) {
   if (messages.length === 0 && !streaming) {
     return (
       <div className="flex flex-1 select-none flex-col items-center justify-center px-8 text-center">
-        <svg
-          className="mb-3 h-10 w-10 text-muted-foreground/50"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          strokeWidth={1}
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"
-          />
-        </svg>
-        <p className="text-sm text-muted-foreground">Upload a document and ask anything.</p>
+        <h2 className="text-lg font-semibold text-foreground">Ask questions across your documents.</h2>
+        <p className="mt-1.5 max-w-sm text-sm text-muted-foreground">
+          Every answer can be checked against the original page, sheet, or row it came from.
+        </p>
+        {hasSources ? (
+          <div className="mt-5 flex max-w-md flex-col gap-1.5 select-text">
+            {EXAMPLE_PROMPTS.map((p) => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => onExamplePick?.(p)}
+                className="rounded-lg border border-border bg-card px-3 py-2 text-left text-xs text-foreground transition-colors hover:border-foreground/20 hover:bg-muted"
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-5 text-xs text-muted-foreground">
+            Add a source in the sidebar to get started.
+          </p>
+        )}
       </div>
     );
   }
@@ -245,8 +312,18 @@ export default function MessageList({ messages, streaming, onInspect }: Props) {
               <div className="prose-ui rounded-xl rounded-bl-sm border border-border bg-card px-4 py-2 text-sm text-card-foreground">
                 <ReactMarkdown>{msg.content}</ReactMarkdown>
               </div>
-              {msg.sources && msg.sources.length > 0 && (
-                <SourcesUsed sources={msg.sources} onInspect={onInspect} />
+              {msg.sources && msg.sources.length > 0 ? (
+                <SourcesUsed
+                  sources={msg.sources}
+                  onSelectEvidence={onSelectEvidence}
+                  onOpenFullSource={onOpenFullSource}
+                />
+              ) : (
+                msg.content.trim().toLowerCase() !== "unsupported" && (
+                  <p className="mt-1.5 text-[10px] text-muted-foreground">
+                    No source citation available for this answer yet.
+                  </p>
+                )
               )}
               <FeedbackWidget
                 question={messages[i - 1]?.content ?? ""}
@@ -260,7 +337,7 @@ export default function MessageList({ messages, streaming, onInspect }: Props) {
       {streaming && (
         <div className="flex items-start justify-start">
           <div className="rounded-xl rounded-bl-sm border border-border bg-card px-4 py-3">
-            <LoadingPill />
+            <WaitingIndicator elapsedSeconds={elapsedSeconds} />
           </div>
         </div>
       )}

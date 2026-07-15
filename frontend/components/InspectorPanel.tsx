@@ -398,7 +398,7 @@ function TableInspector({ filename, initialSheet }: { filename: string; initialS
             <SheetCompare filename={filename} sheet={sheet} defaultOpen={sheet === initialSheet} />
 
             <p className="mb-2 mt-3 text-[10px] text-muted-foreground">
-              Indexed retrieval chunk — routes queries to the DuckDB table
+              Indexed chunk — this sheet's data is queried directly, not read from this summary
             </p>
             <div className="space-y-2">
               {sheetChunks.map((c, i) => {
@@ -469,8 +469,11 @@ export default function InspectorPanel({ filename, onClose, page, sheet }: Props
         ) : isTable ? (
           <TableInspector filename={filename} initialSheet={sheet} />
         ) : (
-          <div className="flex flex-1 items-center justify-center">
-            <p className="text-xs text-muted-foreground">Inspector not available for this file type.</p>
+          <div className="flex flex-1 items-center justify-center px-8 text-center">
+            <p className="text-xs text-muted-foreground">
+              A side-by-side preview isn&apos;t available for this file type yet — cited quotes below the answer
+              still reflect the original text.
+            </p>
           </div>
         )}
       </div>

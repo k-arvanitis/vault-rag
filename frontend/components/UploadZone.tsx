@@ -3,8 +3,8 @@
 import { useCallback, useRef, useState } from "react";
 import { Upload, CheckCircle2 } from "lucide-react";
 import { ingestFile, getIngestStatus } from "@/lib/api";
+import { trackJob } from "@/lib/jobTracker";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -38,8 +38,6 @@ function displayStage(rawStage: string): string {
 const ACCEPTED = ".pdf,.xlsx,.xls,.csv,.docx,.doc,.md,.png,.jpg,.jpeg";
 const ACCEPTED_EXT = ACCEPTED.split(",").map((e) => e.slice(1));
 
-type Pipeline = "auto" | "ocr" | "text";
-
 interface Props {
   onUploaded: () => void;
   onToast: (msg: string, variant?: "error") => void;
@@ -47,25 +45,22 @@ interface Props {
   offline?: boolean;
 }
 
-const PIPELINE_LABELS: Record<Pipeline, string> = {
-  auto: "Auto",
-  ocr: "Force OCR",
-  text: "Force Text",
-};
-
 function isAccepted(filename: string) {
   const ext = filename.split(".").pop()?.toLowerCase();
   return !!ext && ACCEPTED_EXT.includes(ext);
 }
 
+/** Ordinary upload is always automatic — per-page OCR vs. text-layer routing
+ * is a correction tool for when the automatic result is wrong, not a normal
+ * upload-time decision. That control lives on the Reprocess action instead
+ * (see ReprocessDialog.tsx). */
 export default function UploadZone({ onUploaded, onToast, offline }: Props) {
   const [dragging, setDragging] = useState(false);
   const [files, setFiles] = useState<UploadingFile[]>([]);
-  const [pipeline, setPipeline] = useState<Pipeline>("auto");
   const inputRef = useRef<HTMLInputElement>(null);
 
   const processFile = useCallback(
-    async (file: File, selectedPipeline: Pipeline) => {
+    async (file: File) => {
       const id = `${Date.now()}-${file.name}`;
 
       if (!isAccepted(file.name)) {
@@ -84,8 +79,9 @@ export default function UploadZone({ onUploaded, onToast, offline }: Props) {
         setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)));
 
       try {
-        const { job_id } = await ingestFile(file, selectedPipeline);
+        const { job_id } = await ingestFile(file, "auto");
         update({ stage: "Processing", progress: STAGE_PROGRESS.parsing });
+        trackJob(file.name, "ingest", job_id, getIngestStatus, onUploaded);
 
         await new Promise<void>((resolve, reject) => {
           const poll = setInterval(async () => {
@@ -119,22 +115,22 @@ export default function UploadZone({ onUploaded, onToast, offline }: Props) {
     [onUploaded, onToast]
   );
 
-  const handleFiles = (list: FileList | null, selectedPipeline: Pipeline) => {
+  const handleFiles = (list: FileList | null) => {
     if (!list || offline) return;
-    Array.from(list).forEach((f) => processFile(f, selectedPipeline));
+    Array.from(list).forEach((f) => processFile(f));
   };
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragging(false);
-    handleFiles(e.dataTransfer.files, pipeline);
+    handleFiles(e.dataTransfer.files);
   };
 
   return (
     <div className="space-y-2 border-t border-border pt-3">
       {offline && (
         <Alert>
-          <AlertDescription>Backend offline — uploads paused.</AlertDescription>
+          <AlertDescription>The document service is temporarily unavailable — uploads paused.</AlertDescription>
         </Alert>
       )}
 
@@ -166,26 +162,8 @@ export default function UploadZone({ onUploaded, onToast, offline }: Props) {
           accept={ACCEPTED}
           className="hidden"
           disabled={offline}
-          onChange={(e) => handleFiles(e.target.files, pipeline)}
+          onChange={(e) => handleFiles(e.target.files)}
         />
-      </div>
-
-      {/* PDF pipeline selector — ignored for non-PDF file types */}
-      <div className="space-y-1">
-        <span className="text-[10px] text-muted-foreground">PDF pipeline:</span>
-        <div className="flex flex-wrap gap-1">
-          {(["auto", "ocr", "text"] as Pipeline[]).map((p) => (
-            <Button
-              key={p}
-              variant={pipeline === p ? "default" : "ghost"}
-              size="xs"
-              disabled={offline}
-              onClick={() => setPipeline(p)}
-            >
-              {PIPELINE_LABELS[p]}
-            </Button>
-          ))}
-        </div>
       </div>
 
       {files.length > 0 && (
