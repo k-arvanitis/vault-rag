@@ -1,9 +1,12 @@
 "use client";
 
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import FeedbackPanel from "@/components/FeedbackPanel";
 
-export default function FeedbackPage() {
+export default function FeedbackRedirect() {
   const router = useRouter();
-  return <FeedbackPanel onClose={() => router.push("/")} />;
+  useEffect(() => {
+    router.replace(`/admin/feedback${window.location.search}`);
+  }, [router]);
+  return null;
 }

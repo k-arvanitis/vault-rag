@@ -1,9 +1,12 @@
 "use client";
 
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import GoogleDrivePanel from "@/components/GoogleDrivePanel";
 
-export default function GoogleDrivePage() {
+export default function GoogleDriveRedirect() {
   const router = useRouter();
-  return <GoogleDrivePanel onClose={() => router.push("/")} />;
+  useEffect(() => {
+    router.replace(`/admin/integrations/google-drive${window.location.search}`);
+  }, [router]);
+  return null;
 }
