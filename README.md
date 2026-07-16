@@ -7,6 +7,8 @@
 
 # Vault RAG
 
+**Ask questions across messy PDFs, scans and spreadsheets. Every answer links back to the exact original evidence.**
+
 Private document knowledge assistant for PDFs, scanned documents, spreadsheets, and mixed business files. Ingests messy company documents, routes scanned pages through OCR, indexes prose and tables separately, retrieves with hybrid dense+sparse search and cross-encoder reranking, and answers only with cited evidence — page-level citations for PDFs, sheet/SQL evidence for spreadsheets. Refuses out-of-corpus questions instead of hallucinating. The storage, OCR, embeddings, Qdrant and DuckDB layers run locally. Generation and optional enrichment use external APIs by default but can be redirected to local OpenAI-compatible endpoints — see [Privacy & data](#privacy--data) for exactly what leaves the machine and how to keep it fully on-prem.
 
 **Who this is for:** Teams with mixed-format internal document collections (PDFs, scanned docs, spreadsheets) who need cited, auditable answers without shipping their files to a SaaS vendor or paying per-page processing fees.
@@ -22,7 +24,7 @@ Private document knowledge assistant for PDFs, scanned documents, spreadsheets, 
 ### Not included yet
 
 - WhatsApp connector (Slack bot exists today; two working n8n workflow templates cover the pattern — see [WhatsApp (via n8n)](#whatsapp-via-n8n))
-- Production RBAC / multi-tenant workspaces (current auth is a single shared `X-API-Key`)
+- Production RBAC / multi-tenant workspaces (current auth is a single shared `X-API-Key`, or an optional admin/viewer split — see [Access modes](#access-modes) — not per-user permissions)
 - Enterprise SSO
 - Full multi-tenant SaaS billing
 
@@ -238,13 +240,25 @@ A second wave of changes after manual UI testing closed specific failure modes �
 
 ---
 
+## Access modes
+
+Two modes, controlled by `ACCESS_MODE` in `.env`:
+
+- **`open` (default)** — today's behavior, unchanged. No login, nothing gated except whatever `API_KEY` already protects.
+- **`admin_viewer`** — demonstrates the common "admin manages the knowledge base, everyone else just queries it" pattern. Viewers can ask questions, scope sources, inspect evidence, browse conversations, and leave feedback — no login required. Admin-only actions (upload, reprocess, delete, clear the collection, run evals, resolve feedback, configure/sync Google Drive) require a session started at `/admin/login` with `ADMIN_PASSWORD`, or the existing `X-API-Key` header for scripts/CI. Enforced in the backend (`require_admin` in `api.py`), not just by hiding frontend buttons — see `tests/test_admin_auth.py`.
+
+This is intentionally small: an HMAC-signed session cookie, no user accounts, no RBAC, no multi-tenancy. Not a substitute for real auth in a multi-admin deployment.
+
 ## API endpoints
 
-The FastAPI service (`api.py`, `make api` → http://localhost:8001) is the backend for the Next.js frontend in `frontend/`. Mutating endpoints require the `X-API-Key` header when `API_KEY` is set in `.env`.
+The FastAPI service (`api.py`, `make api` → http://localhost:8001) is the backend for the Next.js frontend in `frontend/`. Mutating endpoints require either the `X-API-Key` header (when `API_KEY` is set) or, in `ACCESS_MODE=admin_viewer`, an admin session — see [Access modes](#access-modes).
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | `GET` | `/health` | — | Liveness probe |
+| `POST` | `/admin/login` | — | Exchange `ADMIN_PASSWORD` for an admin session cookie (`ACCESS_MODE=admin_viewer` only) |
+| `POST` | `/admin/logout` | — | Clear the admin session cookie |
+| `GET` | `/admin/session` | — | `{access_mode, is_admin}` — lets the frontend show/hide admin UI |
 | `POST` | `/query` | — | Run a single agent query; returns `{answer, sources, rejected_sources, sql, tools_used}` — each source carries `page`/`chunk_id`/`quote` for citation traceability |
 | `POST` | `/ingest` | yes | Upload a file (`multipart/form-data`) and start an ingestion job; returns `{job_id}` |
 | `GET` | `/ingest/status/{job_id}` | — | Poll an ingestion job status |
