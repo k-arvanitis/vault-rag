@@ -29,6 +29,7 @@ from fastapi import (  # noqa: E402
     Request,
     UploadFile,
 )
+from fastapi.concurrency import run_in_threadpool  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import JSONResponse, StreamingResponse  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
@@ -685,7 +686,12 @@ async def google_drive_files():
 async def document_chunks(filename: str):
     """All Qdrant chunks for a file, grouped and sorted for the inspector."""
     try:
-        payloads = get_chunks_by_file(QDRANT_URL, QDRANT_COLLECTION, filename)
+        # get_chunks_by_file is a blocking network call -- run it off the
+        # event loop so a slow Qdrant scroll doesn't stall every other
+        # request (including the SSE /query/stream) for its duration.
+        payloads = await run_in_threadpool(
+            get_chunks_by_file, QDRANT_URL, QDRANT_COLLECTION, filename
+        )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
     if not payloads:
@@ -857,8 +863,7 @@ async def document_table_sheet(filename: str, sheet: str):
         md_path.read_text(encoding="utf-8") if md_path.exists() else None
     )
 
-    raw_rows: list[list[str]] | None = None
-    if raw_path.exists():
+    def _read_raw_rows() -> list[list[str]] | None:
         try:
             import pandas as pd
 
@@ -868,9 +873,16 @@ async def document_table_sheet(filename: str, sheet: str):
                 df = pd.read_excel(
                     raw_path, sheet_name=sheet, header=None, dtype=str, nrows=60
                 ).fillna("")
-            raw_rows = df.values.tolist()
+            return df.values.tolist()
         except Exception:
-            raw_rows = None
+            return None
+
+    raw_rows: list[list[str]] | None = None
+    if raw_path.exists():
+        # pandas/openpyxl parses the whole workbook before `nrows` truncates
+        # it -- a large .xlsx can block for real time, so run it off the
+        # event loop instead of stalling every other request.
+        raw_rows = await run_in_threadpool(_read_raw_rows)
 
     if cleaned_md is None and raw_rows is None:
         raise HTTPException(status_code=404, detail="No data found for this sheet")
