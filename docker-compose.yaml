@@ -10,6 +10,12 @@ services:
       - "${QDRANT_GRPC_PORT:-7334}:6334"
     volumes:
       - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/6333' 2>/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
     networks:
       - vault
 
@@ -52,6 +58,12 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "2"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:4000/health/liveliness', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
     networks:
       - vault
 
@@ -145,10 +157,23 @@ services:
     volumes:
       - ./data:/app/data
       - ./eval:/app/eval
+      # DUCKDB_PATH (.env's default: .duckdb/vault.db) is NOT under ./data --
+      # without this mount, every Excel/CSV table the SQL agent cleans (real
+      # LLM calls) would be silently lost on container recreate.
+      - ./.duckdb:/app/.duckdb
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8001/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     depends_on:
-      - qdrant
-      - litellm
-      - ollama
+      qdrant:
+        condition: service_healthy
+      litellm:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
     networks:
       - vault
 
@@ -164,8 +189,15 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     networks:
       - vault
 

@@ -39,6 +39,9 @@ from src.config import (  # noqa: E402
     API_KEY,
     GENERATION_API_BASE,
     GENERATION_MODEL,
+    GROQ_API_KEY,
+    LITELLM_MASTER_KEY,
+    OPENROUTER_API_KEY,
     QDRANT_COLLECTION,
     QDRANT_URL,
     RERANK_TOP_N,
@@ -72,9 +75,41 @@ _executor = ThreadPoolExecutor(max_workers=2)
 # ── lifespan: warm the agent on startup ────────────────────────────────────────
 
 
+def _validate_startup_env() -> None:
+    """Log a clear, actionable error when GENERATION_API_BASE points at a
+    provider that needs a key we don't have -- without this, the failure
+    only ever surfaces as a cryptic 401 from the provider on the first real
+    /query, long after startup looked clean."""
+    base = GENERATION_API_BASE.lower()
+    missing: str | None = None
+    if "openrouter.ai" in base and not OPENROUTER_API_KEY:
+        missing = "OPENROUTER_API_KEY"
+    elif "groq.com" in base and not GROQ_API_KEY:
+        missing = "GROQ_API_KEY"
+    elif ("localhost:4000" in base or "127.0.0.1:4000" in base) and not LITELLM_MASTER_KEY:
+        # LiteLLM proxy accepts an unauthenticated request in some configs,
+        # so this is a warning, not necessarily a hard failure.
+        logger.warning(
+            "GENERATION_API_BASE points at the LiteLLM proxy (%s) but "
+            "LITELLM_MASTER_KEY is not set -- requests will fail unless the "
+            "proxy itself has auth disabled.",
+            GENERATION_API_BASE,
+        )
+        return
+    if missing:
+        logger.error(
+            "GENERATION_API_BASE=%s requires %s, which is not set. Every "
+            "/query will fail with an authentication error until this is "
+            "fixed in .env. See .env.example.",
+            GENERATION_API_BASE,
+            missing,
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Build the agent once at startup so the first /query doesn't pay the cold-start penalty."""
+    _validate_startup_env()
     try:
         _get_agent()
         logger.info("Agent warmed; ready to serve")

@@ -1,4 +1,7 @@
-from api import _payloads_to_docs, _truncate_markdown_table
+from unittest.mock import patch
+
+import api
+from api import _payloads_to_docs, _truncate_markdown_table, _validate_startup_env
 
 
 class TestTruncateMarkdownTable:
@@ -74,3 +77,42 @@ class TestPayloadsToDocs:
         ]
         docs = _payloads_to_docs(payloads)
         assert docs[0]["sheet_count"] is None
+
+
+class TestValidateStartupEnv:
+    def test_logs_error_when_openrouter_base_missing_key(self, caplog):
+        with (
+            patch.object(api, "GENERATION_API_BASE", "https://openrouter.ai/api/v1"),
+            patch.object(api, "OPENROUTER_API_KEY", ""),
+        ):
+            with caplog.at_level("ERROR"):
+                _validate_startup_env()
+        assert any("OPENROUTER_API_KEY" in r.message for r in caplog.records)
+
+    def test_no_error_when_openrouter_key_present(self, caplog):
+        with (
+            patch.object(api, "GENERATION_API_BASE", "https://openrouter.ai/api/v1"),
+            patch.object(api, "OPENROUTER_API_KEY", "sk-present"),
+        ):
+            with caplog.at_level("ERROR"):
+                _validate_startup_env()
+        assert not any(r.levelname == "ERROR" for r in caplog.records)
+
+    def test_logs_error_when_groq_base_missing_key(self, caplog):
+        with (
+            patch.object(api, "GENERATION_API_BASE", "https://api.groq.com/openai/v1"),
+            patch.object(api, "GROQ_API_KEY", ""),
+        ):
+            with caplog.at_level("ERROR"):
+                _validate_startup_env()
+        assert any("GROQ_API_KEY" in r.message for r in caplog.records)
+
+    def test_warns_not_errors_for_local_litellm_proxy_without_master_key(self, caplog):
+        with (
+            patch.object(api, "GENERATION_API_BASE", "http://localhost:4000/v1"),
+            patch.object(api, "LITELLM_MASTER_KEY", ""),
+        ):
+            with caplog.at_level("WARNING"):
+                _validate_startup_env()
+        assert any(r.levelname == "WARNING" for r in caplog.records)
+        assert not any(r.levelname == "ERROR" for r in caplog.records)
