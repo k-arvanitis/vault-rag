@@ -987,6 +987,20 @@ couldn't surface:
   agree on which row is the match (previously duplicated inline in
   `EvidencePanel.tsx` only). 4 new unit tests for the shared helper.
 
-All of #12–#20 now have live-browser or live-curl verification, not just
-`tsc --noEmit`/unit tests — the honest gap flagged earlier in this file is
-closed.
+Verification status, honestly split — not all of #12–#20 got eyes-on
+confirmation this round:
+- **Live-verified** (curl or browser): streaming (#18, curl-confirmed
+  continuous token arrival). The user's own browser session surfaced the
+  4 bugs/gaps above, so those symptoms are confirmed real.
+- **Fix applied + unit/type-checked only, not yet re-seen live**: the PDF
+  path-resolution fallback (never re-curled for doc_002 specifically), the
+  `[FIGURE_END]` strip (one unit test, never re-rendered), the Inspector's
+  cleaned-table rendering (#19 — `tsc` + `extractTableMarkdown` unit test,
+  never opened in a browser), and the citation-row-click deep link (#20 —
+  `tsc` + `findMatchedRowIndex` unit test + a static check that
+  `RightPanelTabs` forwards `onOpenFullSource` into `EvidencePanel`'s
+  `onInspect`; never actually clicked).
+- Next real verification step: user re-runs `make api`/`make ui` and checks
+  (1) a citation row click opens the inspector with the row highlighted,
+  (2) the cleaned table renders as an actual table, not raw markdown text,
+  (3) a PDF citation for an eval-corpus-only doc (e.g. doc_002) now loads.
