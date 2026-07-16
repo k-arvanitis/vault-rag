@@ -945,3 +945,48 @@ Working through the 4 backend gaps flagged in the UI refinement section
   OpenRouter's own backend, not this change (the same endpoint served the
   PDF smoke-test question fine earlier). Retry once the endpoint recovers;
   logic itself is covered by unit tests including a real divergence case.
+
+## Live UI testing round, 2026-07-16 — 4 bugs/gaps found and fixed
+
+User clicked through the app in a real browser (this box has none) after
+#12–#17 landed. Found real issues a curl smoke test and typechecking
+couldn't surface:
+
+- [x] **"Original PDF not available locally."** `_resolve_pdf_path` (now
+  `_resolve_source_file_path`, renamed since it's used for xlsx/csv too)
+  only checked `data/input/` and repo root — most eval-corpus documents
+  (e.g. doc_002, the one that triggered this) are never copied there by
+  `make seed`, only `eval/data/raw/`. Added as a fallback for the PDF
+  page-image/highlight endpoints *and* `/table-sheet`'s raw-rows lookup
+  (same bug, same root cause, would have hit Excel/CSV eval docs too).
+- [x] **`[FIGURE_END]` leaking into a citation quote**, alongside raw
+  markdown table pipes. Root cause: a chunk boundary split a figure block so
+  only the closing tag (no matching `[FIGURE_START]`) landed in this chunk's
+  body — the paired strip regex doesn't match an orphan tag. Fixed by
+  stripping any leftover lone tag too. (The markdown-table-pipes half of
+  this is the honest "exact region unavailable" fallback working as
+  designed — a markdown-table chunk has no literal region on the rendered
+  PDF page — not fixed further.)
+- [x] **Streaming didn't actually stream** (see the SSE section above) —
+  `stream_agent`'s tool-use path buffered the whole answer and yielded once;
+  fixed with the `live_tokens`/`FinalCorrection` mechanism, verified live
+  (continuous ~20ms-interval tokens over ~13.5s, not a single lump).
+- [x] **Inspector showed the SQL generator's internals, not a clean table**:
+  the "cleaned" side of the raw/cleaned comparison dumped `cleaned_md`
+  verbatim into a `<pre>` — that file starts with a `[File: ... | Sheet:
+  ...]` header and a schema/sample-values summary before the actual
+  markdown table. Now strips everything before the first table row and
+  renders it as a real HTML table via ReactMarkdown+remarkGfm. Raw/cleaned
+  comparison now open by default; the SQL-generator schema block collapsed
+  by default (previously the reverse of what the user wanted to see first).
+- [x] **Citation row click → inspector deep-link, new feature**: clicking a
+  row in `SpreadsheetEvidence` (the Evidence panel's side-by-side table) now
+  opens the full Document Inspector with that same row highlighted there.
+  `InspectTarget` gained a `quote` field; a new `lib/tableMatch.ts` holds the
+  shared "quote contains this row's cell value" heuristic so both views
+  agree on which row is the match (previously duplicated inline in
+  `EvidencePanel.tsx` only). 4 new unit tests for the shared helper.
+
+All of #12–#20 now have live-browser or live-curl verification, not just
+`tsc --noEmit`/unit tests — the honest gap flagged earlier in this file is
+closed.

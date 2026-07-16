@@ -131,6 +131,7 @@ export default function Home() {
               filename={inspecting.filename}
               page={inspecting.page}
               sheet={inspecting.sheet}
+              quote={inspecting.quote}
               onClose={() => setInspecting(null)}
             />
           ) : (

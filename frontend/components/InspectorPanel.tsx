@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { X, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -14,6 +14,8 @@ import {
   type MarkdownPage,
   type TableSheetResponse,
 } from "@/lib/api";
+import { findMatchedRowIndex } from "@/lib/tableMatch";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -29,6 +31,10 @@ interface Props {
   /** Jumps straight to this PDF page or spreadsheet sheet, when opened from a citation. */
   page?: number;
   sheet?: string;
+  /** The citation's quote text -- when set, the same row-match heuristic
+   * SpreadsheetEvidence uses highlights that row here too (see
+   * lib/tableMatch.ts). */
+  quote?: string;
 }
 
 // remark-gfm renders markdown pipe-tables; rehype-raw renders embedded HTML
@@ -245,12 +251,21 @@ function PdfInspector({ filename, initialPage }: { filename: string; initialPage
 
 // ── Raw vs. cleaned sheet view ─────────────────────────────────────────────────
 
-function SheetCompare({ filename, sheet }: { filename: string; sheet: string }) {
+function SheetCompare({
+  filename,
+  sheet,
+  quote,
+}: {
+  filename: string;
+  sheet: string;
+  quote?: string;
+}) {
   const [data, setData] = useState<TableSheetResponse | null>(null);
   const [loading, setLoading] = useState(false);
   // Open by default -- the cleaned table is the primary thing a user wants
   // to see here, not something to hunt for behind a toggle.
   const [open, setOpen] = useState(true);
+  const matchedRowRef = useRef<HTMLTableRowElement>(null);
 
   const load = useCallback(() => {
     if (data || loading) return;
@@ -266,6 +281,13 @@ function SheetCompare({ filename, sheet }: { filename: string; sheet: string }) 
     // Only ever auto-loads once, on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    matchedRowRef.current?.scrollIntoView({ block: "center" });
+  }, [data, quote]);
+
+  const rawBody = (data?.raw_rows ?? []).slice(1);
+  const matchedIdx = findMatchedRowIndex(rawBody, quote);
 
   return (
     <div className="mb-2">
@@ -295,8 +317,16 @@ function SheetCompare({ filename, sheet }: { filename: string; sheet: string }) 
             ) : data?.raw_rows ? (
               <table className="w-full font-mono text-[9px] text-foreground">
                 <tbody>
-                  {data.raw_rows.map((row, ri) => (
-                    <tr key={ri} className="border-b border-border">
+                  {data.raw_rows.map((row, ri) => {
+                    // Row 0 is the header (fetched with header=None) --
+                    // rawBody/matchedIdx are indexed from row 1.
+                    const isMatch = ri > 0 && ri - 1 === matchedIdx;
+                    return (
+                    <tr
+                      key={ri}
+                      ref={isMatch ? matchedRowRef : undefined}
+                      className={cn("border-b border-border", isMatch && "bg-amber-100 dark:bg-amber-950")}
+                    >
                       {row.map((cell, ci) => (
                         <td
                           key={ci}
@@ -307,7 +337,8 @@ function SheetCompare({ filename, sheet }: { filename: string; sheet: string }) 
                         </td>
                       ))}
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             ) : (
@@ -342,7 +373,15 @@ function SheetCompare({ filename, sheet }: { filename: string; sheet: string }) 
 
 // ── Excel / CSV Inspector ──────────────────────────────────────────────────────
 
-function TableInspector({ filename, initialSheet }: { filename: string; initialSheet?: string }) {
+function TableInspector({
+  filename,
+  initialSheet,
+  quote,
+}: {
+  filename: string;
+  initialSheet?: string;
+  quote?: string;
+}) {
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState<string | null>(null);
   const [chunks, setChunks] = useState<Chunk[]>([]);
@@ -403,7 +442,7 @@ function TableInspector({ filename, initialSheet }: { filename: string; initialS
           >
             <p className="mb-2 text-xs font-semibold text-foreground">Sheet: {sheet}</p>
 
-            <SheetCompare filename={filename} sheet={sheet} />
+            <SheetCompare filename={filename} sheet={sheet} quote={sheet === initialSheet ? quote : undefined} />
 
             <p className="mb-2 mt-3 text-[10px] text-muted-foreground">
               Indexed chunk — this sheet's data is queried directly, not read from this summary
@@ -446,7 +485,7 @@ function TableInspector({ filename, initialSheet }: { filename: string; initialS
 
 // ── Panel shell ────────────────────────────────────────────────────────────────
 
-export default function InspectorPanel({ filename, onClose, page, sheet }: Props) {
+export default function InspectorPanel({ filename, onClose, page, sheet, quote }: Props) {
   const basename = filename.split("/").pop() ?? filename;
   const isPdf = IS_PDF(filename);
   const isTable = IS_TABLE(filename);
@@ -475,7 +514,7 @@ export default function InspectorPanel({ filename, onClose, page, sheet }: Props
         {isPdf ? (
           <PdfInspector filename={filename} initialPage={page} />
         ) : isTable ? (
-          <TableInspector filename={filename} initialSheet={sheet} />
+          <TableInspector filename={filename} initialSheet={sheet} quote={quote} />
         ) : (
           <div className="flex flex-1 items-center justify-center px-8 text-center">
             <p className="text-xs text-muted-foreground">

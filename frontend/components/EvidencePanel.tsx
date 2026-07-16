@@ -11,6 +11,8 @@ import {
   type InspectTarget,
   type Source,
 } from "@/lib/api";
+import { findMatchedRowIndex } from "@/lib/tableMatch";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
@@ -130,19 +132,23 @@ function FigureCrop({ source }: { source: Source }) {
 
 const SHEET_CONTEXT_ROWS = 3;
 
-function normalizeCell(v: string): string {
-  return v.trim().toLowerCase();
-}
-
 /** Renders the source sheet's actual rows around the cited passage, with a
  * best-effort row highlight — matches a row when one of its cell values
- * appears verbatim in the citation's quote. No exact row/cell reference is
- * tracked at ingestion time (spreadsheets only ever get a sheet-level
- * summary chunk — see TODO.md), so this is a heuristic over the live sheet
- * data, not a stored coordinate; when nothing matches, it falls back to the
- * sheet's first rows with a note, same "never fabricate" pattern as the PDF
- * bbox highlight below. */
-function SpreadsheetEvidence({ source }: { source: Source }) {
+ * appears verbatim in the citation's quote (see lib/tableMatch.ts). No exact
+ * row/cell reference is tracked at ingestion time (spreadsheets only ever
+ * get a sheet-level summary chunk — see TODO.md), so this is a heuristic
+ * over the live sheet data, not a stored coordinate; when nothing matches,
+ * it falls back to the sheet's first rows with a note, same "never
+ * fabricate" pattern as the PDF bbox highlight below. Clicking the matched
+ * row opens the full Document Inspector with the same row highlighted
+ * there (see InspectorPanel.tsx's use of findMatchedRowIndex). */
+function SpreadsheetEvidence({
+  source,
+  onInspect,
+}: {
+  source: Source;
+  onInspect?: (target: InspectTarget) => void;
+}) {
   const [rows, setRows] = useState<string[][] | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -167,15 +173,7 @@ function SpreadsheetEvidence({ source }: { source: Source }) {
   if (!rows || rows.length === 0) return null;
 
   const [header, ...body] = rows;
-  const quoteNorm = normalizeCell(source.quote || "");
-  const matchedIdx = quoteNorm
-    ? body.findIndex((row) =>
-        row.some((cell) => {
-          const cellNorm = normalizeCell(cell || "");
-          return cellNorm.length > 2 && quoteNorm.includes(cellNorm);
-        })
-      )
-    : -1;
+  const matchedIdx = findMatchedRowIndex(body, source.quote);
 
   const start = matchedIdx >= 0 ? Math.max(0, matchedIdx - SHEET_CONTEXT_ROWS) : 0;
   const end =
@@ -202,7 +200,14 @@ function SpreadsheetEvidence({ source }: { source: Source }) {
               const rowIdx = start + i;
               const isMatch = rowIdx === matchedIdx;
               return (
-                <TableRow key={rowIdx} className={isMatch ? "bg-amber-100 dark:bg-amber-950" : undefined}>
+                <TableRow
+                  key={rowIdx}
+                  className={cn(
+                    isMatch && "bg-amber-100 dark:bg-amber-950",
+                    onInspect && "cursor-pointer hover:bg-muted"
+                  )}
+                  onClick={() => onInspect?.(sourceInspectTarget(source))}
+                >
                   {row.map((cell, j) => (
                     <TableCell key={j} className="whitespace-nowrap text-[10px]">
                       {cell}
@@ -218,6 +223,7 @@ function SpreadsheetEvidence({ source }: { source: Source }) {
         {matchedIdx < 0
           ? "Exact row unavailable — showing the sheet's first rows and the quoted summary below."
           : "Highlighted row is a best-effort text match, not a stored cell reference — check it against the quote below."}
+        {onInspect && " Click a row to open it in the document inspector."}
       </p>
     </div>
   );
@@ -300,7 +306,7 @@ export default function EvidencePanel({ sources, onInspect, selectedTarget }: Pr
 
       <FigureCrop source={source} />
       <EvidencePage source={source} />
-      <SpreadsheetEvidence source={source} />
+      <SpreadsheetEvidence source={source} onInspect={onInspect} />
 
       <blockquote className="mt-2 border-l-2 border-border pl-2 text-xs italic text-muted-foreground">
         &ldquo;{source.quote}&rdquo;

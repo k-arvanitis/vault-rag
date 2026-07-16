@@ -38,6 +38,10 @@ export interface InspectTarget {
   filename: string;
   page?: number;
   sheet?: string;
+  /** The citation's quote text -- when set, the inspector re-runs the same
+   * best-effort "quote contains this row's cell value" match SpreadsheetEvidence
+   * uses, to highlight the same row there. */
+  quote?: string;
 }
 
 /** Derives an inspector jump target from a citation. */
@@ -46,6 +50,7 @@ export function sourceInspectTarget(s: Source): InspectTarget {
     filename: s.filename,
     page: s.page ?? undefined,
     sheet: s.sheet ?? undefined,
+    quote: s.quote || undefined,
   };
 }
 
