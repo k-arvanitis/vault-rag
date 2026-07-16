@@ -1,9 +1,11 @@
 "use client";
 
-import { ChevronDown, X } from "lucide-react";
+import { useState } from "react";
+import { ChevronDown, Search, X } from "lucide-react";
 import { type Document } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import {
   Popover,
   PopoverContent,
@@ -22,6 +24,11 @@ interface Props {
  * naming a filename in the question. Backend ORs across every selected id
  * (src/retriever.py's _metadata_filter). */
 export default function SourceScope({ documents, scopedDocIds, onChange }: Props) {
+  const [query, setQuery] = useState("");
+  const filtered = documents.filter((d) =>
+    (d.filename.split("/").pop() ?? d.filename).toLowerCase().includes(query.toLowerCase())
+  );
+
   const toggle = (filename: string) => {
     onChange(
       scopedDocIds.includes(filename)
@@ -40,7 +47,7 @@ export default function SourceScope({ documents, scopedDocIds, onChange }: Props
   return (
     <div className="flex min-w-0 items-center gap-1">
       <span className="shrink-0 text-xs text-muted-foreground">Ask across:</span>
-      <Popover>
+      <Popover onOpenChange={(open) => !open && setQuery("")}>
         <PopoverTrigger
           render={
             <Button variant="outline" size="sm" className="max-w-[220px] justify-between gap-1.5" />
@@ -50,8 +57,20 @@ export default function SourceScope({ documents, scopedDocIds, onChange }: Props
           <ChevronDown data-icon="inline-end" />
         </PopoverTrigger>
         <PopoverContent align="start" className="w-64 p-1">
+          <div className="relative px-1 pb-1 pt-0.5">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search documents…"
+              className="h-7 pl-7 text-xs"
+            />
+          </div>
           <div className="max-h-72 overflow-y-auto">
-            {documents.map((d) => {
+            {filtered.length === 0 && (
+              <p className="px-2 py-1.5 text-xs text-muted-foreground">No matching documents.</p>
+            )}
+            {filtered.map((d) => {
               const name = d.filename.split("/").pop();
               const checked = scopedDocIds.includes(d.filename);
               return (
