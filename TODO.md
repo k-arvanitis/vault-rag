@@ -1092,3 +1092,80 @@ confirmation this round:
 
 Both new asks (search bar, and further UI polish) are still open — see
 the running TODO list below rather than assuming complete.
+
+## 2026-07-16 (later) — Portfolio finalization task (Phases 1–6), search bar done
+
+The "document search bar" item above is done — see the "Ask across" search input
+entry further up. This section covers the separate, larger portfolio-finalization
+brief (make the project a polished, reliable AI engineering portfolio piece before
+any new product capabilities), executed in 6 phases across `55c1a2d`..`4d7c8ec`.
+
+- [x] **Phase 2 — deterministic cross-document comparison** (`55c1a2d`). The
+  ReAct-agent comparison path (`answer_one`'s retry logic) was probabilistic —
+  it let the agent decide whether/how to make a second retrieval call.
+  `answer_comparison_deterministic` in `src/answer_pipeline.py` instead resolves
+  which documents a comparison question names (explicit doc_ids, the UI's
+  multi-select scope, or a conservative two-way title match), retrieves
+  independently per document via a direct `search_knowledge_base` call
+  (bypassing the agent's own tool-call decision), and makes one synthesis call
+  over the guaranteed-complete evidence. Falls back to the old agent path for
+  ambiguous comparisons. **Live-verified 5/5** repeated real runs, all covering
+  both requested documents; a real+nonexistent-doc adversarial run correctly
+  excluded the nonexistent one with no fabrication. 15 new unit tests.
+- [x] **Phase 3 — one canonical eval result** (`969b8c8`). `docs/EVAL_SUMMARY.md`
+  was stale (an 82-question run, different judge) and disagreed with
+  README.md/CASE_STUDY.md's numbers. `eval/results/summary.json` now carries
+  `benchmark_date`/`answer_model`/`judge_model`/`document_count`;
+  `eval/generate_summary_doc.py` renders `docs/EVAL_SUMMARY.md` straight from
+  it — no more hand-copied numbers. Did **not** invent a "multi-document
+  evidence coverage" metric (the canonical run predates Phase 2); documented
+  as a known gap instead, separate from Phase 2's live spot-check.
+- [x] **Phase 1 — release checklist** (`c0403c3`). `docs/release-checklist.md`:
+  exact commands for stack-up, automated checks, smoke test, e2e, benchmark,
+  plus a 12-step manual pass and an honest known-gaps section (no Word/.docx
+  demo sample despite ingestion supporting it; full 17-flow e2e not built).
+- [x] **Phase 4 — deployment/startup reliability** (`c02193e`, `9fce94f`).
+  docker-compose.yaml: healthchecks (bash `/dev/tcp` for qdrant, `python
+  urlopen` for litellm/api since curl/wget aren't in those images, `node
+  http.get` for frontend) + `condition: service_healthy` on every
+  `depends_on` — api could previously start querying qdrant/litellm before
+  either had finished booting. Found and fixed a real data-loss gap: 
+  `DUCKDB_PATH` (`.duckdb/vault.db`) was never mounted as a volume — every
+  Excel/CSV table the SQL agent cleans (real LLM calls) would be silently
+  lost on container recreate. Added `_validate_startup_env()` in `api.py`
+  (clear error naming the exact missing key when `GENERATION_API_BASE` needs
+  one) and an embedding warm-up at startup (reranker already warmed up;
+  embedding never did).
+- [x] **Phase 5 — optional admin/viewer access mode** (`57b0ad6`, `fb2b02d`,
+  `4d7c8ec`). `ACCESS_MODE=open` (default) is bit-for-bit today's behavior.
+  `ACCESS_MODE=admin_viewer` gates the existing admin-only endpoint set
+  (upload/reprocess/delete/clear/eval-run/feedback-resolve/drive-config)
+  behind an HMAC-signed session cookie set by `POST /admin/login` (or the
+  existing `X-API-Key` header) — enforced in `require_admin()`, not just
+  hidden buttons. Frontend: login page, Sidebar hides upload/reprocess/delete,
+  AppHeader hides Integrations + Feedback nav + shows Login/Logout, eval
+  panel hides Run eval. 14 backend authz tests + a live Playwright test
+  (mocks `/admin/session` against the real running dev server, since it
+  stays in `open` mode). Known deliberate trade-off: no real session store
+  (no per-login random token, no server-side revocation) — documented in
+  `_admin_session_token()`'s docstring, matches the brief's "small and
+  optional," not full session management.
+- [x] **Phase 6 — portfolio packaging, light-touch** (`52c1b6a`). README
+  already had most of this (Who this is for / Best fit / architecture /
+  privacy table / eval results) — added the one-line product-promise
+  positioning under the title, an "Access modes" section, the 3 new
+  `/admin/*` endpoints in the API table. New `docs/demo-script.md` (8-step,
+  3–4 min) and `docs/screenshot-shot-list.md` (8 planned captures, no
+  screenshots actually taken/fabricated).
+
+**Known gaps, carried forward honestly** (see `docs/release-checklist.md`'s
+own "Known gaps" section for the current list):
+- No Word (`.docx`) sample in the demo/eval corpus, despite `.docx` ingestion
+  being implemented in `src/ingest.py` — never exercised.
+- Full 17-flow Playwright suite not built — only the core chat flow and the
+  admin-viewer-access flow are automated end-to-end today.
+- `docker compose up --build` was validated (`docker compose config`,
+  individual healthcheck commands confirmed via `docker exec`) but never run
+  end-to-end from a clean clone this session (time).
+- No CI-runnable (non-live-credential) test lane for the deterministic
+  comparison path — only unit tests (mocked) and the live spot-check exist.

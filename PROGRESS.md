@@ -1200,3 +1200,38 @@ status on the `qwen3-32b` → `gpt-oss-120b` `GENERATION_MODEL` swap. Aggregate:
 signal. Retrieval metrics stayed strong (hit@5 0.986, MRR 0.854) — retrieval was never the
 bottleneck. Full write-up and analysis in `TODO.md` (~line 588). Still open: transcribe this
 table into README.md / `docs/CASE_STUDY.md`.
+
+## Portfolio finalization task, 2026-07-16 — Phases 1–6
+
+A separate, larger brief: finalize Vault RAG as a polished, reliable AI
+engineering portfolio project before any new product capabilities. Executed
+in 6 phases, commits `55c1a2d`..`4d7c8ec`. Full detail in `TODO.md`'s
+matching dated section; summary here:
+
+1. **Deterministic cross-document comparison** (`src/answer_pipeline.py`'s
+   `answer_comparison_deterministic`) — replaces the probabilistic
+   agent-retry comparison path for questions where the requested documents
+   can be confidently resolved. Live-verified 5/5 real runs, both documents
+   covered every time; a real+nonexistent-doc case correctly excluded the
+   nonexistent one with no fabrication.
+2. **One canonical eval result** — `eval/results/summary.json` now self-
+   describes (`benchmark_date`/`answer_model`/`judge_model`/`document_count`);
+   `docs/EVAL_SUMMARY.md` is generated from it (`eval/generate_summary_doc.py`),
+   fixing a real inconsistency (it was stale — an 82-question run that no
+   longer matched README.md/CASE_STUDY.md).
+3. **Release checklist** — `docs/release-checklist.md`.
+4. **Deployment reliability** — docker-compose healthchecks + dependency
+   ordering, a real DuckDB-volume data-loss fix, startup env validation,
+   embedding warm-up.
+5. **Optional admin/viewer access mode** — `ACCESS_MODE=open` (default,
+   unchanged behavior) / `admin_viewer` (session-cookie-gated admin actions,
+   backend-enforced + frontend-hidden, 14 backend tests + Playwright).
+6. **Portfolio packaging** — README repositioning, demo script, screenshot
+   shot list.
+
+Test counts at the end of this task: 299 backend (`uv run pytest tests/`),
+16 frontend unit (`npx vitest run`), 2 Playwright specs passing live against
+the running dev server. Known gaps carried forward (not silently dropped):
+no Word/.docx demo sample, full 17-flow e2e suite not built, clean-clone
+`docker compose up --build` not run end-to-end, no CI-runnable lane for the
+comparison path without live model credentials.
