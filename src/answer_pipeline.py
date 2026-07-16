@@ -18,7 +18,12 @@ from urllib.parse import unquote
 from src.answer_quality import _is_multi_part_query, _split_multi_part_query
 from src.config import MAX_TOOL_RESULTS, QDRANT_COLLECTION, QDRANT_URL
 from src.file_resolver import resolve_original_name as _resolve_original_name
-from src.rag_agent import route_question, routing_directive, stream_agent
+from src.rag_agent import (
+    FinalCorrection,
+    route_question,
+    routing_directive,
+    stream_agent,
+)
 from src.retriever import retrieve
 from src.tools.retrieval_tool import FORCED_DOC_ID
 from src.vector_store import _stable_id
@@ -859,6 +864,7 @@ def stream_answer(
     rejected: list[dict] = []
     excel_citations: list[dict] = []
     raw_tokens: list[str] = []
+    correction: str | None = None
     try:
         for tok in stream_agent(
             agent,
@@ -868,14 +874,25 @@ def stream_answer(
             tool_calls=tool_calls,
             rejected_chunks=rejected,
             excel_citations=excel_citations,
+            live_tokens=True,
         ):
-            raw_tokens.append(tok)
-            yield {"token": tok}
+            if isinstance(tok, FinalCorrection):
+                # The repair pass / grounding check changed the text after
+                # the live tokens above already streamed the raw version --
+                # this replaces it rather than appending (see stream_agent's
+                # live_tokens docstring). Not sent as its own "token" SSE
+                # event: the client waits for the "done" event's answer,
+                # same as any other correction (e.g. the Unsupported-retry
+                # below).
+                correction = tok.text
+            else:
+                raw_tokens.append(tok)
+                yield {"token": tok}
     finally:
         if token is not None:
             FORCED_DOC_ID.reset(token)
 
-    raw_answer = "".join(raw_tokens).strip()
+    raw_answer = correction if correction is not None else "".join(raw_tokens).strip()
     if raw_answer.lower() == "unsupported":
         r_ans, r_coll, r_tr = run_once(
             agent, q + _RETRY_INSTRUCTION, attempt="unsupported-retry"

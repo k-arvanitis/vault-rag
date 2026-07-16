@@ -15,6 +15,7 @@ from src.answer_pipeline import (
     stream_answer,
     strip_leaked_headers,
 )
+from src.rag_agent import FinalCorrection
 
 
 def _summary_hit(title: str, file_name: str = "doc_001_procurement_policy.md") -> dict:
@@ -288,6 +289,45 @@ class TestStreamAnswer:
         assert final["done"] is True
         assert final["answer"] == "Hello world."
         assert final["tools"] == ["search_knowledge_base"]
+
+    def test_final_correction_replaces_not_appends_streamed_text(self):
+        """When stream_agent's repair pass / grounding check changes the
+        text after live-streaming the raw version, it yields a
+        FinalCorrection -- stream_answer must use it as the answer, not
+        concatenate it onto what was already streamed as token events."""
+
+        def fake_stream_agent(agent, query, **kwargs):
+            yield "Draft answer"
+            yield FinalCorrection("The corrected, complete answer.")
+
+        with (
+            patch("src.answer_pipeline.route_question", return_value={}),
+            patch("src.answer_pipeline.stream_agent", side_effect=fake_stream_agent),
+        ):
+            events = list(stream_answer(agent=object(), question="What is X?"))
+
+        token_events = [e for e in events if "token" in e]
+        # Only the raw draft streamed as token events -- the correction is
+        # not sent as its own token event (see stream_answer's docstring).
+        assert [e["token"] for e in token_events] == ["Draft answer"]
+        final = events[-1]
+        assert final["done"] is True
+        assert final["answer"] == "The corrected, complete answer."
+
+    def test_calls_stream_agent_with_live_tokens_true(self):
+        captured = {}
+
+        def fake_stream_agent(agent, query, **kwargs):
+            captured.update(kwargs)
+            yield "An answer."
+
+        with (
+            patch("src.answer_pipeline.route_question", return_value={}),
+            patch("src.answer_pipeline.stream_agent", side_effect=fake_stream_agent),
+        ):
+            list(stream_answer(agent=object(), question="What is X?"))
+
+        assert captured["live_tokens"] is True
 
     def test_retries_first_attempt_unsupported_like_answer_one(self):
         """answer_one retries a bare "Unsupported" first attempt (real

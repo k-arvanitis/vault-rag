@@ -63,13 +63,32 @@ in TODO item 2 and CLAUDE.md's vLLM cheatsheet. Config-only change, not backend 
   replaces the streamed answer in the final `done` event. Covered by a new
   test (`test_retries_first_attempt_unsupported_like_answer_one`) and
   re-verified live via curl after the fix.
-  **Not browser-verified**: #13/#14/#15 all changed frontend behavior
-  (inline citation rendering, retry button, the whole chat flow moving to
-  SSE) but were only checked with `tsc --noEmit` — this box has no browser
-  and the user's is on their laptop over SSH. Typechecking is not behavior
-  verification; flagging this honestly rather than claiming "done" on the UI
-  side. Should be manually clicked through in a real browser before relying
-  on it for a demo.
+  **User tested #13/#14/#15 live in a browser, 2026-07-16 — found a real bug
+  the curl smoke test couldn't surface**: `stream_agent`'s tool-use path (the
+  common case — almost every real question) buffered the *entire* answer
+  internally (generation → repair-pass LLM call → grounding-check LLM call,
+  all sequential) and only `yield`ed once at the very end. The SSE plumbing
+  was correct but there was nothing to stream — reported live as "a question
+  takes about 2 minutes to respond" with no progressive text, matching what
+  a single-lump curl response had already hinted at. This was pre-existing
+  total latency (3 sequential LLM round-trips), not introduced this session,
+  but the streaming feature delivered zero perceived-latency benefit for the
+  case it mattered most for.
+  **Fixed**: `stream_agent` gained a `live_tokens` parameter (default False,
+  so `run_once`/`ask_agent`/eval are completely unaffected — verified, they
+  just concatenate every yielded item regardless of timing). When True,
+  tokens after the first tool call are yielded live as they arrive; if the
+  repair pass or grounding check changes the text afterward, the *complete*
+  corrected answer is yielded once more wrapped in a new `FinalCorrection`
+  marker so callers know to replace, not append. `stream_answer` (the only
+  other caller, in `answer_pipeline.py`) opts in with `live_tokens=True` and
+  treats a `FinalCorrection` as the authoritative final answer, not another
+  SSE token event. 5 new tests (`test_rag_agent.py`'s `TestStreamAgentLiveTokens`,
+  `test_answer_pipeline.py`'s correction-handling tests). **Verified live**:
+  curl against a running `uvicorn api:app` on a real multi-part contract
+  question showed tokens arriving continuously at ~20ms intervals for
+  ~13.5s, `done` event ~6s after that (repair + grounding check) — genuine
+  incremental streaming, not a single lump.
 - ~~**Retry** on a message doesn't exist either — only new-conversation. Same category.~~
   **Done, 2026-07-16**: turned out to need no backend change at all — `/query`
   is already stateless per-question (no history is threaded today), so retry

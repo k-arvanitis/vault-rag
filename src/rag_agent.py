@@ -21,7 +21,7 @@ import json
 import logging
 import os
 import re
-from typing import Any, Generator
+from typing import Any, Generator, NamedTuple
 
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from langchain_openai import ChatOpenAI
@@ -782,6 +782,13 @@ def _overflow_fallback_answer(
         limits["rerank_top_n"] = min(RERANK_TOP_N, MAX_TOOL_RESULTS)
 
 
+class FinalCorrection(NamedTuple):
+    """Marks a yielded item as a full-answer replacement, not an incremental
+    token — see stream_agent's live_tokens parameter."""
+
+    text: str
+
+
 def stream_agent(
     agent: Any,
     query: str,
@@ -794,7 +801,8 @@ def stream_agent(
     excel_citations: list[dict] | None = None,
     trace: Any = None,
     skip_grounding_check: bool = False,
-) -> Generator[str, None, None]:
+    live_tokens: bool = False,
+) -> Generator[str | FinalCorrection, None, None]:
     """Stream the agent's final answer token-by-token.
 
     Yields string fragments as they arrive from the LLM.
@@ -820,6 +828,21 @@ def stream_agent(
             as ungrounded and downgrading them to Unsupported (gpt-oss-120b's
             judge is stricter on inferential/comparative claims than the
             generation model itself). Passed True for comparison questions.
+        live_tokens: When True, tokens generated *after* the first tool call
+            are yielded live as they arrive from the model, instead of being
+            buffered until the repair pass / grounding check finish (both are
+            extra LLM round-trips — reproduced live: this is where most of a
+            multi-minute tool-use answer's wall-clock time goes, and none of
+            it streamed before this flag existed). If the repair pass or
+            grounding check changes the text afterward, the *complete*
+            corrected answer is yielded once more, wrapped in
+            FinalCorrection — callers that just concatenate every yielded
+            string (run_once, ask_agent) never opt into this and see no
+            behavior change; only stream_answer (answer_pipeline.py) passes
+            live_tokens=True and knows to treat a FinalCorrection as
+            "replace what you've accumulated," matching how it already
+            treats the SSE "done" event as authoritative over raw streamed
+            text (see stream_answer's docstring).
     """
     # Guard: questions with an empty reference slot are unanswerable by construction.
     if _has_empty_reference_placeholder(query):
@@ -890,6 +913,8 @@ def stream_agent(
                     if filtered:
                         if _tool_used:
                             _final_buf.append(filtered)
+                            if live_tokens:
+                                yield filtered
                         else:
                             _pre_tool_buf.append(filtered)
             elif isinstance(chunk, ToolMessage):
@@ -935,9 +960,10 @@ def stream_agent(
         # final-answer tool call has its real text recovered below.
         err_str = str(exc).lower()
         if _is_context_overflow(err_str):
-            yield _overflow_fallback_answer(
+            fallback = _overflow_fallback_answer(
                 agent, query, history, collected_chunks, _limits
             )
+            yield FinalCorrection(fallback) if live_tokens else fallback
             return
         if "failed to call a function" in err_str or "tool_use_failed" in err_str:
             if _tool_used:
@@ -956,7 +982,10 @@ def stream_agent(
                         query, answer, _tool_contexts, api_base, model_name
                     )
                 if answer:
-                    yield answer
+                    # Some/all of this may already have streamed live above --
+                    # a plain re-yield would duplicate it for a caller that
+                    # just concatenates, so wrap it as a full replacement.
+                    yield FinalCorrection(answer) if live_tokens else answer
                 return
             # Error happened before any tool call; try to extract answer from failed_generation body.
             body = getattr(exc, "body", {}) or {}
@@ -975,9 +1004,10 @@ def stream_agent(
     except Exception as exc:
         err_str = str(exc).lower()
         if _is_context_overflow(err_str):
-            yield _overflow_fallback_answer(
+            fallback = _overflow_fallback_answer(
                 agent, query, history, collected_chunks, _limits
             )
+            yield FinalCorrection(fallback) if live_tokens else fallback
             return
         raise
 
@@ -1000,7 +1030,8 @@ def stream_agent(
 
     # Tool path: assemble the streamed answer, then run coverage repair and the
     # context fallback (same finalization stages as ask_agent).
-    answer = "".join(_final_buf).strip()
+    raw_streamed = "".join(_final_buf).strip()
+    answer = raw_streamed
     api_base = getattr(agent, "_generation_api_base", None)
     model_name = getattr(agent, "_generation_model", None)
     if (
@@ -1035,7 +1066,14 @@ def stream_agent(
             skip=skip_grounding_check,
             trace=trace,
         )
-        yield answer
+        if live_tokens:
+            # Live tokens above already delivered raw_streamed in full -- only
+            # yield again if the repair pass / grounding check actually
+            # changed the text, and as a replacement, not an addition.
+            if answer != raw_streamed:
+                yield FinalCorrection(answer)
+        else:
+            yield answer
 
 
 # The command-line runner lives in rag_cli.py — this module is import-only.

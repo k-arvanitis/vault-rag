@@ -23,6 +23,7 @@ from src.answer_quality import (
 )
 from src.rag_agent import (
     SYSTEM_PROMPT,
+    FinalCorrection,
     _build_system_prompt,
     _extract_refs,
     _is_thinking_model,
@@ -507,6 +508,53 @@ class TestStreamAgent:
         )
         result = "".join(stream_agent(agent, "q"))
         assert result == "Unsupported"
+
+
+class TestStreamAgentLiveTokens:
+    """live_tokens=True is meant to fix a real UX bug: the tool-use path used
+    to buffer the whole answer (generation + repair pass + grounding check,
+    all sequential LLM calls) and yield it once at the end, so nothing ever
+    streamed for the common case -- reproduced live, a 2-minute answer
+    appeared as a dead spinner then popped in all at once."""
+
+    def test_default_still_yields_once_at_the_end(self):
+        """live_tokens defaults to False -- existing callers (run_once,
+        ask_agent, eval) must see no behavior change."""
+        agent = MagicMock()
+        agent.stream.return_value = _make_stream_chunks(
+            ["The", " answer."], tool_content="[1] file=a.pdf chunk=0 score=0.9\nsome context"
+        )
+        items = list(stream_agent(agent, "q"))
+        assert len(items) == 1
+        assert items[0] == "The answer."
+
+    def test_live_tokens_yields_each_fragment_as_it_arrives(self):
+        agent = MagicMock()
+        agent.stream.return_value = _make_stream_chunks(
+            ["The", " answer."], tool_content="[1] file=a.pdf chunk=0 score=0.9\nsome context"
+        )
+        items = list(stream_agent(agent, "q", live_tokens=True))
+        # Live tokens are yielded as plain strings; no correction needed
+        # since nothing downstream changed the text.
+        assert all(isinstance(i, str) for i in items)
+        assert len(items) > 1
+        assert "".join(items) == "The answer."
+
+    def test_live_tokens_yields_final_correction_when_grounding_check_changes_answer(self):
+        agent = MagicMock()
+        agent.stream.return_value = _make_stream_chunks(
+            ["The", " answer."], tool_content="[1] file=a.pdf chunk=0 score=0.9\nsome context"
+        )
+        with patch(
+            "src.rag_agent._apply_grounding_check", return_value="Unsupported"
+        ):
+            items = list(stream_agent(agent, "q", live_tokens=True))
+
+        live_tokens = [i for i in items if isinstance(i, str)]
+        corrections = [i for i in items if isinstance(i, FinalCorrection)]
+        assert "".join(live_tokens) == "The answer."
+        assert len(corrections) == 1
+        assert corrections[0].text == "Unsupported"
 
 
 def _hit(source_file: str) -> dict:
