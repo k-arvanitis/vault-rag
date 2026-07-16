@@ -5,6 +5,7 @@ import { FileText, FileSpreadsheet, Image, FileCode, File, ScanSearch, Trash2, R
 import { getDocuments, getStats, deleteDocument, type Document, type Stats } from "@/lib/api";
 import { toSourceLibraryItem, SOURCE_STATUS_LABEL, SOURCE_STATUS_BADGE_VARIANT } from "@/lib/product";
 import { useJobTracker } from "@/lib/jobTracker";
+import { useAdminSession } from "@/lib/useAdminSession";
 import {
   Sidebar as SidebarRoot,
   SidebarContent,
@@ -55,6 +56,7 @@ export default function Sidebar({ onToast, onInspect, offline }: Props) {
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [reprocessTarget, setReprocessTarget] = useState<string | null>(null);
   const jobs = useJobTracker();
+  const { is_admin: isAdmin } = useAdminSession();
 
   const refresh = useCallback(async () => {
     try {
@@ -128,21 +130,23 @@ export default function Sidebar({ onToast, onInspect, offline }: Props) {
                       )}
                     </div>
                     <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <Button
-                              variant="ghost"
-                              size="icon-xs"
-                              aria-label="Reprocess document"
-                              onClick={() => setReprocessTarget(doc.filename)}
-                            />
-                          }
-                        >
-                          <RefreshCw />
-                        </TooltipTrigger>
-                        <TooltipContent>Reprocess document</TooltipContent>
-                      </Tooltip>
+                      {isAdmin && (
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <Button
+                                variant="ghost"
+                                size="icon-xs"
+                                aria-label="Reprocess document"
+                                onClick={() => setReprocessTarget(doc.filename)}
+                              />
+                            }
+                          >
+                            <RefreshCw />
+                          </TooltipTrigger>
+                          <TooltipContent>Reprocess document</TooltipContent>
+                        </Tooltip>
+                      )}
                       {canInspect && (
                         <Tooltip>
                           <TooltipTrigger
@@ -160,22 +164,24 @@ export default function Sidebar({ onToast, onInspect, offline }: Props) {
                           <TooltipContent>Inspect document</TooltipContent>
                         </Tooltip>
                       )}
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <Button
-                              variant="ghost"
-                              size="icon-xs"
-                              className="hover:text-destructive"
-                              aria-label="Delete document"
-                              onClick={() => setDeleteTarget(doc.filename)}
-                            />
-                          }
-                        >
-                          <Trash2 />
-                        </TooltipTrigger>
-                        <TooltipContent>Delete document</TooltipContent>
-                      </Tooltip>
+                      {isAdmin && (
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <Button
+                                variant="ghost"
+                                size="icon-xs"
+                                className="hover:text-destructive"
+                                aria-label="Delete document"
+                                onClick={() => setDeleteTarget(doc.filename)}
+                              />
+                            }
+                          >
+                            <Trash2 />
+                          </TooltipTrigger>
+                          <TooltipContent>Delete document</TooltipContent>
+                        </Tooltip>
+                      )}
                     </div>
                   </div>
                 );
@@ -194,7 +200,7 @@ export default function Sidebar({ onToast, onInspect, offline }: Props) {
             </div>
           </div>
         )}
-        <UploadZone onUploaded={refresh} onToast={onToast} offline={offline} />
+        {isAdmin && <UploadZone onUploaded={refresh} onToast={onToast} offline={offline} />}
       </SidebarFooter>
 
       {reprocessTarget && (

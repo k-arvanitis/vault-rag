@@ -152,6 +152,9 @@ export interface TableSheetResponse {
 async function request<T>(path: string, init?: RequestInit, timeoutMs?: number): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     ...init,
+    // Required for the admin session cookie (ACCESS_MODE=admin_viewer) to
+    // ride along on cross-origin requests -- harmless no-op in open mode.
+    credentials: "include",
     signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : init?.signal,
   });
   if (!res.ok) {
@@ -218,6 +221,7 @@ export async function streamQueryDocuments(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ question, doc_id }),
+    credentials: "include",
     signal,
   });
   if (!res.ok || !res.body) {
@@ -258,12 +262,13 @@ export async function streamQueryDocuments(
 }
 
 export async function clearCollection(): Promise<void> {
-  await fetch(`${BASE_URL}/collection`, { method: "DELETE" });
+  await fetch(`${BASE_URL}/collection`, { method: "DELETE", credentials: "include" });
 }
 
 export async function deleteDocument(filename: string): Promise<void> {
   const res = await fetch(`${BASE_URL}/documents/${encodeURIComponent(filename)}`, {
     method: "DELETE",
+    credentials: "include",
   });
   if (!res.ok) throw new Error(`Delete failed (${res.status})`);
 }
@@ -487,4 +492,25 @@ export async function syncDrive(removeDeleted = false): Promise<DriveSyncResult>
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ remove_deleted: removeDeleted }),
   });
+}
+
+export interface AdminSession {
+  access_mode: "open" | "admin_viewer";
+  is_admin: boolean;
+}
+
+export async function getAdminSession(): Promise<AdminSession> {
+  return request<AdminSession>("/admin/session");
+}
+
+export async function adminLogin(password: string): Promise<{ status: string }> {
+  return request<{ status: string }>("/admin/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password }),
+  });
+}
+
+export async function adminLogout(): Promise<{ status: string }> {
+  return request<{ status: string }>("/admin/logout", { method: "POST" });
 }

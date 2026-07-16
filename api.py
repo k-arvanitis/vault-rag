@@ -141,11 +141,17 @@ app = FastAPI(title="Vault RAG API", lifespan=lifespan)
 
 
 # ── CORS — explicit origin list (use API_CORS_ORIGINS=* only intentionally) ───
+#
+# allow_credentials is required for the admin session cookie to survive a
+# cross-origin request (frontend on :3000/:3001, API on :8001) -- browsers
+# reject allow_credentials=True combined with a wildcard origin, so
+# API_CORS_ORIGINS=* is incompatible with ACCESS_MODE=admin_viewer.
 
 _cors_origins = [o.strip() for o in API_CORS_ORIGINS.split(",") if o.strip()] or ["*"]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
+    allow_credentials="*" not in _cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )

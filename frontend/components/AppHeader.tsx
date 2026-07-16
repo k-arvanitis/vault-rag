@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { History, Library, MessageSquareWarning, FlaskConical, FolderSync, ShieldCheck, Plug, ChevronDown, X } from "lucide-react";
+import { History, Library, MessageSquareWarning, FlaskConical, FolderSync, ShieldCheck, Plug, ChevronDown, X, LogIn, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
@@ -13,6 +13,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import ThemeToggle from "@/components/ThemeToggle";
+import { useAdminSession } from "@/lib/useAdminSession";
+import { adminLogout } from "@/lib/api";
 
 interface Props {
   offline: boolean;
@@ -24,6 +26,7 @@ interface Props {
 
 export default function AppHeader(props: Props) {
   const router = useRouter();
+  const { access_mode: accessMode, is_admin: isAdmin, refresh: refreshSession } = useAdminSession();
   return (
     <div className="flex shrink-0 flex-col">
       <header className="flex items-center justify-between gap-2 border-b border-border bg-card px-4 py-2.5">
@@ -68,23 +71,44 @@ export default function AppHeader(props: Props) {
             </DropdownMenuContent>
           </DropdownMenu>
 
-          <DropdownMenu>
-            <DropdownMenuTrigger render={<Button variant="ghost" size="sm" />}>
-              <Plug data-icon="inline-start" />
-              <span className="hidden md:inline">Integrations</span>
-              <ChevronDown data-icon="inline-end" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuGroup>
-                <DropdownMenuItem onClick={() => router.push("/connectors/google-drive")}>
-                  <FolderSync data-icon="inline-start" />
-                  Google Drive
-                </DropdownMenuItem>
-              </DropdownMenuGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          {isAdmin && (
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button variant="ghost" size="sm" />}>
+                <Plug data-icon="inline-start" />
+                <span className="hidden md:inline">Integrations</span>
+                <ChevronDown data-icon="inline-end" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuGroup>
+                  <DropdownMenuItem onClick={() => router.push("/connectors/google-drive")}>
+                    <FolderSync data-icon="inline-start" />
+                    Google Drive
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
 
           <Separator orientation="vertical" className="mx-1 h-5" />
+          {accessMode === "admin_viewer" &&
+            (isAdmin ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={async () => {
+                  await adminLogout();
+                  refreshSession();
+                }}
+              >
+                <LogOut data-icon="inline-start" />
+                <span className="hidden md:inline">Log out</span>
+              </Button>
+            ) : (
+              <Button variant="ghost" size="sm" onClick={() => router.push("/admin/login")}>
+                <LogIn data-icon="inline-start" />
+                <span className="hidden md:inline">Admin login</span>
+              </Button>
+            ))}
           <ThemeToggle />
         </nav>
       </header>
