@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
+import hmac
 import io
 import json
 import logging
@@ -20,6 +22,7 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 from fastapi import (  # noqa: E402
+    Cookie,
     Depends,
     FastAPI,
     File,
@@ -27,6 +30,7 @@ from fastapi import (  # noqa: E402
     Header,
     HTTPException,
     Request,
+    Response,
     UploadFile,
 )
 from fastapi.concurrency import run_in_threadpool  # noqa: E402
@@ -35,8 +39,11 @@ from fastapi.responses import JSONResponse, StreamingResponse  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
 from src.config import (  # noqa: E402
+    ACCESS_MODE,
+    ADMIN_PASSWORD,
     API_CORS_ORIGINS,
     API_KEY,
+    COOKIE_SECURE,
     EMBED_API_BASE,
     GENERATION_API_BASE,
     GENERATION_MODEL,
@@ -49,6 +56,7 @@ from src.config import (  # noqa: E402
     RERANK_TOP_N,
     RERANKER_MODEL,
     RETRIEVAL_TOP_K,
+    SESSION_SECRET,
 )
 from src.retriever import _ollama_embed_query  # noqa: E402
 from src.vector_store import _request as _qdrant  # noqa: E402
@@ -143,15 +151,104 @@ app.add_middleware(
 )
 
 
-# ── auth dep — required on mutating endpoints when API_KEY is set ─────────────
+# ── auth dep — admin-only endpoints ────────────────────────────────────────────
+#
+# ACCESS_MODE=open (default): unchanged from before this existed -- gated only
+# when API_KEY is set, via the X-API-Key header.
+#
+# ACCESS_MODE=admin_viewer: everyone can ask questions, browse evidence, and
+# read conversations (those routes carry no dependency at all, see below);
+# admin-only routes (upload/reprocess/delete/clear/eval-run/feedback-resolve/
+# drive-config) require either the X-API-Key header or a session cookie set
+# by POST /admin/login. Enforcement lives here in the backend, not just in
+# what the frontend chooses to render.
+
+ADMIN_COOKIE_NAME = "vault_admin_session"
 
 
-async def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
-    """Raise 401 unless the X-API-Key header matches API_KEY (when configured)."""
-    if not API_KEY:
+def _admin_session_token() -> str:
+    """Deterministic HMAC token for the admin session cookie.
+
+    Deliberately simple, by design (this is a small optional feature, not
+    full session management, per the brief): no per-login random token or
+    session store, so this doesn't support server-side session revocation --
+    POST /admin/logout only clears the browser's copy of the cookie. That's
+    an accepted trade-off for a single-admin demo/portfolio deployment.
+    """
+    return hmac.new(
+        SESSION_SECRET.encode(), b"vault-rag-admin", hashlib.sha256
+    ).hexdigest()
+
+
+def _is_valid_admin_session(token: str | None) -> bool:
+    return bool(
+        SESSION_SECRET and token and hmac.compare_digest(token, _admin_session_token())
+    )
+
+
+async def require_admin(
+    x_api_key: str | None = Header(default=None),
+    vault_admin_session: str | None = Cookie(default=None),
+) -> None:
+    """Raise 401/403 unless the caller is authorized for an admin-only route."""
+    if ACCESS_MODE != "admin_viewer":
+        if not API_KEY:
+            return
+        if x_api_key != API_KEY:
+            raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key")
         return
-    if x_api_key != API_KEY:
-        raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key")
+    if API_KEY and x_api_key == API_KEY:
+        return
+    if _is_valid_admin_session(vault_admin_session):
+        return
+    raise HTTPException(status_code=403, detail="Admin login required")
+
+
+# Kept for any external caller/script still using the old name.
+require_api_key = require_admin
+
+
+class AdminLoginRequest(BaseModel):
+    password: str
+
+
+@app.post("/admin/login")
+async def admin_login(req: AdminLoginRequest, response: Response) -> dict:
+    """POST /admin/login — exchange ADMIN_PASSWORD for an admin session cookie."""
+    if ACCESS_MODE != "admin_viewer":
+        raise HTTPException(
+            status_code=400,
+            detail="Admin login is only available when ACCESS_MODE=admin_viewer",
+        )
+    if not ADMIN_PASSWORD or not hmac.compare_digest(req.password, ADMIN_PASSWORD):
+        raise HTTPException(status_code=401, detail="Incorrect password")
+    response.set_cookie(
+        key=ADMIN_COOKIE_NAME,
+        value=_admin_session_token(),
+        httponly=True,
+        samesite="lax",
+        secure=COOKIE_SECURE,
+        max_age=60 * 60 * 24 * 7,
+    )
+    return {"status": "ok"}
+
+
+@app.post("/admin/logout")
+async def admin_logout(response: Response) -> dict:
+    """POST /admin/logout — clear the admin session cookie."""
+    response.delete_cookie(ADMIN_COOKIE_NAME)
+    return {"status": "ok"}
+
+
+@app.get("/admin/session")
+async def admin_session(vault_admin_session: str | None = Cookie(default=None)) -> dict:
+    """GET /admin/session — lets the frontend know the access mode and whether
+    the current browser session is logged in as admin, to show/hide admin UI."""
+    return {
+        "access_mode": ACCESS_MODE,
+        "is_admin": ACCESS_MODE != "admin_viewer"
+        or _is_valid_admin_session(vault_admin_session),
+    }
 
 
 # ── global exception handler — never leak stack traces ────────────────────────
@@ -372,7 +469,7 @@ async def health():
     return {"status": "ok"}
 
 
-@app.post("/ingest", dependencies=[Depends(require_api_key)])
+@app.post("/ingest", dependencies=[Depends(require_admin)])
 async def ingest(file: UploadFile = File(...), pipeline: str = Form("auto")):
     """POST /ingest — save the uploaded file and start a background ingest job."""
     dest = INPUT_DIR / file.filename
@@ -436,7 +533,7 @@ def _run_eval_sync(job_id: str) -> None:
         _eval_jobs[job_id].update({"status": "failed", "error": str(exc)})
 
 
-@app.post("/eval/run", dependencies=[Depends(require_api_key)])
+@app.post("/eval/run", dependencies=[Depends(require_admin)])
 async def eval_run():
     """POST /eval/run — kick off the full benchmark in the background (real LLM calls)."""
     job_id = str(uuid.uuid4())
@@ -482,7 +579,7 @@ async def submit_feedback(req: FeedbackRequest):
     return add_feedback(req.question, req.answer, req.rating, req.reason, req.sources)
 
 
-@app.get("/feedback", dependencies=[Depends(require_api_key)])
+@app.get("/feedback", dependencies=[Depends(require_admin)])
 async def get_feedback():
     """GET /feedback — list all feedback records for the admin queue, newest first."""
     from src.feedback_store import list_feedback
@@ -495,7 +592,7 @@ class FeedbackResolveRequest(BaseModel):
     note: str | None = None
 
 
-@app.patch("/feedback/{feedback_id}", dependencies=[Depends(require_api_key)])
+@app.patch("/feedback/{feedback_id}", dependencies=[Depends(require_admin)])
 async def resolve_feedback_endpoint(feedback_id: str, req: FeedbackResolveRequest):
     """PATCH /feedback/{id} — mark a feedback record resolved with an admin action."""
     from src.feedback_store import resolve_feedback
@@ -662,7 +759,7 @@ def _tools_used(tool_calls: list[str]) -> list[str]:
     return seen
 
 
-@app.delete("/collection", dependencies=[Depends(require_api_key)])
+@app.delete("/collection", dependencies=[Depends(require_admin)])
 async def clear_collection():
     """DELETE /collection — drop the Qdrant collection and reset the agent."""
     base = QDRANT_URL.rstrip("/")
@@ -671,7 +768,7 @@ async def clear_collection():
     return {"status": "cleared"}
 
 
-@app.delete("/documents/{filename:path}", dependencies=[Depends(require_api_key)])
+@app.delete("/documents/{filename:path}", dependencies=[Depends(require_admin)])
 async def delete_document(filename: str):
     """Remove all Qdrant points for a single file."""
     try:
@@ -682,7 +779,7 @@ async def delete_document(filename: str):
     return {"status": "deleted", "filename": filename, "points_deleted": deleted}
 
 
-@app.post("/documents/{filename:path}/reindex", dependencies=[Depends(require_api_key)])
+@app.post("/documents/{filename:path}/reindex", dependencies=[Depends(require_admin)])
 async def reindex_document(filename: str, pipeline: str = Form("auto")):
     """Re-run ingestion on a file already stored in data/input — idempotent point
     IDs overwrite its existing Qdrant points in place rather than duplicating them."""
@@ -711,7 +808,7 @@ class DriveSyncRequest(BaseModel):
     remove_deleted: bool = False
 
 
-@app.post("/connectors/google-drive/configure", dependencies=[Depends(require_api_key)])
+@app.post("/connectors/google-drive/configure", dependencies=[Depends(require_admin)])
 async def configure_google_drive(req: DriveConfigureRequest):
     """POST /connectors/google-drive/configure — set which Drive folder to sync from.
 
@@ -724,7 +821,7 @@ async def configure_google_drive(req: DriveConfigureRequest):
     return configure(req.folder_id, req.service_account_file)
 
 
-@app.post("/connectors/google-drive/sync", dependencies=[Depends(require_api_key)])
+@app.post("/connectors/google-drive/sync", dependencies=[Depends(require_admin)])
 async def sync_google_drive(req: DriveSyncRequest):
     """POST /connectors/google-drive/sync — pull new/changed files and ingest them.
 

@@ -47,6 +47,19 @@ class Settings(BaseSettings):
     excel_agent_api_key: SecretStr = SecretStr("")
     api_key: SecretStr = SecretStr("")
 
+    # Optional admin/viewer access mode -- "open" (default) preserves today's
+    # unauthenticated dev behavior everywhere. "admin_viewer" requires a
+    # logged-in admin session (or the existing X-API-Key header) for
+    # upload/reprocess/delete/clear/eval-run/feedback-resolve/drive-config,
+    # while asking questions, browsing evidence, and reading conversations
+    # stay open to anyone. See api.py's require_admin.
+    access_mode: str = "open"
+    admin_password: SecretStr = SecretStr("")
+    session_secret: SecretStr = SecretStr("")
+    # False for local HTTP dev (default); set True once served over HTTPS,
+    # otherwise browsers silently refuse to send the cookie back at all.
+    cookie_secure: bool = False
+
     # Chunking LLM
     chunk_llm_api_base: str = "https://openrouter.ai/api/v1"
     chunk_llm_model: str = "google/gemma-4-31b-it:free"
@@ -156,6 +169,10 @@ FREE_LLM_API_KEY: str = _s.free_llm_api_key.get_secret_value()
 CHUNK_LLM_API_KEY: str = _s.chunk_llm_api_key.get_secret_value()
 EXCEL_AGENT_API_KEY: str = _s.excel_agent_api_key.get_secret_value()
 API_KEY: str = _s.api_key.get_secret_value()
+ACCESS_MODE: str = _s.access_mode
+ADMIN_PASSWORD: str = _s.admin_password.get_secret_value()
+SESSION_SECRET: str = _s.session_secret.get_secret_value()
+COOKIE_SECURE: bool = _s.cookie_secure
 
 CHUNK_LLM_API_BASE: str = _s.chunk_llm_api_base
 CHUNK_LLM_MODEL: str = _s.chunk_llm_model
