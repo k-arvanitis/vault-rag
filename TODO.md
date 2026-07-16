@@ -1042,3 +1042,53 @@ confirmation this round:
   (1) a citation row click opens the inspector with the row highlighted,
   (2) the cleaned table renders as an actual table, not raw markdown text,
   (3) a PDF citation for an eval-corpus-only doc (e.g. doc_002) now loads.
+
+## 2026-07-16, later same day — inspector cleanup, notes, file counts, ref bug
+
+- [x] **Excel inspector simplified**: dropped the schema/sample-values
+  section and the per-chunk "Indexed chunk" cards from the Excel/CSV
+  inspector — user just wants the cleaned table, per feedback.
+- [x] **Cleaned-table row highlight**: the citation row-click highlight only
+  ever hit the raw table (`SheetCompare`'s cleaned pane rendered via
+  `ReactMarkdown`, which can't be ref'd per-row). Now parses the cleaned
+  markdown table manually (`parseMarkdownTable`) so both panes highlight
+  and scroll to the same matched row.
+- [x] **Extracted notes surfaced**: `excel_cleaner`'s LLM-identified notes
+  (footnotes/titles stripped out of the cleaned data) were computed at
+  ingestion time and silently discarded — `_load_into_duckdb` only ever
+  returned column names. Now threaded through into the per-sheet `.md`
+  file as a trailing `**Notes:**` section, rendered below the raw/cleaned
+  tables. **Only applies to newly ingested files** — existing indexed
+  Excel/CSV docs need a reingest (real LLM calls, not instant/free) to
+  backfill notes. Not run automatically.
+- [x] **Page/sheet/row counts in the sidebar**: derived entirely from
+  metadata already on Qdrant payloads (page numbers, sheet_name, the
+  document_summary chunk's own "N rows." lines) — no extra file I/O per
+  document. Guard by file extension added after finding live that a
+  stray duplicate PDF entry also carried sheet_name/table_N metadata
+  from its own embedded-table extraction, which would have wrongly shown
+  "N sheets" on a PDF without it.
+- [x] **"Ask across" popover flickering open/closed** — this one got an
+  actual confirmed root cause instead of another guess. User's own
+  description ("popover flickers/jumps open-close") plus this session's
+  track record of guessing wrong (the stuck-inspector saga above) meant
+  it was worth spending the effort to observe it directly: wrote a
+  throwaway headless Playwright probe (no real browser available on this
+  box) that opened the app, clicked the button, and dumped console
+  errors. Found: `Warning: Function components cannot be given refs...
+  Check the render method of PopoverTrigger, at Button`. `components/
+  ui/button.tsx`'s `Button` was a plain function component, not wrapped
+  in `React.forwardRef` — every trigger that renders one via Base UI's
+  `render` prop (this popover, AppHeader's dropdowns, Sidebar/SourceCard
+  tooltips, MessageList's citation popover) had no real DOM ref for Base
+  UI to anchor positioning/open-state to. Fixed by wrapping `Button` in
+  `forwardRef`; re-ran the same probe and confirmed the popover now
+  stays open steadily across a 1.5s sampling window (previously it
+  wasn't opening at all in the probe, consistent with unstable
+  open-state tracking). Found the identical bug in `Textarea` while
+  investigating (ChatPanel's auto-focus `textareaRef.current?.focus()`
+  was silently a no-op) and fixed it the same way.
+- [ ] **Document search bar** (requested same round) — not yet started.
+
+Both new asks (search bar, and further UI polish) are still open — see
+the running TODO list below rather than assuming complete.
