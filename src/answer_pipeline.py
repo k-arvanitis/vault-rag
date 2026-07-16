@@ -187,7 +187,7 @@ _LEAKED_HEADER_RE = re.compile(
 # correspond to the trace panel's, so they would be misleading. Only [N] within
 # the retrieved-chunk range (1..MAX_TOOL_RESULTS) is treated as a citation — a
 # bracketed year like [2024] or any larger number is left alone.
-_INLINE_CITATION_RE = re.compile(r"[ \t]*\[(\d+)\]")
+_INLINE_CITATION_RE = re.compile(r"([ \t]*)\[(\d+)\]")
 _BLANK_LINES_RE = re.compile(r"\n{3,}")
 
 # gpt-oss's "harmony" response format splits output into named channels
@@ -200,22 +200,107 @@ _BLANK_LINES_RE = re.compile(r"\n{3,}")
 # of these words ("the final amount", "further analysis shows") always has a
 # space after, so this can't strip real content.
 _LEAKED_CHANNEL_MARKER_RE = re.compile(r"\b(?:analysis|final)(?=[A-Z0-9])")
-_INLINE_CITATION_RE = re.compile(r"[ \t]*\[(\d+)\]")
+_INLINE_CITATION_RE = re.compile(r"([ \t]*)\[(\d+)\]")
 _BLANK_LINES_RE = re.compile(r"\n{3,}")
 
 
-def _strip_inline_citation(match: re.Match) -> str:
-    """Drop a [N] marker only when N is a plausible retrieved-chunk index."""
-    return "" if 1 <= int(match.group(1)) <= MAX_TOOL_RESULTS else match.group(0)
+def _chunk_identity(raw: str) -> tuple[int, str, str] | None:
+    """Parse one collected chunk's (marker_number, filename, location) identity,
+    the same filename/location derivation parse_sources uses, so a citation_map
+    built from this lines up with the final sources list's own (filename,
+    location) pairs. Returns None for a malformed/headerless entry."""
+    lines = raw.strip().splitlines()
+    if not lines:
+        return None
+    m = _HEADER_RE.match(lines[0])
+    if not m:
+        return None
+    marker_m = re.match(r"^\[?(\d+)\]?", lines[0])
+    if not marker_m:
+        return None
+    filename = m.group("file")
+    if filename.startswith("eval/data/raw/"):
+        filename = filename[len("eval/data/raw/") :]
+    filename = _resolve_original_name(filename)
+    loc_key, loc_val = m.group("loc_key") or "", m.group("loc_val") or ""
+    body = "\n".join(lines[1:]).strip()
+    is_doc_summary = loc_key == "chunk" and loc_val == "-1"
+    is_sheet_summary = loc_key == "sheet" and "Sheet summary:" in body[:200]
+    if is_doc_summary:
+        location = "document summary"
+    elif is_sheet_summary:
+        location = f"sheet summary: {loc_val}"
+    elif loc_key == "chunk":
+        location = f"chunk {loc_val}"
+    elif loc_key == "sheet":
+        location = f"sheet: {loc_val}"
+    elif loc_key == "part":
+        location = f"part {loc_val}"
+    else:
+        location = ""
+    return int(marker_m.group(1)), filename, location
 
 
-def strip_leaked_headers(text: str) -> str:
+def build_citation_map(collected: list[str], sources: list[dict]) -> dict[int, int]:
+    """Map the LAST tool call's raw [N] marker numbers to their 1-based position
+    in the final `sources` list, so inline [N] citations the model emits can be
+    renumbered to match what the UI actually shows instead of being stripped.
+
+    Only the last call is used: the model composes its final answer text
+    immediately after reading the most recent ToolMessage, so any [N] it
+    emits is that call's numbering — earlier calls' numbering isn't in scope
+    (see _INLINE_CITATION_RE's docstring on why raw numbering is otherwise
+    unreliable). A marker whose source didn't survive into the final
+    (deduped, capped) sources list is simply absent from the map, and falls
+    back to the old strip-on-sight behavior in strip_leaked_headers.
+    """
+    calls: list[list[str]] = [[]]
+    for raw in collected:
+        if raw == _CALL_BOUNDARY:
+            calls.append([])
+        else:
+            calls[-1].append(raw)
+    calls = [c for c in calls if c]
+    if not calls:
+        return {}
+    final_positions = {
+        (s["filename"], s["location"]): i + 1 for i, s in enumerate(sources)
+    }
+    citation_map: dict[int, int] = {}
+    for raw in calls[-1]:
+        identity = _chunk_identity(raw)
+        if identity is None:
+            continue
+        marker, filename, location = identity
+        position = final_positions.get((filename, location))
+        if position is not None:
+            citation_map[marker] = position
+    return citation_map
+
+
+def _strip_inline_citation(match: re.Match, citation_map: dict[int, int] | None) -> str:
+    """Renumber a [N] marker to its real position in `sources` when resolvable,
+    otherwise drop it (leading whitespace included) if N is a plausible (but
+    unresolvable) retrieved-chunk index."""
+    leading, n = match.group(1), int(match.group(2))
+    if citation_map and n in citation_map:
+        return f"{leading}[{citation_map[n]}]"
+    return "" if 1 <= n <= MAX_TOOL_RESULTS else match.group(0)
+
+
+def strip_leaked_headers(text: str, citation_map: dict[int, int] | None = None) -> str:
     """Remove raw chunk-header lines, leaked reasoning-channel markers, and
-    inline [N] citation markers the LLM echoes into its answer — the trace
-    panel/eval evidence is the source list."""
+    inline [N] citation markers the LLM echoes into its answer.
+
+    citation_map (see build_citation_map): when a [N] marker resolves to a
+    real source, it's renumbered to that source's position instead of being
+    stripped — true inline citations. Unresolvable markers are stripped as
+    before (the trace panel/eval evidence is the source list)."""
     cleaned = _LEAKED_HEADER_RE.sub("", text)
     cleaned = _LEAKED_CHANNEL_MARKER_RE.sub("", cleaned)
-    cleaned = _INLINE_CITATION_RE.sub(_strip_inline_citation, cleaned)
+    cleaned = _INLINE_CITATION_RE.sub(
+        lambda m: _strip_inline_citation(m, citation_map), cleaned
+    )
     cleaned = _BLANK_LINES_RE.sub("\n\n", cleaned)
     return cleaned.strip()
 
@@ -639,7 +724,8 @@ def answer_query(
         if _is_multi_part_query(question)
         else [question]
     )
-    if len(parts) == 1:
+    is_single_part = len(parts) == 1
+    if is_single_part:
         answer, collected, excel_trace = answer_one(
             agent, question, trace=trace, forced_doc_id=forced_doc_id
         )
@@ -673,11 +759,16 @@ def answer_query(
             "excel_citations": excel_citations_all,
         }
 
-    answer = strip_leaked_headers(answer)
     sources = parse_sources(collected)
     sources += _excel_citations_to_sources(
         excel_trace.get("excel_citations") or [], existing=sources
     )
+    # Renumbering the model's own [N] markers to the final sources list only
+    # makes sense when the whole answer came from one agent run — a merged
+    # multi-part answer mixes markers from several independent runs, each
+    # with its own unrelated numbering, so those fall back to strip-on-sight.
+    citation_map = build_citation_map(collected, sources) if is_single_part else None
+    answer = strip_leaked_headers(answer, citation_map=citation_map)
     sql_list = [s for s in (excel_trace.get("sql") or []) if s]
     kept_filenames = {s["filename"] for s in sources}
     rejected_sources = []

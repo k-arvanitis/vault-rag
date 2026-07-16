@@ -10,6 +10,7 @@ from src.answer_pipeline import (
     _title_shortcut_answer,
     answer_one,
     answer_query,
+    build_citation_map,
     parse_sources,
     strip_leaked_headers,
 )
@@ -191,6 +192,57 @@ class TestParseSourcesContract:
         filenames = {s["filename"] for s in sources}
         assert len(sources) == 8
         assert "doc_b.pdf" in filenames
+
+
+class TestInlineCitationRenumbering:
+    """The model's [N] markers number the last tool call's raw hits, which
+    don't match the final deduped/reordered sources list -- build_citation_map
+    resolves each to its real position so a true inline [N] can be shown
+    instead of stripped."""
+
+    def _one_call(self, *headers_and_bodies: tuple[str, str]) -> list[str]:
+        return [f"{h}\n{b}" for h, b in headers_and_bodies]
+
+    def test_renumbers_marker_to_final_source_position(self):
+        collected = self._one_call(
+            ("[1] file=doc_a.pdf chunk=3 page=2 score=0.5", "First chunk text."),
+            ("[2] file=doc_b.pdf chunk=1 page=1 score=0.9", "Second chunk text."),
+        )
+        sources = parse_sources(collected)
+        # parse_sources iterates calls in reverse and there's only one call here,
+        # so order matches insertion: doc_a then doc_b (positions 1, 2).
+        citation_map = build_citation_map(collected, sources)
+        assert citation_map == {1: 1, 2: 2}
+        answer = strip_leaked_headers("The value is X [1] and Y [2].", citation_map)
+        assert answer == "The value is X [1] and Y [2]."
+
+    def test_renumbers_marker_when_diversity_cap_reorders_positions(self):
+        """parse_sources moves a file's second chunk after every other distinct
+        file's first chunk (the 8-cap diversity guarantee) -- the model's raw
+        marker order and the final sources order can genuinely diverge."""
+        collected = self._one_call(
+            ("[1] file=doc_a.pdf chunk=1 page=1 score=0.9", "Doc A first chunk."),
+            ("[2] file=doc_a.pdf chunk=2 page=2 score=0.8", "Doc A second chunk."),
+            ("[3] file=doc_b.pdf chunk=1 page=1 score=0.7", "Doc B first chunk."),
+        )
+        sources = parse_sources(collected)
+        filenames_in_order = [s["filename"] for s in sources]
+        assert filenames_in_order == ["doc_a.pdf", "doc_b.pdf", "doc_a.pdf"]
+        citation_map = build_citation_map(collected, sources)
+        assert citation_map == {1: 1, 2: 3, 3: 2}
+
+    def test_unresolvable_marker_in_range_still_stripped(self):
+        """A marker the model emitted that doesn't correspond to any chunk in
+        the last call (hallucinated, or referencing an earlier call) falls
+        back to the old strip-on-sight behavior rather than leaking a wrong
+        number."""
+        answer = strip_leaked_headers("The value is X [1].", citation_map={})
+        assert answer == "The value is X."
+
+    def test_marker_beyond_tool_result_range_left_alone(self):
+        """A bracketed year like [2024] is never a citation marker -- must not
+        be touched even with an empty citation_map."""
+        assert strip_leaked_headers("Filed in [2024].", citation_map={}) == "Filed in [2024]."
 
 
 class TestExcelCitationsToSources:

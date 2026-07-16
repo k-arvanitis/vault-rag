@@ -817,3 +817,29 @@ store/cache files. No known bugs there — just not scrutinized as hard.
 **Deliberately not pursued:** deep gpt-oss reasoning-channel leak (whole-
 answer-as-raw-reasoning variant, n=1 sighting, ~line 570 above) — reopen
 only if it recurs at meaningful frequency in a future eval run.
+
+## Session continued, 2026-07-16 — UI-blocking backend gaps
+
+Working through the 4 backend gaps flagged in the UI refinement section
+(inline citations, excel citations, retry, streaming) plus phase 8/UI tests.
+
+- [x] **Excel/SQL citations** (`9a72beb`): query_excel now threads the
+  matched DuckDB row text through to a real citation, merged into
+  `answer_query`'s `sources` list. Verified live: a table-lookup question
+  now returns a real source with `sheet` + `quote` for SpreadsheetEvidence
+  to highlight against — previously always `sources: []`.
+- [x] **Inline citation markers**: `build_citation_map` in
+  `src/answer_pipeline.py` maps the last tool call's raw `[N]` markers to
+  their real 1-based position in the final (deduped/reordered) `sources`
+  list; `strip_leaked_headers` renumbers resolvable markers instead of
+  stripping them. Scoped to single-part questions only (multi-part answers
+  merge several independent agent runs' unrelated numbering — deliberately
+  not resolved, falls back to the old strip-on-sight behavior). Frontend:
+  `MessageList.tsx`'s new `AnswerContent` renders a resolved `[N]` as a real
+  `CitationChip` inline instead of dead text. 4 new unit tests including the
+  diversity-cap reorder case (marker order and final position genuinely
+  diverge). **Not verified live** — `GENERATION_API_BASE` (OpenRouter) is
+  returning `400 no_db_connection` on every attempt right now (3 retries),
+  OpenRouter's own backend, not this change (the same endpoint served the
+  PDF smoke-test question fine earlier). Retry once the endpoint recovers;
+  logic itself is covered by unit tests including a real divergence case.

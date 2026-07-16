@@ -62,11 +62,9 @@ function WaitingIndicator({ elapsedSeconds }: { elapsedSeconds: number }) {
  * itself (or the row label) is the PRIMARY action — it selects this citation
  * in the Evidence panel and switches to it, staying in the chat. "Open
  * source" inside the popover is a deliberately separate, secondary action
- * that leaves the chat for the full document inspector. Citations currently
- * only render as a summary after the answer, not inline after each claim,
- * because the backend doesn't map individual claims to sources (see
- * TODO.md) — a fragile client-side text match was rejected in favor of this
- * honest fallback, which the product spec explicitly allows. */
+ * that leaves the chat for the full document inspector. Used both inline
+ * (AnswerContent, when the backend resolves a real [N] marker) and in the
+ * SourcesUsed summary below the answer. */
 function CitationChip({
   citation,
   messageSources,
@@ -115,6 +113,73 @@ function CitationChip({
         )}
       </PopoverContent>
     </Popover>
+  );
+}
+
+const INLINE_CITATION_RE = /\[(\d+)\]/g;
+
+/** Renders the answer with inline [N] markers as real CitationChips instead of
+ * plain text — the backend only ever emits an [N] that resolves to a real
+ * position in `sources` (see build_citation_map in answer_pipeline.py); any
+ * marker it couldn't resolve was already stripped server-side. Splits on the
+ * marker and renders each text segment through its own ReactMarkdown (p
+ * unwrapped to a fragment so it flows inline) — a reasonable v1 for the
+ * common single-paragraph case; a multi-paragraph answer with citations
+ * would have paragraph breaks flattened, since markdown block structure
+ * isn't reparsed across the split. Falls back to plain ReactMarkdown when
+ * there are no sources to resolve against or no markers in the text. */
+function AnswerContent({
+  content,
+  sources,
+  onSelectEvidence,
+  onOpenFullSource,
+}: {
+  content: string;
+  sources: Source[];
+  onSelectEvidence?: (target: InspectTarget, messageSources: Source[]) => void;
+  onOpenFullSource?: (target: InspectTarget) => void;
+}) {
+  INLINE_CITATION_RE.lastIndex = 0;
+  if (sources.length === 0 || !INLINE_CITATION_RE.test(content)) {
+    return <ReactMarkdown>{content}</ReactMarkdown>;
+  }
+
+  const segments: (string | number)[] = [];
+  let lastIndex = 0;
+  INLINE_CITATION_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = INLINE_CITATION_RE.exec(content))) {
+    segments.push(content.slice(lastIndex, match.index));
+    segments.push(Number(match[1]));
+    lastIndex = match.index + match[0].length;
+  }
+  segments.push(content.slice(lastIndex));
+
+  const unwrapP = { p: ({ children }: { children?: React.ReactNode }) => <>{children}</> };
+
+  return (
+    <p>
+      {segments.map((segment, i) => {
+        if (typeof segment === "string") {
+          return segment ? (
+            <ReactMarkdown key={i} components={unwrapP}>
+              {segment}
+            </ReactMarkdown>
+          ) : null;
+        }
+        const source = sources[segment - 1];
+        if (!source) return `[${segment}]`;
+        return (
+          <CitationChip
+            key={i}
+            citation={toCitation(source, segment)}
+            messageSources={sources}
+            onSelectEvidence={onSelectEvidence}
+            onOpenFullSource={onOpenFullSource}
+          />
+        );
+      })}
+    </p>
   );
 }
 
@@ -310,7 +375,12 @@ export default function MessageList({
           <div key={msg.id} className="flex items-start justify-start">
             <div className="max-w-[85%]">
               <div className="prose-ui rounded-xl rounded-bl-sm border border-border bg-card px-4 py-2 text-sm text-card-foreground">
-                <ReactMarkdown>{msg.content}</ReactMarkdown>
+                <AnswerContent
+                  content={msg.content}
+                  sources={msg.sources ?? []}
+                  onSelectEvidence={onSelectEvidence}
+                  onOpenFullSource={onOpenFullSource}
+                />
               </div>
               {msg.sources && msg.sources.length > 0 ? (
                 <SourcesUsed
