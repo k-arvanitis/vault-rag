@@ -116,6 +116,38 @@ export default function ChatPanel({
     [conversationId, onConversationSaved]
   );
 
+  // Shared by send() (new user turn) and retry() (re-ask an existing question
+  // in place) — /query is stateless per-question (no history is threaded
+  // today), so a retry is just firing the same question again and writing
+  // the result into the given assistant message slot instead of appending.
+  const ask = useCallback(
+    async (question: string, onResult: (data: Awaited<ReturnType<typeof queryDocuments>>) => void) => {
+      setStreaming(true);
+      const controller = new AbortController();
+      abortRef.current = controller;
+      try {
+        const data = await queryDocuments(question, scopedDocIds, controller.signal);
+        onResult(data);
+        onTrace?.({
+          sources: data.sources ?? [],
+          rejected_sources: data.rejected_sources ?? [],
+          sql: data.sql ?? [],
+          tools_used: data.tools_used ?? [],
+        });
+      } catch (err) {
+        if ((err as Error).name === "AbortError") {
+          onToast("Cancelled");
+        } else {
+          onToast((err as Error).message || "Query failed", "error");
+        }
+      } finally {
+        abortRef.current = null;
+        setStreaming(false);
+      }
+    },
+    [onToast, onTrace, scopedDocIds]
+  );
+
   const send = useCallback(async () => {
     const question = input.trim();
     if (!question || streaming) return;
@@ -125,13 +157,8 @@ export default function ChatPanel({
 
     const userMsg: Message = { id: nextId(), role: "user", content: question };
     setMessages((prev) => [...prev, userMsg]);
-    setStreaming(true);
 
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    try {
-      const data = await queryDocuments(question, scopedDocIds, controller.signal);
+    await ask(question, (data) => {
       const assistantMsg: Message = {
         id: nextId(),
         role: "assistant",
@@ -143,23 +170,30 @@ export default function ChatPanel({
         persist(next);
         return next;
       });
-      onTrace?.({
-        sources: data.sources ?? [],
-        rejected_sources: data.rejected_sources ?? [],
-        sql: data.sql ?? [],
-        tools_used: data.tools_used ?? [],
+    });
+  }, [input, streaming, ask, persist]);
+
+  const retry = useCallback(
+    async (assistantMessageId: string) => {
+      if (streaming) return;
+      const idx = messages.findIndex((m) => m.id === assistantMessageId);
+      const userMsg = idx > 0 ? messages[idx - 1] : null;
+      if (!userMsg || userMsg.role !== "user") return;
+
+      await ask(userMsg.content, (data) => {
+        setMessages((prev) => {
+          const next = prev.map((m) =>
+            m.id === assistantMessageId
+              ? { ...m, content: data.answer, sources: data.sources ?? [] }
+              : m
+          );
+          persist(next);
+          return next;
+        });
       });
-    } catch (err) {
-      if ((err as Error).name === "AbortError") {
-        onToast("Cancelled");
-      } else {
-        onToast((err as Error).message || "Query failed", "error");
-      }
-    } finally {
-      abortRef.current = null;
-      setStreaming(false);
-    }
-  }, [input, streaming, onToast, onTrace, persist, scopedDocIds]);
+    },
+    [messages, streaming, ask, persist]
+  );
 
   const cancel = useCallback(() => {
     abortRef.current?.abort();
@@ -202,6 +236,7 @@ export default function ChatPanel({
         elapsedSeconds={elapsedSeconds}
         onSelectEvidence={onSelectEvidence}
         onOpenFullSource={onOpenFullSource}
+        onRetry={retry}
         hasSources={hasSources}
         onExamplePick={(text) => {
           setInput(text);

@@ -39,7 +39,13 @@ in TODO item 2 and CLAUDE.md's vLLM cheatsheet. Config-only change, not backend 
   today — `ChatPanel.tsx`'s `send()` awaits the full `/query` response; the `streaming`
   state is really just a loading spinner. Nothing to "preserve" because it doesn't exist.
   A real fix means the backend needs an SSE/chunked response endpoint. Flag, don't fake.
-- **Retry** on a message doesn't exist either — only new-conversation. Same category.
+- ~~**Retry** on a message doesn't exist either — only new-conversation. Same category.~~
+  **Done, 2026-07-16**: turned out to need no backend change at all — `/query`
+  is already stateless per-question (no history is threaded today), so retry
+  is just re-asking the same question and replacing that assistant message's
+  content/sources in place. `ChatPanel.tsx`'s `send()` refactored to share an
+  `ask()` helper with a new `retry()`; `MessageList.tsx` shows a retry icon
+  next to the feedback widget on every assistant turn.
 
 ### Phased execution order (highest product-value / lowest risk first)
 1. [x] ~~Backend generation reliability fix (local vLLM)~~ — not done as planned (GPU

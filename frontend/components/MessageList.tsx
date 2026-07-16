@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { ThumbsUp, ThumbsDown, Check } from "lucide-react";
+import { ThumbsUp, ThumbsDown, Check, RotateCcw } from "lucide-react";
 import { submitFeedback, type Source, type FeedbackReason, type InspectTarget } from "@/lib/api";
 import { toCitation, type Citation } from "@/lib/product";
 import { cn } from "@/lib/utils";
@@ -30,6 +30,10 @@ interface Props {
   /** Secondary action: opens the full-screen document inspector. Only reached
    * via an explicit "Open source" link, never the citation click itself. */
   onOpenFullSource?: (target: InspectTarget) => void;
+  /** Re-asks the question preceding this assistant message and replaces its
+   * content/sources in place. No history is sent today, so this is just
+   * firing the same question again — see ChatPanel.tsx's ask()/retry(). */
+  onRetry?: (assistantMessageId: string) => void;
   /** Whether at least one source is indexed — drives the empty state's copy
    * and whether the example prompts are clickable. */
   hasSources?: boolean;
@@ -324,6 +328,7 @@ export default function MessageList({
   elapsedSeconds = 0,
   onSelectEvidence,
   onOpenFullSource,
+  onRetry,
   hasSources,
   onExamplePick,
 }: Props) {
@@ -395,11 +400,31 @@ export default function MessageList({
                   </p>
                 )
               )}
-              <FeedbackWidget
-                question={messages[i - 1]?.content ?? ""}
-                answer={msg.content}
-                sources={msg.sources ?? []}
-              />
+              <div className="flex items-center">
+                <FeedbackWidget
+                  question={messages[i - 1]?.content ?? ""}
+                  answer={msg.content}
+                  sources={msg.sources ?? []}
+                />
+                {onRetry && (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          onClick={() => onRetry(msg.id)}
+                          disabled={streaming}
+                          aria-label="Retry this answer"
+                        />
+                      }
+                    >
+                      <RotateCcw />
+                    </TooltipTrigger>
+                    <TooltipContent>Retry</TooltipContent>
+                  </Tooltip>
+                )}
+              </div>
             </div>
           </div>
         )
