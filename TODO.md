@@ -53,6 +53,23 @@ in TODO item 2 and CLAUDE.md's vLLM cheatsheet. Config-only change, not backend 
   keeps running stream_answer to completion (a sync generator in a worker
   thread can't be cancelled from the async side without extra plumbing) —
   wasted compute, not a correctness bug.
+  **Caught in review before this was called done**: the first cut of the
+  single-part live path silently dropped answer_one's Unsupported-retry
+  (Groq/temp=0 nondeterminism occasionally returns Unsupported despite the
+  answer existing) — exactly the question type that retry exists for, since
+  ChatPanel now uses `/query/stream` exclusively. Fixed: a first-attempt
+  "Unsupported" now re-runs once via `run_once` (non-streamed, same
+  `_RETRY_INSTRUCTION` as answer_one) and the retry's result, if it improved,
+  replaces the streamed answer in the final `done` event. Covered by a new
+  test (`test_retries_first_attempt_unsupported_like_answer_one`) and
+  re-verified live via curl after the fix.
+  **Not browser-verified**: #13/#14/#15 all changed frontend behavior
+  (inline citation rendering, retry button, the whole chat flow moving to
+  SSE) but were only checked with `tsc --noEmit` — this box has no browser
+  and the user's is on their laptop over SSH. Typechecking is not behavior
+  verification; flagging this honestly rather than claiming "done" on the UI
+  side. Should be manually clicked through in a real browser before relying
+  on it for a demo.
 - ~~**Retry** on a message doesn't exist either — only new-conversation. Same category.~~
   **Done, 2026-07-16**: turned out to need no backend change at all — `/query`
   is already stateless per-question (no history is threaded today), so retry

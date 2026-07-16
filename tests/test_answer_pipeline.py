@@ -271,6 +271,31 @@ class TestStreamAnswer:
         assert final["answer"] == "Hello world."
         assert final["tools"] == ["search_knowledge_base"]
 
+    def test_retries_first_attempt_unsupported_like_answer_one(self):
+        """answer_one retries a bare "Unsupported" first attempt (real
+        Groq/temp=0 nondeterminism, see its docstring) -- the single-part
+        streaming path must keep that safety net, not silently drop it just
+        because it can't be done live token-by-token."""
+
+        def fake_stream_agent(agent, query, **kwargs):
+            yield "Unsupported"
+
+        with (
+            patch("src.answer_pipeline.route_question", return_value={}),
+            patch("src.answer_pipeline.stream_agent", side_effect=fake_stream_agent),
+            patch(
+                "src.answer_pipeline.run_once",
+                return_value=("The real answer.", [], {"sql": [], "tools": ["search_knowledge_base"], "rejected": []}),
+            ) as mock_run_once,
+        ):
+            events = list(stream_answer(agent=object(), question="What is X?"))
+
+        mock_run_once.assert_called_once()
+        assert mock_run_once.call_args.kwargs["attempt"] == "unsupported-retry"
+        final = events[-1]
+        assert final["done"] is True
+        assert final["answer"] == "The real answer."
+
     def test_comparison_question_falls_back_to_full_pipeline(self):
         canned = {
             "answer": "Doc A allows longer.",

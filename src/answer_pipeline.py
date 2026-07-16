@@ -803,10 +803,17 @@ def stream_answer(
     questions and multi-part splits need their answer's *full text* before
     deciding whether to retry (see answer_one/answer_query) or before the
     parts can be merged, so live token-by-token output isn't available for
-    them; they fall back to the complete non-streaming pipeline and arrive
-    as a single lump token event. A deliberate trade-off, not faked: this
-    trades away the retry safety nets for perceived speed, only for the
-    question types that don't need them to answer correctly in one pass.
+    them; they fall back to the complete non-streaming pipeline (which keeps
+    its retry/merge logic intact) and arrive as a single lump token event.
+
+    The single-part live path keeps answer_one's Unsupported-retry safety net
+    too — it's exactly the question type that retry exists for (Groq/temp=0
+    nondeterminism occasionally returns Unsupported despite the answer
+    existing, see answer_one). A first-attempt "Unsupported" here re-runs
+    once, non-streamed, and the retry's result (if it improved) replaces the
+    streamed answer in the final event — no token events for the retry
+    itself, since the client already replaces its accumulated text with the
+    "done" event's answer rather than appending to it.
 
     The tokens streamed live are the model's raw, uncleaned output — leaked
     header lines, un-renumbered [N] markers — since that cleanup (see
@@ -863,10 +870,23 @@ def stream_answer(
         if token is not None:
             FORCED_DOC_ID.reset(token)
 
+    raw_answer = "".join(raw_tokens).strip()
+    if raw_answer.lower() == "unsupported":
+        r_ans, r_coll, r_tr = run_once(
+            agent, q + _RETRY_INSTRUCTION, attempt="unsupported-retry"
+        )
+        if r_ans and r_ans.lower() != "unsupported":
+            raw_answer = r_ans
+            collected = r_coll
+            sql_trace = r_tr.get("sql") or []
+            tool_calls = r_tr.get("tools") or []
+            rejected = r_tr.get("rejected") or []
+            excel_citations = r_tr.get("excel_citations") or []
+
     sources = parse_sources(collected)
     sources += _excel_citations_to_sources(excel_citations, existing=sources)
     citation_map = build_citation_map(collected, sources)
-    answer = strip_leaked_headers("".join(raw_tokens).strip(), citation_map=citation_map)
+    answer = strip_leaked_headers(raw_answer, citation_map=citation_map)
     sql_list = [s for s in sql_trace if s]
     kept_filenames = {s["filename"] for s in sources}
     rejected_sources = []
