@@ -144,7 +144,39 @@ in TODO item 2 and CLAUDE.md's vLLM cheatsheet. Config-only change, not backend 
        evidence for SQL-answered questions needs `src/tools/excel.py`'s LangGraph
        pipeline to track which DuckDB rows it matched — real SQL-generation work,
        explicitly out of bounds for a UI-only pass.
-8. [ ] Responsive passes (§16), remaining tests (§17), final terminology sweep (§19).
+8. [x] Responsive passes (§16), terminology sweep — **reviewed 2026-07-16, no
+       code changes made** (see note below); remaining tests (§17) split out
+       as its own item, see the frontend-test-coverage entry further down.
+
+**Responsive review (2026-07-16), inspection only — no browser on this box
+to visually confirm, so this is "checked by reading the code," not "checked
+by looking at it":**
+- Main layout (`app/page.tsx`) already does the right thing: `RightPanelTabs`
+  is `hidden ... lg:flex` with a floating button + `Sheet` slide-over
+  fallback below `lg`; `Sidebar`/`SidebarInset` are shadcn's own responsive
+  primitives. `EvidencePanel`/`TraceSidebar` are `w-full` on mobile,
+  `lg:w-[320px]` on desktop — mobile-first, not a fixed desktop width leaking
+  onto small screens.
+- `MessageList`'s bubble widths (`max-w-[70%]`/`max-w-[85%]`) are
+  percentage-based, so they scale with viewport by construction.
+- `app/sources/page.tsx`'s `Table` has no explicit overflow wrapper, but
+  shadcn's own `Table` component (`components/ui/table.tsx`) already wraps
+  itself in `overflow-x-auto` — no page-level gap.
+- No genuine responsive gap surfaced under inspection. Not rewriting working
+  code just to have a diff — didn't touch any layout files this pass.
+
+**Terminology sweep, grep-verified (not guessing at the original §19 spec
+text, which isn't preserved anywhere in this repo — see the phased-plan
+intro's note that the spec was given verbatim by the user and only
+condensed here):**
+- `grep -rn "Technical trace"` across `frontend/`: zero matches — the
+  earlier rename to "Technical details" is complete everywhere.
+- `grep -rn "Parsing\|Chunking\|Embedding"`: zero matches — `UploadZone.tsx`
+  confirmed to only ever show "Uploading/Processing/Ready" to the user,
+  internal stage keys (`parsing`/`chunking`/`embedding`) stay backend-only.
+- The one remaining `History` identifier (`AppHeader.tsx`'s lucide icon
+  import and `onShowHistory` prop) is an internal name, not user-facing text
+  — the visible label already reads "Conversations".
 
 ### Known backend gaps (flagged, not faked with fragile frontend hacks)
 - **Inline citations after each claim (§4).** `_INLINE_CITATION_RE` in
