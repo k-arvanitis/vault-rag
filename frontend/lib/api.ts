@@ -6,6 +6,9 @@ export interface Document {
   chunk_count: number;
   status: "indexed" | "processing" | "failed";
   last_indexed_at: string | null;
+  page_count: number | null;
+  sheet_count: number | null;
+  row_count: number | null;
 }
 
 export interface IngestResponse {

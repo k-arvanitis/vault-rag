@@ -186,20 +186,50 @@ def _run_ingest_sync(
         _jobs[job_id].update({"status": "failed", "stage": "failed", "error": str(exc)})
 
 
+_SHEET_ROW_COUNT_RE = re.compile(r"Sheet summary: (\d+) rows\.")
+
+
 def _payloads_to_docs(payloads: list[dict]) -> list[dict]:
-    """Group Qdrant payloads into one document card per source file."""
+    """Group Qdrant payloads into one document card per source file.
+
+    page_count/sheet_count/row_count are derived from metadata already on
+    these payloads (chunk page numbers, sheet_name, the sheet_summary
+    chunk's own "N rows." text) -- no extra file I/O per document.
+    """
     from collections import defaultdict
 
     counts: dict[str, int] = defaultdict(int)
     last_indexed: dict[str, str] = {}
+    max_page: dict[str, int] = {}
+    sheets: dict[str, set[str]] = defaultdict(set)
+    row_counts: dict[str, int] = defaultdict(int)
     for p in payloads:
         meta = p.get("metadata", {}) or {}
         name = meta.get("source_file") or meta.get("file_name") or ""
-        if name:
-            counts[name] += 1
-            ts = meta.get("ingested_at") or ""
-            if ts > last_indexed.get(name, ""):
-                last_indexed[name] = ts
+        if not name:
+            continue
+        counts[name] += 1
+        ts = meta.get("ingested_at") or ""
+        if ts > last_indexed.get(name, ""):
+            last_indexed[name] = ts
+        suffix = Path(name).suffix.lstrip(".").lower()
+        page = meta.get("page")
+        if suffix == "pdf" and isinstance(page, int):
+            max_page[name] = max(max_page.get(name, 0), page)
+        sheet_name = meta.get("sheet_name")
+        # Guard by extension: a PDF's own embedded-table extraction can also
+        # carry sheet_summary/table_N metadata (found live on a stray
+        # duplicate doc_001 entry) -- without this it'd wrongly show
+        # "N sheets" on what's actually a PDF, not a spreadsheet.
+        if sheet_name and suffix in ("xlsx", "xls", "csv"):
+            sheets[name].add(sheet_name)
+        # Row counts only live in the document_summary chunk's concatenated
+        # "Sheet summary: N rows." lines (one per sheet) -- the sheet_summary
+        # points themselves carry a DuckDB-table discovery blurb, not a count.
+        if suffix in ("xlsx", "xls", "csv") and meta.get("chunk_type") == "document_summary":
+            total = sum(int(n) for n in _SHEET_ROW_COUNT_RE.findall(p.get("content") or ""))
+            if total:
+                row_counts[name] = total
     type_map = {
         "pdf": "PDF",
         "xlsx": "Excel",
@@ -219,6 +249,9 @@ def _payloads_to_docs(payloads: list[dict]) -> list[dict]:
             "chunk_count": count,
             "status": "indexed",
             "last_indexed_at": last_indexed.get(name) or None,
+            "page_count": max_page.get(name),
+            "sheet_count": len(sheets[name]) if name in sheets else None,
+            "row_count": row_counts.get(name) or None,
         }
         for name, count in sorted(counts.items())
     ]

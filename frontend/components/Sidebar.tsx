@@ -117,6 +117,15 @@ export default function Sidebar({ onToast, onInspect, offline }: Props) {
                           </span>
                         )}
                       </div>
+                      {(doc.page_count || doc.sheet_count) && (
+                        <p className="text-[10px] text-muted-foreground">
+                          {doc.page_count && `${doc.page_count} page${doc.page_count === 1 ? "" : "s"}`}
+                          {doc.sheet_count &&
+                            `${doc.sheet_count} sheet${doc.sheet_count === 1 ? "" : "s"}${
+                              doc.row_count ? ` · ${doc.row_count.toLocaleString()} rows` : ""
+                            }`}
+                        </p>
+                      )}
                     </div>
                     <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
                       <Tooltip>

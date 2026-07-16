@@ -1,4 +1,4 @@
-from api import _truncate_markdown_table
+from api import _payloads_to_docs, _truncate_markdown_table
 
 
 class TestTruncateMarkdownTable:
@@ -39,3 +39,38 @@ class TestTruncateMarkdownTable:
         assert "90 more rows omitted" in result
         assert "**Notes:**" in result
         assert "Figures exclude VAT." in result
+
+
+class TestPayloadsToDocs:
+    def test_pdf_gets_page_count_from_max_page_metadata(self):
+        payloads = [
+            {"metadata": {"source_file": "a.pdf", "page": 1}},
+            {"metadata": {"source_file": "a.pdf", "page": 3}},
+        ]
+        docs = _payloads_to_docs(payloads)
+        assert docs[0]["page_count"] == 3
+        assert docs[0]["sheet_count"] is None
+
+    def test_excel_gets_sheet_count_and_row_count(self):
+        payloads = [
+            {"metadata": {"source_file": "b.xlsx", "sheet_name": "Sheet1", "chunk_type": "sheet_summary"}},
+            {"metadata": {"source_file": "b.xlsx", "sheet_name": "Sheet2", "chunk_type": "sheet_summary"}},
+            {
+                "metadata": {"source_file": "b.xlsx", "chunk_type": "document_summary"},
+                "content": "Sheet summary: 100 rows.\n...\nSheet summary: 50 rows.",
+            },
+        ]
+        docs = _payloads_to_docs(payloads)
+        assert docs[0]["sheet_count"] == 2
+        assert docs[0]["row_count"] == 150
+        assert docs[0]["page_count"] is None
+
+    def test_sheet_metadata_on_a_pdf_is_ignored(self):
+        """A PDF's own embedded-table extraction can carry sheet_name/table_N
+        metadata -- found live on a stray duplicate doc entry. Must not show
+        as spreadsheet sheet_count on what's actually a PDF."""
+        payloads = [
+            {"metadata": {"source_file": "c.pdf", "sheet_name": "table_1", "chunk_type": "sheet_summary"}},
+        ]
+        docs = _payloads_to_docs(payloads)
+        assert docs[0]["sheet_count"] is None
