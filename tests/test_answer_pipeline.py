@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from src.answer_pipeline import (
     _TITLE_QUESTION_RE,
+    _excel_citations_to_sources,
     _title_shortcut_answer,
     answer_one,
     answer_query,
@@ -190,6 +191,35 @@ class TestParseSourcesContract:
         filenames = {s["filename"] for s in sources}
         assert len(sources) == 8
         assert "doc_b.pdf" in filenames
+
+
+class TestExcelCitationsToSources:
+    """query_excel never emits retrieval chunks (its result is SQL, not
+    chunks — see run_once), so a SQL-answered question used to get sources: []
+    every time, and SpreadsheetEvidence had nothing to render."""
+
+    def test_converts_citation_to_source_card(self):
+        citation = {
+            "source_file": "doc_006_purchase_card_transactions_q1_2025_26.xlsx",
+            "sheet_name": "DataAnalysis",
+            "quote": "Screwfix Direct  2025-04-03  39.54",
+        }
+        sources = _excel_citations_to_sources([citation], existing=[])
+        assert len(sources) == 1
+        source = sources[0]
+        assert source["filename"] == citation["source_file"]
+        assert source["sheet"] == "DataAnalysis"
+        assert source["quote"] == citation["quote"]
+        assert source["page"] is None
+
+    def test_skips_citation_missing_source_file_or_sheet(self):
+        assert _excel_citations_to_sources([{"sheet_name": "Sheet1"}], existing=[]) == []
+        assert _excel_citations_to_sources([{"source_file": "x.xlsx"}], existing=[]) == []
+
+    def test_dedupes_against_already_parsed_source(self):
+        existing = [{"filename": "doc_006.xlsx", "sheet": "DataAnalysis"}]
+        citation = {"source_file": "doc_006.xlsx", "sheet_name": "DataAnalysis"}
+        assert _excel_citations_to_sources([citation], existing=existing) == []
 
 
 class TestComparisonSkipsGroundingCheck:

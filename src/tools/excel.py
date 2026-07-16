@@ -405,6 +405,7 @@ class _SQLState(TypedDict):
     attempts: int
     answer: str
     final_sql: str
+    final_result: str
 
 
 def _is_readonly_select(sql: str) -> bool:
@@ -698,8 +699,16 @@ def _build_inner_graph(store: DuckDBStore) -> Any:
             if (not answer or answer.lower() == "unsupported") and state.get(
                 "last_single_col_value"
             ):
-                return {"answer": state["last_single_col_value"], "final_sql": last_sql}
-            return {"answer": answer or "Unsupported", "final_sql": last_sql}
+                return {
+                    "answer": state["last_single_col_value"],
+                    "final_sql": last_sql,
+                    "final_result": last_result,
+                }
+            return {
+                "answer": answer or "Unsupported",
+                "final_sql": last_sql,
+                "final_result": last_result,
+            }
 
         # Routing rules:
         #  - SQL/column error OR 0 rows on this table: retry the SAME table (let the
@@ -774,6 +783,7 @@ class _OuterState(TypedDict):
     answers: Annotated[list[str], operator.add]
     sql_trace: Annotated[list[str], operator.add]
     table_trace: Annotated[list[str], operator.add]
+    result_trace: Annotated[list[str], operator.add]
     final_answer: str
 
 
@@ -819,6 +829,7 @@ def _build_outer_graph(store: DuckDBStore) -> Any:
                     "attempts": 0,
                     "answer": "",
                     "final_sql": "",
+                    "final_result": "",
                 },
             )
             for sq, cands in zip(
@@ -837,10 +848,12 @@ def _build_outer_graph(store: DuckDBStore) -> Any:
         # for the UI trace / citation lookup.
         sql = (result.get("final_sql") or "").strip()
         table = (result.get("selected_table") or "").strip()
+        result_text = (result.get("final_result") or "").strip()
         return {
             "answers": [result.get("answer") or "Unsupported"],
             "sql_trace": [sql] if sql else [],
             "table_trace": [table] if sql and table else [],
+            "result_trace": [result_text] if sql and table else [],
         }
 
     def synthesize_node(state: _OuterState) -> dict:
@@ -928,6 +941,7 @@ def build_excel_agent_tools(store: DuckDBStore) -> list[StructuredTool]:
                     "answers": [],
                     "sql_trace": [],
                     "table_trace": [],
+                    "result_trace": [],
                     "final_answer": "",
                 }
             )
@@ -945,6 +959,7 @@ def build_excel_agent_tools(store: DuckDBStore) -> list[StructuredTool]:
         # than guessing which sub-answer's table to cite).
         subqs = result.get("subquestions") or []
         tables = result.get("table_trace") or []
+        results = result.get("result_trace") or []
         final_answer = result.get("final_answer") or "Unsupported"
         if (
             len(subqs) == 1
@@ -954,6 +969,11 @@ def build_excel_agent_tools(store: DuckDBStore) -> list[StructuredTool]:
         ):
             source = get_source_by_duckdb_table(QDRANT_URL, QDRANT_COLLECTION, tables[0])
             if source:
+                # The matched row(s), rendered as text, give SpreadsheetEvidence's
+                # row-highlight heuristic (frontend, cell-value-in-quote match)
+                # something real to match against instead of nothing.
+                if results and results[0]:
+                    source["quote"] = results[0][:500]
                 artifact["citation"] = source
         return result.get("final_answer") or "Unsupported", artifact
 

@@ -1174,3 +1174,29 @@ endpoints) is unchanged.
 All 202 tests pass (`uv run pytest tests/`), ruff clean on every file touched. Frontend
 typechecks cleanly except one pre-existing, unrelated error in `frontend/app/layout.tsx` (a
 `next/font/google` import issue in files I did not touch this session).
+
+## Final eval run — 2026-07-16, gpt-oss-120b swap CONFIRMED
+
+Full-corpus eval (109 questions, `eval/results/summary.json`), resolving prior PROVISIONAL
+status on the `qwen3-32b` → `gpt-oss-120b` `GENERATION_MODEL` swap. Aggregate: correctness
+0.838, faithfulness 0.861, answer_relevancy 0.869. No question-type category regressed.
+
+`correctness_by_question_type`, sorted descending:
+
+| category | n | correctness |
+|---|---|---|
+| table_grounding | 3 | 1.000 |
+| table_lookup | 16 | 0.938 |
+| numeric_lookup | 6 | 0.917 |
+| ocr_extraction | 25 | 0.860 |
+| single_doc_factoid | 17 | 0.812 |
+| unanswerable | 10 | 0.800 |
+| negation_check | 5 | 0.800 |
+| cross_document_compare | 20 | 0.775 |
+| numeric_reasoning | 4 | 0.750 |
+| figure_grounding | 3 | 0.667 |
+
+`figure_grounding` lowest (2/3) but n=3, no prior baseline — not treated as a regression
+signal. Retrieval metrics stayed strong (hit@5 0.986, MRR 0.854) — retrieval was never the
+bottleneck. Full write-up and analysis in `TODO.md` (~line 588). Still open: transcribe this
+table into README.md / `docs/CASE_STUDY.md`.

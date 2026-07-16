@@ -791,6 +791,7 @@ def stream_agent(
     sql_trace: list[str] | None = None,
     tool_calls: list[str] | None = None,
     rejected_chunks: list[dict] | None = None,
+    excel_citations: list[dict] | None = None,
     trace: Any = None,
     skip_grounding_check: bool = False,
 ) -> Generator[str, None, None]:
@@ -808,6 +809,9 @@ def stream_agent(
             is appended to this list, in call order (with repeats).
         rejected_chunks: If provided, reranked-but-not-selected candidates from
             search_knowledge_base calls are appended to this list (UI-only).
+        excel_citations: If provided, the {source_file, sheet_name, quote}
+            citation query_excel attributes its answer to (single-table calls
+            only) is appended to this list (UI-only, see EvidencePanel).
         trace: Optional Langfuse trace/span to record the grounding-check verdict on.
         skip_grounding_check: Comparison questions already get a dedicated
             doc-coverage retry in answer_pipeline.py -- the grounding check is
@@ -902,6 +906,8 @@ def stream_agent(
                     artifact = getattr(chunk, "artifact", None)
                     if isinstance(artifact, dict):
                         sql_trace.extend(s for s in (artifact.get("sql") or []) if s)
+                        if excel_citations is not None and artifact.get("citation"):
+                            excel_citations.append(artifact["citation"])
                 if (
                     rejected_chunks is not None
                     and chunk.name == "search_knowledge_base"

@@ -777,3 +777,43 @@ return the source image — it can only paraphrase what the VLM described at ing
 - [ ] **Existing ingested docs need reingestion** — old Qdrant points predate this field and
       have `figure_bbox: null`, so old figure sources still show no image until reingested.
 - [ ] Slack bot doesn't attach the image yet — only the web evidence panel does.
+
+## Session close-out — 2026-07-16, backend closed
+
+**Backend audit + final eval: DONE, committed.**
+- Commit `deb0d46`: SQL injection guard (DuckDB stacked statements in
+  `query_excel`), agent doc_registry cache-invalidation timing bug (`api.py`),
+  read-modify-write races in `feedback_store.py`/`conversation_store.py`
+  (threading.Lock added), dead Groq dependency in `excel_cleaner` (silently
+  broke every spreadsheet ingest — rewired to `EXCEL_AGENT_*`/OpenRouter),
+  Makefile `eval-cross` category-name bug.
+- Commit `3b2f23d`: final clean 109/109 full-corpus eval landed, PROVISIONAL
+  flag on the `gpt-oss-120b` model swap resolved to CONFIRMED (see numbers
+  above at line ~584). No category regressed. Full breakdown in
+  `eval/results/summary.json`.
+- `scripts/smoke_test.py` (`make smoke`) rerun 2026-07-16 on current code
+  (after all audit fixes) — 8/8 checks pass: PDF reingest+query, Excel
+  reingest+query, cross-doc comparison. Backend confirmed end-to-end.
+
+**Not done, not started — explicitly deferred to today/tomorrow's frontend pass:**
+- Frontend work of any kind — user's stated plan: backend closed today,
+  frontend tomorrow. Nothing frontend was touched this session.
+- README.md / docs/CASE_STUDY.md eval-numbers transcription (see checklist
+  above right below "Conclusion: gpt-oss-120b swap is a net win").
+
+**Two uncommitted things found in the working tree, not mine, not touched:**
+- `pyproject.toml` / `uv.lock` have an uncommitted `markitdown` dependency
+  (+ transitive `defusedxml`, `magika`) — didn't add it, unclear origin,
+  left unstaged. Ask the user before committing or reverting.
+- Untracked `REVIEW.md` and `Screenshot from 2026-07-12 13-11-21.png` in
+  repo root — same, unclear origin, left untracked.
+
+**Audit surface not exhaustively covered** (time-boxed, not a known gap):
+`src/file_resolver.py`, `src/connectors/google_drive.py`, `src/reranker.py`,
+ingestion pipeline modules (`src/ingest.py`, `src/parser/pdf_parser.py`,
+`src/chunker.py`) got a lighter pass than `src/tools/excel.py` and the
+store/cache files. No known bugs there — just not scrutinized as hard.
+
+**Deliberately not pursued:** deep gpt-oss reasoning-channel leak (whole-
+answer-as-raw-reasoning variant, n=1 sighting, ~line 570 above) — reopen
+only if it recurs at meaningful frequency in a future eval run.

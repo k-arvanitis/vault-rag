@@ -358,6 +358,49 @@ def parse_sources(collected: list[str]) -> list[dict]:
     return (diverse + rest)[:8]
 
 
+def _excel_citations_to_sources(
+    citations: list[dict], existing: list[dict]
+) -> list[dict]:
+    """Convert query_excel's {source_file, sheet_name, quote} citations into
+    source cards, in the same shape parse_sources produces.
+
+    query_excel never emits retrieval chunks (see run_once) so these are the
+    only sources a SQL-answered question ever gets — without this, SpreadsheetEvidence
+    has nothing to render and the question shows no evidence at all. Skips a
+    citation whose filename+sheet is already covered by a parsed source.
+    """
+    seen = {(s["filename"], s.get("sheet")) for s in existing}
+    out: list[dict] = []
+    for c in citations:
+        source_file = c.get("source_file")
+        sheet_name = c.get("sheet_name")
+        if not source_file or not sheet_name:
+            continue
+        filename = _resolve_original_name(source_file)
+        key = (filename, sheet_name)
+        if key in seen:
+            continue
+        seen.add(key)
+        quote = (c.get("quote") or "").strip()
+        out.append(
+            {
+                "filename": filename,
+                "document_id": None,
+                "document_title": filename,
+                "section": "",
+                "location": f"sheet: {sheet_name}",
+                "page": None,
+                "sheet": sheet_name,
+                "excerpt": quote[:350],
+                "quote": quote[:350],
+                "chunk_id": None,
+                "score": None,
+                "figure_bbox": None,
+            }
+        )
+    return out
+
+
 def run_once(
     agent: Any,
     question: str,
@@ -381,6 +424,7 @@ def run_once(
     sql_trace: list[str] = []
     tool_calls: list[str] = []
     rejected: list[dict] = []
+    excel_citations: list[dict] = []
     for token in stream_agent(
         agent,
         question,
@@ -388,12 +432,18 @@ def run_once(
         sql_trace=sql_trace,
         tool_calls=tool_calls,
         rejected_chunks=rejected,
+        excel_citations=excel_citations,
         trace=trace,
         skip_grounding_check=skip_grounding_check,
     ):
         tokens.append(token)
     answer = "".join(tokens).strip()
-    trace_holder = {"sql": sql_trace, "tools": tool_calls, "rejected": rejected}
+    trace_holder = {
+        "sql": sql_trace,
+        "tools": tool_calls,
+        "rejected": rejected,
+        "excel_citations": excel_citations,
+    }
 
     if trace is not None:
         # collected_chunks only gets a "---CALL_BOUNDARY---" per non-excel
@@ -599,6 +649,7 @@ def answer_query(
         sql_all: list[str] = []
         tools_all: list[str] = []
         rejected_all: list[dict] = []
+        excel_citations_all: list[dict] = []
         for part in parts:
             p_ans, p_coll, p_trace = answer_one(
                 agent, part, trace=trace, forced_doc_id=forced_doc_id
@@ -608,16 +659,25 @@ def answer_query(
             sql_all += p_trace.get("sql") or []
             tools_all += p_trace.get("tools") or []
             rejected_all += p_trace.get("rejected") or []
+            excel_citations_all += p_trace.get("excel_citations") or []
         # Blank line between parts (a single \n is only a soft break in
         # markdown); number them so a terse part still reads as its own answer.
         kept = [a for a in sub_answers if a]
         answer = (
             "\n\n".join(f"{i}. {a}" for i, a in enumerate(kept, 1)) or "Unsupported"
         )
-        excel_trace = {"sql": sql_all, "tools": tools_all, "rejected": rejected_all}
+        excel_trace = {
+            "sql": sql_all,
+            "tools": tools_all,
+            "rejected": rejected_all,
+            "excel_citations": excel_citations_all,
+        }
 
     answer = strip_leaked_headers(answer)
     sources = parse_sources(collected)
+    sources += _excel_citations_to_sources(
+        excel_trace.get("excel_citations") or [], existing=sources
+    )
     sql_list = [s for s in (excel_trace.get("sql") or []) if s]
     kept_filenames = {s["filename"] for s in sources}
     rejected_sources = []
