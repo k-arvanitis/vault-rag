@@ -694,11 +694,15 @@ never the bottleneck, consistent with earlier findings.
 **Conclusion: gpt-oss-120b swap is a net win, no regression found. Closing
 this as final.**
 
-Still open — README/case-study transcription, not a correctness question:
-- [ ] Update `README.md` and `docs/CASE_STUDY.md` so both quote the *same* run as
-      `eval/results/summary.json` (2026-07-16 run above)
-- [ ] Paste the new `correctness_by_question_type` breakdown into the README/CASE_STUDY
-      Evaluation sections
+- [x] **Done, 2026-07-16**: `README.md` and `docs/CASE_STUDY.md` both updated to
+      quote the 2026-07-16 run (`eval/results/summary.json`) — correctness 83.8%,
+      faithfulness 86.1%, answer_relevancy 86.9%, retrieval/structured/unanswerable
+      metrics, and the `correctness_by_question_type` breakdown table, all pasted
+      into both docs' Evaluation sections. Model name updated from `qwen/qwen3-32b`
+      to `openai/gpt-oss-120b` in the eval-section prose only — the Tech stack
+      table further down README.md still says `qwen/qwen3-32b` for the generation
+      LLM and was deliberately not touched (out of scope; a larger doc-consistency
+      pass, not an eval-numbers transcription).
 - [ ] The ablation table (baseline dense-only → +hybrid → +rerank → +doc-routing → final) is
       already tracked below under "Pipeline improvement story" — do it in the same pass since
       it requires the same kind of fresh eval run(s)

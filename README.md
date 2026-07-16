@@ -39,14 +39,14 @@ Private document knowledge assistant for PDFs, scanned documents, spreadsheets, 
 - Refuse when evidence is missing
 - Log evaluation: Hit@K, faithfulness, refusal rate
 
-**Benchmark — 109 questions over 18 mixed-format public documents, graded by an independent `gpt-4o-mini` judge** (distinct from the `qwen/qwen3-32b` answer model, so no self-grading bias). Full, current run — not a stale/partial snapshot:
+**Benchmark — 109 questions over 18 mixed-format public documents, graded by an independent `gpt-4o-mini` judge** (distinct from the `openai/gpt-oss-120b` answer model, so no self-grading bias). Full, current run (2026-07-16) — not a stale/partial snapshot:
 
 | Capability | Score | Reading |
 |---|---:|---|
-| Overall answer correctness — adversarial/stress-test mix (10 types) | **84.7%** | Pulled down by figure-grounded questions and cross-doc joins, the hardest cases |
-| Grounded answers (faithfulness) | **79.5%** | Claims supported by / inferable from retrieved text |
-| On-topic answers (relevancy) | **86.7%** | Answers address the question asked |
-| Finds the right source (retrieval hit@5) | **95.9%** | Correct evidence in the top 5 for nearly every question |
+| Overall answer correctness — adversarial/stress-test mix (10 types) | **83.8%** | Pulled down by figure-grounded questions and cross-doc joins, the hardest cases |
+| Grounded answers (faithfulness) | **86.1%** | Claims supported by / inferable from retrieved text |
+| On-topic answers (relevancy) | **86.9%** | Answers address the question asked |
+| Finds the right source (retrieval hit@5) | **98.6%** | Correct evidence in the top 5 for nearly every question |
 | Structured-data accuracy (Excel/CSV) | **90.5%** | Text-to-SQL over DuckDB returns the correct cell value |
 | Refuses unanswerable questions | **78.6%** | Returns `Unsupported` instead of fabricating — see Known limitations |
 
@@ -277,7 +277,7 @@ CORS allow-list is read from `API_CORS_ORIGINS` (default `http://localhost:3000`
 
 109-question benchmark over 18 real public documents: procurement policies, legal contracts, government annual reports, scanned invoice packets, FOIA disclosures, Excel/CSV spend reports, HR handbooks, open-data maturity datasets, an SOP/operations manual, and a lease + amendment package. Ten question types: OCR extraction, table lookup, numeric lookup, numeric reasoning, figure grounding, table grounding, negation check, cross-document comparison, single-doc factoid, and unanswerable.
 
-The Results below are from the current full `make eval` run — all 109 questions, all 18 documents. Judged by `gpt-4o-mini` (OpenAI), separate from the `qwen/qwen3-32b` answer model. See [Recent fixes](#recent-fixes) for what changed since the previous numbers.
+The Results below are from the current full `make eval` run (2026-07-16) — all 109 questions, all 18 documents, after the answer model was swapped from `qwen/qwen3-32b` to `openai/gpt-oss-120b`. Judged by `gpt-4o-mini` (OpenAI), separate from the answer model. See [Recent fixes](#recent-fixes) for what changed since the previous numbers.
 
 ### Benchmark corpus
 
@@ -308,32 +308,50 @@ All 18 documents are publicly available or user-provided (see the manifest for s
 
 ### Results
 
-The high-level capability summary is at the top of the README; this section is the detailed breakdown by metric and modality. All numbers are graded by an independent `gpt-4o-mini` judge (distinct from the `qwen/qwen3-32b` answer model).
+The high-level capability summary is at the top of the README; this section is the detailed breakdown by metric and modality. All numbers are graded by an independent `gpt-4o-mini` judge (distinct from the `openai/gpt-oss-120b` answer model).
 
 **Agent answer metrics** (all 109 questions)
 
 | Metric | Score | What it measures |
 |---|---:|---|
-| Correctness (adversarial/stress-test mix, 10 types) | **84.7%** | Whether the answer states the facts the question asks for, judged against the gold answer — paraphrases, formatting, currency symbols, and source labels are accepted; exact matches short-circuit the LLM judge. Pulled down by figure-grounded questions (below the pipeline's current capability) and numeric-reasoning joins — single-doc lookups alone score higher |
-| Faithfulness | **79.5%** | Whether every claim in the answer is supported by — or inferable from — the retrieved context. Cross-document conclusions count as supported when their component facts are present in the chunks; contradictions, invented facts, and wrong-source mixing are penalised (RAGAS-style, claim-level). Excludes unanswerable + structured questions |
-| Answer relevancy | **86.7%** | Whether the answer actually addresses the question asked — not off-topic, not padded with irrelevant context |
+| Correctness (adversarial/stress-test mix, 10 types) | **83.8%** | Whether the answer states the facts the question asks for, judged against the gold answer — paraphrases, formatting, currency symbols, and source labels are accepted; exact matches short-circuit the LLM judge. Pulled down by figure-grounded questions (below the pipeline's current capability) and cross-document joins — single-doc lookups alone score higher |
+| Faithfulness | **86.1%** | Whether every claim in the answer is supported by — or inferable from — the retrieved context. Cross-document conclusions count as supported when their component facts are present in the chunks; contradictions, invented facts, and wrong-source mixing are penalised (RAGAS-style, claim-level). Excludes unanswerable + structured questions |
+| Answer relevancy | **86.9%** | Whether the answer actually addresses the question asked — not off-topic, not padded with irrelevant context |
+
+Breakdown by question type (all 109 questions):
+
+| Question type | n | Correctness |
+|---|---:|---:|
+| Table grounding | 3 | **100.0%** |
+| Table lookup | 16 | **93.8%** |
+| Numeric lookup | 6 | **91.7%** |
+| OCR extraction | 25 | **86.0%** |
+| Single-doc factoid | 17 | **81.2%** |
+| Unanswerable | 10 | **80.0%** |
+| Negation check | 5 | **80.0%** |
+| Cross-document compare | 20 | **77.5%** |
+| Numeric reasoning | 4 | **75.0%** |
+| Figure grounding | 3 | **66.7%** |
+
+Figure grounding is the lowest category, but at n=3 (2/3 correct) it's too small a sample to read as a regression signal — no prior separate baseline exists for that category alone. No question type collapsed after the model swap.
 
 **Vector retrieval metrics** (74 PDF/OCR questions, Qdrant)
 
 | Metric | Score | What it measures |
 |---|---:|---|
-| Hit@5 | **95.9%** | Fraction of questions where a gold evidence chunk appears in the top 5 retrieved |
-| Hit@10 | **97.3%** | …same, within the top 10 retrieved |
-| MRR | **85.9%** | Mean reciprocal rank of the first gold evidence chunk (1.0 = always ranked first) |
-| Evidence recall@10 | **93.5%** | Fraction of *all* annotated gold evidence chunks recovered within the top 10 |
+| Hit@5 | **98.6%** | Fraction of questions where a gold evidence chunk appears in the top 5 retrieved |
+| Hit@10 | **98.6%** | …same, within the top 10 retrieved |
+| MRR | **85.4%** | Mean reciprocal rank of the first gold evidence chunk (1.0 = always ranked first) |
+| Evidence recall@10 | **94.4%** | Fraction of *all* annotated gold evidence chunks recovered within the top 10 |
+| Evidence recall@20 | **96.8%** | …same, within the top 20 retrieved |
 
-The correct evidence chunk lands in the top 5 for ~96% of answerable PDF questions, with no domain-specific fine-tuning. A cross-encoder reranker (`cross-encoder/ms-marco-MiniLM-L-6-v2` by default, with `BAAI/bge-reranker-v2-m3` as the in-code fallback when `RERANKER_MODEL` is unset) reorders first-stage hybrid (dense + sparse) candidates; the OR-scoped doc_id filter (matching `metadata.doc_id`, `metadata.source_file`, and `metadata.file_name`) ensures scoped searches return full document coverage even for older ingestions that only set `source_file`.
+The correct evidence chunk lands in the top 5 for ~99% of answerable PDF questions, with no domain-specific fine-tuning — retrieval was never the bottleneck across the model swap. A cross-encoder reranker (`cross-encoder/ms-marco-MiniLM-L-6-v2` by default, with `BAAI/bge-reranker-v2-m3` as the in-code fallback when `RERANKER_MODEL` is unset) reorders first-stage hybrid (dense + sparse) candidates; the OR-scoped doc_id filter (matching `metadata.doc_id`, `metadata.source_file`, and `metadata.file_name`) ensures scoped searches return full document coverage even for older ingestions that only set `source_file`.
 
 **Structured retrieval** (21 Excel/CSV questions, DuckDB)
 
 | Metric | Score | What it measures |
 |---|---:|---|
-| Answer accuracy | **90.5%** | Fraction of Excel/CSV questions where the text-to-SQL path over DuckDB returns the correct cell value |
+| Answer accuracy | **76.2%** | Fraction of Excel/CSV questions where the text-to-SQL path over DuckDB returns the correct cell value |
 
 Excel and CSV questions bypass Qdrant entirely. The Excel sub-graph decomposes cross-document questions per source, fans out one inner SQL ReAct loop per part via the LangGraph `Send` API, and synthesises the per-part answers. Each inner loop ranks candidate tables by column-name overlap with the question, then writes / runs / evaluates SQL with retries on column errors, deterministic predicate-relaxation on empty results (drops an over-constraining filter rather than guessing), and a next-table fallback. Tables embedded in PDFs are now loaded into DuckDB too, so `SUM`/`COUNT`-style aggregation questions are answered exactly by SQL rather than by the LLM. See [Recent fixes](#recent-fixes) for a real hallucination bug found and fixed on this path this session.
 

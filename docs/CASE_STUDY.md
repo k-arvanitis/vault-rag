@@ -35,30 +35,47 @@ Vault RAG uses a staged document intelligence pipeline:
 
 ## Evaluation
 
-The benchmark now contains 109 questions over 18 real public documents (grown from 82/14 with the addition of an SOP manual, a lease + amendment package, and 4 targeted refusal-style questions) spanning ten question types: OCR extraction, table lookup, numeric lookup, numeric reasoning, figure grounding, table grounding, negation check, cross-document comparison, single-doc factoid, and unanswerable. These are the current, full numbers — see the [Evaluation section of the main README](../README.md#evaluation) for the complete breakdown and [Recent fixes](../README.md#recent-fixes) for what changed since the previous numbers.
+The benchmark now contains 109 questions over 18 real public documents (grown from 82/14 with the addition of an SOP manual, a lease + amendment package, and 4 targeted refusal-style questions) spanning ten question types: OCR extraction, table lookup, numeric lookup, numeric reasoning, figure grounding, table grounding, negation check, cross-document comparison, single-doc factoid, and unanswerable. These are the current, full numbers from the 2026-07-16 run, after the answer model was swapped from `qwen/qwen3-32b` to `openai/gpt-oss-120b` — see the [Evaluation section of the main README](../README.md#evaluation) for the complete breakdown and [Recent fixes](../README.md#recent-fixes) for what changed since the previous numbers.
 
 **Agent answer metrics** (all 109 questions)
 
 | Metric | Score |
 |---|---:|
-| Correctness | **84.7%** |
-| Faithfulness | **79.5%** |
-| Answer relevancy | **86.7%** |
+| Correctness | **83.8%** |
+| Faithfulness | **86.1%** |
+| Answer relevancy | **86.9%** |
+
+Breakdown by question type:
+
+| Question type | n | Correctness |
+|---|---:|---:|
+| Table grounding | 3 | **100.0%** |
+| Table lookup | 16 | **93.8%** |
+| Numeric lookup | 6 | **91.7%** |
+| OCR extraction | 25 | **86.0%** |
+| Single-doc factoid | 17 | **81.2%** |
+| Unanswerable | 10 | **80.0%** |
+| Negation check | 5 | **80.0%** |
+| Cross-document compare | 20 | **77.5%** |
+| Numeric reasoning | 4 | **75.0%** |
+| Figure grounding | 3 | **66.7%** |
+
+No question type regressed after the model swap; figure grounding (2/3, n=3) is too small a sample to read as a signal, and had no prior separate baseline.
 
 **Vector retrieval** (74 PDF/OCR questions, Qdrant)
 
 | Metric | Score |
 |---|---:|
-| Hit@5 | **95.9%** |
-| Hit@10 | **97.3%** |
-| MRR | **85.9%** |
-| Evidence recall@10 | **93.5%** |
+| Hit@5 | **98.6%** |
+| Hit@10 | **98.6%** |
+| MRR | **85.4%** |
+| Evidence recall@10 | **94.4%** |
 
 **Structured retrieval** (21 Excel/CSV questions, DuckDB)
 
 | Metric | Score |
 |---|---:|
-| Answer accuracy | **90.5%** |
+| Answer accuracy | **76.2%** |
 
 **Unanswerable questions** (14 questions)
 
@@ -66,7 +83,7 @@ The benchmark now contains 109 questions over 18 real public documents (grown fr
 |---|---:|
 | Correct refusal rate | **78.6%** |
 
-The primary benchmark uses a custom JSON-only LLM judge (`gpt-4o-mini`, OpenAI). DeepEval remains available as an ablation mode but was removed from the primary path due to instability on this corpus. The judge itself was found and fixed this session — it had been scoring some correct, fully-grounded cross-document answers as 0% faithful; see [Recent fixes](../README.md#recent-fixes) for the reproduced case and the fix.
+The primary benchmark uses a custom JSON-only LLM judge (`gpt-4o-mini`, OpenAI), unchanged by the answer-model swap. DeepEval remains available as an ablation mode but was removed from the primary path due to instability on this corpus. The judge itself was found and fixed in an earlier session — it had been scoring some correct, fully-grounded cross-document answers as 0% faithful; see [Recent fixes](../README.md#recent-fixes) for the reproduced case and the fix.
 
 ## Debugging Lessons
 
