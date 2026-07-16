@@ -126,7 +126,7 @@ export default function EvalPanel({ onClose }: Props) {
     : [];
 
   return (
-    <div className="fixed inset-0 z-30 flex">
+    <div className="flex h-full w-full">
       <div className="flex h-full w-full flex-col bg-background">
         <div className="flex shrink-0 items-center gap-3 border-b border-border bg-card px-5 py-3">
           <div className="min-w-0 flex-1">

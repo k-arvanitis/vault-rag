@@ -1,14 +1,17 @@
+// frontend/e2e/admin-viewer-access.spec.ts
 import { test, expect } from "@playwright/test";
 
 // Real backend enforcement of ACCESS_MODE=admin_viewer is covered by
 // tests/test_admin_auth.py (14 cases against require_admin() directly) --
 // that's what actually stops a viewer from uploading/deleting even if they
-// forge a request. This test proves the other half: the UI itself correctly
-// hides those actions for a viewer session, so there's no button to click in
-// the first place. The dev server this suite runs against stays in
+// forge a request. These tests prove the frontend half: a viewer session
+// never even sees the admin page shell for /admin/*, and an admin session
+// can reach every admin screen and switch back to the User workspace
+// without logging out. The dev server this suite runs against stays in
 // ACCESS_MODE=open (today's default) -- admin_viewer is exercised here by
 // mocking GET /admin/session's response, not by restarting the backend.
-test("a viewer session sees no upload or delete controls", async ({ page }) => {
+
+test("a viewer is blocked from every /admin/* route", async ({ page }) => {
   await page.route("**/admin/session", (route) =>
     route.fulfill({
       status: 200,
@@ -17,25 +20,64 @@ test("a viewer session sees no upload or delete controls", async ({ page }) => {
     })
   );
 
+  for (const path of ["/admin/sources", "/admin/quality", "/admin/feedback", "/admin/integrations/google-drive"]) {
+    await page.goto(path);
+    await expect(page.getByText(/Admin access required/i)).toBeVisible();
+    await expect(page.getByRole("button", { name: /Admin login/i })).toBeVisible();
+  }
+
+  // No "Admin" link in the User workspace nav for a viewer.
   await page.goto("/");
+  await expect(page.getByRole("button", { name: /^Admin$/i })).not.toBeVisible();
+});
 
-  // The upload dropzone (Sidebar's UploadZone) must not render for a viewer.
-  await expect(page.getByText(/Upload documents/i)).not.toBeVisible();
+test("an admin session reaches every admin screen and can return to chat", async ({ page }) => {
+  await page.route("**/admin/session", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ access_mode: "admin_viewer", is_admin: true }),
+    })
+  );
 
-  // If any source exists, its per-row Delete/Reprocess icon buttons must not
-  // render either (Sidebar only shows them when isAdmin).
-  await expect(page.getByRole("button", { name: "Delete document" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Reprocess document" })).toHaveCount(0);
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: /^Admin$/i })).toBeVisible();
+  await page.getByRole("button", { name: /^Admin$/i }).click();
+  await expect(page).toHaveURL(/\/admin\/sources$/);
 
-  // The header shows an "Admin login" entry point instead of admin nav.
-  await expect(page.getByRole("button", { name: /Admin login/i })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Integrations/i })).not.toBeVisible();
+  for (const [label, urlPart] of [
+    ["Quality", "/admin/quality"],
+    ["Integrations", "/admin/integrations/google-drive"],
+    ["Feedback", "/admin/feedback"],
+  ] as const) {
+    await page.getByRole("button", { name: new RegExp(`^${label}$`, "i") }).click();
+    await expect(page).toHaveURL(new RegExp(urlPart.replace(/\//g, "\\/") + "$"));
+  }
 
-  // Quality menu: Feedback (resolve) is admin-only; Quality Evaluation stays
-  // visible (results are viewer-readable), but its Run eval button is not.
-  await page.getByRole("button", { name: /Quality/i }).click();
-  await expect(page.getByRole("menuitem", { name: /^Feedback$/i })).not.toBeVisible();
-  await expect(page.getByRole("menuitem", { name: /Quality Evaluation/i })).toBeVisible();
-  await page.getByRole("menuitem", { name: /Quality Evaluation/i }).click();
-  await expect(page.getByRole("button", { name: /Run eval/i })).not.toBeVisible();
+  // Chat link switches back to the User workspace without logging out.
+  await page.getByRole("button", { name: /^Chat$/i }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole("button", { name: /^Admin$/i })).toBeVisible();
+});
+
+test("old routes redirect to their /admin/* equivalents", async ({ page }) => {
+  await page.route("**/admin/session", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ access_mode: "open", is_admin: true }),
+    })
+  );
+
+  await page.goto("/sources?doc=test.pdf");
+  await expect(page).toHaveURL(/\/admin\/sources\?doc=test\.pdf$/);
+
+  await page.goto("/feedback");
+  await expect(page).toHaveURL(/\/admin\/feedback$/);
+
+  await page.goto("/connectors/google-drive");
+  await expect(page).toHaveURL(/\/admin\/integrations\/google-drive$/);
+
+  await page.goto("/quality/evaluation");
+  await expect(page).toHaveURL(/\/admin\/quality$/);
 });
