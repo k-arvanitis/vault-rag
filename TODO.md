@@ -229,10 +229,20 @@ Playwright e2e smoke test (`frontend/e2e/golden-path.spec.ts`, local-only, not i
 - [ ] `TODO_LITELLM.md`/older sections of this file reference Postgres and `app.py` —
       stale, current `docker-compose.yaml` uses Redis and the entrypoint is `api.py`.
       Cosmetic cleanup, low priority.
-- [ ] Frontend still has near-zero unit/component test coverage (one e2e smoke test
-      now exists; `SourceCard`, `EvidencePanel` bbox math, etc. have no unit tests).
-      Not blocking — common for a portfolio project to skip this — but note it if asked
-      about test coverage in an interview.
+- [x] **Frontend test runner added, 2026-07-16**: no component/unit test runner
+      existed at all (only Playwright e2e). Added `vitest` + `@testing-library/react`
+      (`npm run test`, `frontend/vitest.config.ts`/`vitest.setup.ts`) and targeted the
+      two pieces of untested new logic from this session's #13/#15 work, since those
+      never ran in a real browser (typecheck only — see the streaming section above):
+      `AnswerContent`'s `[N]`-marker-to-CitationChip splitting (`MessageList.test.tsx`,
+      4 tests: resolved marker renders as a real chip, click selects the right source,
+      no-sources fallback stays plain text, an out-of-range marker degrades to plain
+      text instead of crashing) and `streamQueryDocuments`'s SSE parsing
+      (`lib/api.test.ts`, 4 tests: token+done events, an SSE frame split across two
+      stream chunks, a `done` event carrying `error`, a non-OK HTTP response).
+      **Still open**: `SourceCard`, `EvidencePanel` bbox math, and most other
+      components still have no unit tests — the runner now exists, so this is
+      "not started yet" rather than "no way to start it."
 
 See also `TODO_LITELLM.md` for the three open LiteLLM semantic-cache + Langfuse blockers
 (tracked separately — those are optional enhancements, not blockers for publishing).

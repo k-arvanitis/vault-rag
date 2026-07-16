@@ -132,7 +132,7 @@ const INLINE_CITATION_RE = /\[(\d+)\]/g;
  * would have paragraph breaks flattened, since markdown block structure
  * isn't reparsed across the split. Falls back to plain ReactMarkdown when
  * there are no sources to resolve against or no markers in the text. */
-function AnswerContent({
+export function AnswerContent({
   content,
   sources,
   onSelectEvidence,
