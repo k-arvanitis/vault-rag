@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { X, Loader2, Play } from "lucide-react";
 import { getEvalSummary, runEval, getEvalStatus, type EvalSummary } from "@/lib/api";
+import { useAdminSession } from "@/lib/useAdminSession";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -82,6 +83,7 @@ export default function EvalPanel({ onClose }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [confirmRun, setConfirmRun] = useState(false);
+  const { is_admin: isAdmin } = useAdminSession();
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(() => {
@@ -140,10 +142,12 @@ export default function EvalPanel({ onClose }: Props) {
             </Badge>
           )}
           <AlertDialog open={confirmRun} onOpenChange={setConfirmRun}>
-            <Button variant="outline" size="sm" onClick={() => setConfirmRun(true)} disabled={running}>
-              <Play data-icon="inline-start" />
-              Run eval
-            </Button>
+            {isAdmin && (
+              <Button variant="outline" size="sm" onClick={() => setConfirmRun(true)} disabled={running}>
+                <Play data-icon="inline-start" />
+                Run eval
+              </Button>
+            )}
             <AlertDialogContent>
               <AlertDialogHeader>
                 <AlertDialogTitle>Run the evaluation suite?</AlertDialogTitle>

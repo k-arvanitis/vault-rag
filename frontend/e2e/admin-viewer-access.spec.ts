@@ -30,4 +30,12 @@ test("a viewer session sees no upload or delete controls", async ({ page }) => {
   // The header shows an "Admin login" entry point instead of admin nav.
   await expect(page.getByRole("button", { name: /Admin login/i })).toBeVisible();
   await expect(page.getByRole("button", { name: /Integrations/i })).not.toBeVisible();
+
+  // Quality menu: Feedback (resolve) is admin-only; Quality Evaluation stays
+  // visible (results are viewer-readable), but its Run eval button is not.
+  await page.getByRole("button", { name: /Quality/i }).click();
+  await expect(page.getByRole("menuitem", { name: /^Feedback$/i })).not.toBeVisible();
+  await expect(page.getByRole("menuitem", { name: /Quality Evaluation/i })).toBeVisible();
+  await page.getByRole("menuitem", { name: /Quality Evaluation/i }).click();
+  await expect(page.getByRole("button", { name: /Run eval/i })).not.toBeVisible();
 });

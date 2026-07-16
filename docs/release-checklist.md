@@ -105,13 +105,12 @@ Walk the golden path once in a real browser before calling a build ready:
   has full unit coverage with a fake tool/LLM (`tests/test_answer_pipeline.py`)
   and was verified live 5/5 against the real running API — but there's no
   CI-runnable equivalent that doesn't require live model credentials.
-- **`ACCESS_MODE=admin_viewer` frontend gating is partial.** Sidebar's upload/
-  reprocess/delete and AppHeader's Integrations menu are hidden for viewers
-  (verified via `e2e/admin-viewer-access.spec.ts`) and backend enforcement is
-  complete (`tests/test_admin_auth.py`, 14 cases) — but the Quality menu
-  (Feedback resolve, Run eval) still renders for viewers, who'd hit a 403
-  only after clicking. Not a security gap (backend still blocks it), but a
-  real UX gap before demoing this mode.
+- ~~`ACCESS_MODE=admin_viewer` frontend gating is partial~~ **closed** — Sidebar
+  upload/reprocess/delete, AppHeader's Integrations menu, the Feedback nav
+  item, and the eval panel's Run eval button are all hidden for viewers now
+  (`e2e/admin-viewer-access.spec.ts` covers all of them); Quality Evaluation's
+  results stay viewer-visible since only running a new eval is admin-only.
+  Backend enforcement was already complete (`tests/test_admin_auth.py`).
 - **`docker compose up --build` has not been tested end-to-end from a clean
   clone this session** — healthchecks/dependency ordering/volume mounts were
   added and the compose file validates (`docker compose config`), but a full

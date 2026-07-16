@@ -59,10 +59,12 @@ export default function AppHeader(props: Props) {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuGroup>
-                <DropdownMenuItem onClick={() => router.push("/feedback")}>
-                  <MessageSquareWarning data-icon="inline-start" />
-                  Feedback
-                </DropdownMenuItem>
+                {isAdmin && (
+                  <DropdownMenuItem onClick={() => router.push("/feedback")}>
+                    <MessageSquareWarning data-icon="inline-start" />
+                    Feedback
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem onClick={() => router.push("/quality/evaluation")}>
                   <FlaskConical data-icon="inline-start" />
                   Quality Evaluation
