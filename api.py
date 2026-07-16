@@ -37,10 +37,12 @@ from pydantic import BaseModel  # noqa: E402
 from src.config import (  # noqa: E402
     API_CORS_ORIGINS,
     API_KEY,
+    EMBED_API_BASE,
     GENERATION_API_BASE,
     GENERATION_MODEL,
     GROQ_API_KEY,
     LITELLM_MASTER_KEY,
+    OLLAMA_EMBED_MODEL,
     OPENROUTER_API_KEY,
     QDRANT_COLLECTION,
     QDRANT_URL,
@@ -48,6 +50,7 @@ from src.config import (  # noqa: E402
     RERANKER_MODEL,
     RETRIEVAL_TOP_K,
 )
+from src.retriever import _ollama_embed_query  # noqa: E402
 from src.vector_store import _request as _qdrant  # noqa: E402
 from src.vector_store import (  # noqa: E402
     delete_by_file,
@@ -115,6 +118,14 @@ async def lifespan(app: FastAPI):
         logger.info("Agent warmed; ready to serve")
     except Exception:
         logger.exception("Agent warmup failed; /query will retry per-request")
+    # Embedding warm-up: the reranker already warms up inside build_rag_agent(),
+    # but the embedding call (every retrieval's first step) didn't -- so the
+    # very first real query was still paying Ollama's cold-start latency.
+    try:
+        _ollama_embed_query(EMBED_API_BASE, OLLAMA_EMBED_MODEL, "warmup")
+        logger.info("Embedding model warmed up")
+    except Exception:
+        logger.exception("Embedding warmup failed; first /query will retry per-request")
     yield
 
 
