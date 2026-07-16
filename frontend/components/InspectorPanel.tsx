@@ -38,6 +38,16 @@ const MD_PLUGINS = { remarkPlugins: [remarkGfm], rehypePlugins: [rehypeRaw] };
 const IS_PDF = (f: string) => f.toLowerCase().endsWith(".pdf");
 const IS_TABLE = (f: string) => /\.(xlsx|xls|csv)$/i.test(f);
 
+/** cleaned_md's file starts with a "[File: ... | Sheet: ...]" header line plus
+ * a schema/sample-values summary (the SQL generator's own context) before the
+ * actual cleaned markdown table -- confusing to show verbatim as prose. Drop
+ * everything before the first table row. */
+export function extractTableMarkdown(cleanedMd: string): string {
+  const lines = cleanedMd.split("\n");
+  const start = lines.findIndex((l) => l.trimStart().startsWith("|"));
+  return start === -1 ? cleanedMd : lines.slice(start).join("\n");
+}
+
 function PanelSkeleton() {
   return (
     <div className="flex-1 space-y-3 p-5">
@@ -235,18 +245,12 @@ function PdfInspector({ filename, initialPage }: { filename: string; initialPage
 
 // ── Raw vs. cleaned sheet view ─────────────────────────────────────────────────
 
-function SheetCompare({
-  filename,
-  sheet,
-  defaultOpen,
-}: {
-  filename: string;
-  sheet: string;
-  defaultOpen?: boolean;
-}) {
+function SheetCompare({ filename, sheet }: { filename: string; sheet: string }) {
   const [data, setData] = useState<TableSheetResponse | null>(null);
   const [loading, setLoading] = useState(false);
-  const [open, setOpen] = useState(!!defaultOpen);
+  // Open by default -- the cleaned table is the primary thing a user wants
+  // to see here, not something to hunt for behind a toggle.
+  const [open, setOpen] = useState(true);
 
   const load = useCallback(() => {
     if (data || loading) return;
@@ -258,8 +262,8 @@ function SheetCompare({
   }, [filename, sheet, data, loading]);
 
   useEffect(() => {
-    if (defaultOpen) load();
-    // Only ever auto-loads once, on mount, when opened via a citation jump.
+    load();
+    // Only ever auto-loads once, on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -314,16 +318,18 @@ function SheetCompare({
           {/* Cleaned */}
           <div className="flex-1 overflow-auto rounded-md border border-border">
             <p className="sticky top-0 border-b border-border bg-muted px-2 py-1 text-[10px] text-muted-foreground">
-              Cleaned markdown
+              Cleaned table
             </p>
             {loading ? (
               <div className="flex justify-center p-4">
                 <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
               </div>
             ) : data?.cleaned_md ? (
-              <pre className="whitespace-pre-wrap p-2 font-mono text-[9px] leading-relaxed text-foreground">
-                {data.cleaned_md}
-              </pre>
+              <div className="prose-ui p-2 text-[9px] leading-relaxed text-foreground [&_table]:text-[9px]">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {extractTableMarkdown(data.cleaned_md)}
+                </ReactMarkdown>
+              </div>
             ) : (
               <p className="p-3 text-[10px] text-muted-foreground">Not available</p>
             )}
@@ -340,7 +346,9 @@ function TableInspector({ filename, initialSheet }: { filename: string; initialS
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState<string | null>(null);
   const [chunks, setChunks] = useState<Chunk[]>([]);
-  const [showSummary, setShowSummary] = useState(true);
+  // Collapsed by default -- this is what the SQL generator reads, not
+  // something a normal user opening the inspector wants to see up front.
+  const [showSummary, setShowSummary] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -395,7 +403,7 @@ function TableInspector({ filename, initialSheet }: { filename: string; initialS
           >
             <p className="mb-2 text-xs font-semibold text-foreground">Sheet: {sheet}</p>
 
-            <SheetCompare filename={filename} sheet={sheet} defaultOpen={sheet === initialSheet} />
+            <SheetCompare filename={filename} sheet={sheet} />
 
             <p className="mb-2 mt-3 text-[10px] text-muted-foreground">
               Indexed chunk — this sheet's data is queried directly, not read from this summary

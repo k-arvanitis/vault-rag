@@ -231,15 +231,17 @@ _TABLE_MARKER_RE = re.compile(r"\[TABLE_START\]|\[TABLE_END\]")
 # shared with eval/run_eval.py so both measure identical behavior.
 
 
-def _resolve_pdf_path(filename: str) -> Path | None:
-    """Find the on-disk PDF for a filename, or None if it cannot be located.
+def _resolve_source_file_path(filename: str) -> Path | None:
+    """Find the on-disk source file (PDF, xlsx, csv, ...) for a filename, or
+    None if it cannot be located.
 
     Documents ingested via the eval corpus (make seed pulls a subset into
     data/input/, but most eval docs are only ever ingested straight from
     eval/data/raw/) have their markdown/chunks/embeddings under data/output/
-    regardless of where the source PDF lives — but the inspector's page-image
-    and bbox-highlight endpoints need the actual PDF file, so eval/data/raw/
-    must be a real fallback location, not just data/input/.
+    regardless of where the original source file lives — but the inspector's
+    page-image, bbox-highlight, and raw-table-rows endpoints all need the
+    actual source file, so eval/data/raw/ must be a real fallback location,
+    not just data/input/.
     """
     p = Path(filename)
     candidates = [
@@ -737,7 +739,7 @@ async def document_markdown(filename: str):
 @app.get("/documents/{filename:path}/pdf/{page}")
 async def document_pdf_page(filename: str, page: int):
     """Render a single PDF page (1-indexed) and return it as a base64 PNG."""
-    pdf_path = _resolve_pdf_path(filename)
+    pdf_path = _resolve_source_file_path(filename)
     if not pdf_path:
         raise HTTPException(status_code=404, detail="PDF not found")
     try:
@@ -771,7 +773,7 @@ async def document_pdf_highlight(filename: str, page: int, quote: str):
     break an exact match on the full excerpt. Returns bbox=None (never an
     invented region) when nothing matches.
     """
-    pdf_path = _resolve_pdf_path(filename)
+    pdf_path = _resolve_source_file_path(filename)
     if not pdf_path:
         raise HTTPException(status_code=404, detail="PDF not found")
     try:
@@ -814,7 +816,7 @@ async def document_pdf_crop(filename: str, page: int, bbox: str):
     of only its VLM-generated text description. `bbox` is "x0,y0,x1,y1" in PDF
     points, as stored on the chunk at ingestion time.
     """
-    pdf_path = _resolve_pdf_path(filename)
+    pdf_path = _resolve_source_file_path(filename)
     if not pdf_path:
         raise HTTPException(status_code=404, detail="PDF not found")
     try:
@@ -848,7 +850,7 @@ async def document_table_sheet(filename: str, sheet: str):
     file_stem = Path(filename).stem
     safe_sheet = sheet.replace("/", "_").replace("\\", "_")
     md_path = TABLE_MD_DIR / f"{file_stem}__{safe_sheet}.md"
-    raw_path = INPUT_DIR / filename
+    raw_path = _resolve_source_file_path(filename) or INPUT_DIR / filename
     suffix = Path(filename).suffix.lower()
 
     cleaned_md: str | None = (
@@ -879,7 +881,7 @@ async def document_table_sheet(filename: str, sheet: str):
 @app.get("/documents/{filename:path}/pdf/info")
 async def document_pdf_info(filename: str):
     """Return total page count for a PDF."""
-    pdf_path = _resolve_pdf_path(filename)
+    pdf_path = _resolve_source_file_path(filename)
     if not pdf_path:
         raise HTTPException(status_code=404, detail="PDF not found")
     try:
