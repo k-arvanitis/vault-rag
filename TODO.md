@@ -963,10 +963,17 @@ couldn't surface:
   markdown table pipes. Root cause: a chunk boundary split a figure block so
   only the closing tag (no matching `[FIGURE_START]`) landed in this chunk's
   body — the paired strip regex doesn't match an orphan tag. Fixed by
-  stripping any leftover lone tag too. (The markdown-table-pipes half of
-  this is the honest "exact region unavailable" fallback working as
-  designed — a markdown-table chunk has no literal region on the rendered
-  PDF page — not fixed further.)
+  stripping any leftover lone tag too.
+  - **Follow-up, still 2026-07-16**: user reported the same quote still
+    showed raw `|---|---|` pipes and a literal `<br>` after this fix. The
+    FIGURE_END fix only handled the figure-tag half — the markdown-table
+    pipes were a separate, still-unfixed bug: a chunk that's itself a
+    pymupdf4llm-rendered table (not wrapped in `TABLE_START`/`TABLE_END`)
+    had no pipe-stripping at all. Now strips `<br>` tags, `---`-only
+    separator rows, and all `|` characters from the quote/excerpt text.
+    The "Exact region unavailable" *image* fallback is still correct as
+    designed (a table has no bbox on the rendered page) — only the *quote
+    text itself* needed the fix. Unit-tested, not yet re-seen live.
 - [x] **Streaming didn't actually stream** (see the SSE section above) —
   `stream_agent`'s tool-use path buffered the whole answer and yielded once;
   fixed with the `live_tokens`/`FinalCorrection` mechanism, verified live
@@ -986,6 +993,17 @@ couldn't surface:
   shared "quote contains this row's cell value" heuristic so both views
   agree on which row is the match (previously duplicated inline in
   `EvidencePanel.tsx` only). 4 new unit tests for the shared helper.
+- [x] **"Open document" gets stuck**, reported same round: no root cause
+  confirmed live (couldn't reproduce without a browser), but a real gap
+  found by code inspection — `PdfInspector`/`TableInspector`/`SheetCompare`'s
+  fetches had no `.catch`/error path and no timeout, so a slow or hung
+  backend call (e.g. a blocking Qdrant scroll inside an `async def` route)
+  left the panel on its loading skeleton forever with no way out. Added a
+  client-side 20s timeout (`INSPECTOR_TIMEOUT_MS` in `lib/api.ts`, scoped to
+  inspector metadata calls only — NOT `/ingest`/`/query`/`/eval`, which
+  legitimately run long) plus error states in all three components. This
+  turns "stuck forever" into "visible error after 20s" regardless of the
+  underlying cause — **not a confirmed root-cause fix**, flagging honestly.
 
 Verification status, honestly split — not all of #12–#20 got eyes-on
 confirmation this round:
