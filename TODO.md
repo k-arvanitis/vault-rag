@@ -1001,9 +1001,29 @@ couldn't surface:
   left the panel on its loading skeleton forever with no way out. Added a
   client-side 20s timeout (`INSPECTOR_TIMEOUT_MS` in `lib/api.ts`, scoped to
   inspector metadata calls only — NOT `/ingest`/`/query`/`/eval`, which
-  legitimately run long) plus error states in all three components. This
-  turns "stuck forever" into "visible error after 20s" regardless of the
-  underlying cause — **not a confirmed root-cause fix**, flagging honestly.
+  legitimately run long) plus error states in all three components. **This
+  round of the fix was wrong** — see below.
+  - **Round 2**: user reported "same" after the timeout fix. Guessed the
+    backend was blocking the event loop (`document_chunks`'s Qdrant scroll,
+    `document_table_sheet`'s pandas/openpyxl parse both run synchronously
+    inside `async def` routes) and wrapped both in `run_in_threadpool`.
+    Still hadn't measured anything — motion without evidence.
+  - **Round 3, actual root cause, found via advisor-directed `curl -w
+    time`**: both endpoints were already fast (25ms, 105ms) — rounds 1–2
+    were fixing real but irrelevant issues. The actual bug: `/table-sheet`
+    returns `cleaned_md` uncapped — the full per-sheet markdown table
+    (6701 rows, 920KB for `doc_006_purchase_card_transactions_q1_2025_26.xlsx`),
+    unlike `raw_rows` which was already `nrows=60`-limited. The frontend
+    renders `cleaned_md` whole through `ReactMarkdown`+`remarkGfm` — parsing
+    a 6700-row markdown table client-side freezes the tab. No network call
+    ever hung, so the round-1 timeout could never have caught it, and no
+    concurrency was involved, so round 2's threadpool wrap did nothing for
+    it either. Fixed by truncating `cleaned_md` server-side to 60 rows
+    (`_truncate_markdown_table` in `api.py`, same bound as `raw_rows`) —
+    confirmed via curl: response for the same sheet dropped from 920KB to
+    10.9KB. 4 new unit tests (`tests/test_api.py`). Not yet re-clicked live
+    in a browser, but this is the first round with an actual measured,
+    reproduced cause rather than a guess.
 
 Verification status, honestly split — not all of #12–#20 got eyes-on
 confirmation this round:
