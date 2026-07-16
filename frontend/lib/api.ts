@@ -146,14 +146,22 @@ export interface TableSheetResponse {
   cleaned_md: string | null;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, init);
+async function request<T>(path: string, init?: RequestInit, timeoutMs?: number): Promise<T> {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    ...init,
+    signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : init?.signal,
+  });
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
     throw new Error(text || `HTTP ${res.status}`);
   }
   return res.json() as Promise<T>;
 }
+
+// Inspector metadata calls should fail fast and visibly rather than leave a
+// spinner stuck forever if the backend (or Qdrant) stalls -- unlike /ingest
+// or /query, which can legitimately take minutes, these are quick lookups.
+const INSPECTOR_TIMEOUT_MS = 20_000;
 
 export async function getDocuments(): Promise<Document[]> {
   return request<Document[]>("/documents");
@@ -365,15 +373,27 @@ export async function checkHealth(): Promise<boolean> {
 }
 
 export async function getDocumentChunks(filename: string): Promise<DocumentChunksResponse> {
-  return request<DocumentChunksResponse>(`/documents/${encodeURIComponent(filename)}/chunks`);
+  return request<DocumentChunksResponse>(
+    `/documents/${encodeURIComponent(filename)}/chunks`,
+    undefined,
+    INSPECTOR_TIMEOUT_MS
+  );
 }
 
 export async function getDocumentMarkdown(filename: string): Promise<MarkdownResponse> {
-  return request<MarkdownResponse>(`/documents/${encodeURIComponent(filename)}/markdown`);
+  return request<MarkdownResponse>(
+    `/documents/${encodeURIComponent(filename)}/markdown`,
+    undefined,
+    INSPECTOR_TIMEOUT_MS
+  );
 }
 
 export async function getPdfPage(filename: string, page: number): Promise<PdfPageResponse> {
-  return request<PdfPageResponse>(`/documents/${encodeURIComponent(filename)}/pdf/${page}`);
+  return request<PdfPageResponse>(
+    `/documents/${encodeURIComponent(filename)}/pdf/${page}`,
+    undefined,
+    INSPECTOR_TIMEOUT_MS
+  );
 }
 
 export interface PdfHighlightResponse {
@@ -389,7 +409,9 @@ export async function getPdfHighlight(
   quote: string
 ): Promise<PdfHighlightResponse> {
   return request<PdfHighlightResponse>(
-    `/documents/${encodeURIComponent(filename)}/pdf/${page}/highlight?quote=${encodeURIComponent(quote)}`
+    `/documents/${encodeURIComponent(filename)}/pdf/${page}/highlight?quote=${encodeURIComponent(quote)}`,
+    undefined,
+    INSPECTOR_TIMEOUT_MS
   );
 }
 
@@ -405,13 +427,17 @@ export async function getPdfCrop(
   bbox: [number, number, number, number]
 ): Promise<PdfCropResponse> {
   return request<PdfCropResponse>(
-    `/documents/${encodeURIComponent(filename)}/pdf/${page}/crop?bbox=${bbox.join(",")}`
+    `/documents/${encodeURIComponent(filename)}/pdf/${page}/crop?bbox=${bbox.join(",")}`,
+    undefined,
+    INSPECTOR_TIMEOUT_MS
   );
 }
 
 export async function getTableSheet(filename: string, sheet: string): Promise<TableSheetResponse> {
   return request<TableSheetResponse>(
-    `/documents/${encodeURIComponent(filename)}/table-sheet/${encodeURIComponent(sheet)}`
+    `/documents/${encodeURIComponent(filename)}/table-sheet/${encodeURIComponent(sheet)}`,
+    undefined,
+    INSPECTOR_TIMEOUT_MS
   );
 }
 

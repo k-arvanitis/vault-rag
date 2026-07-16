@@ -400,6 +400,13 @@ def parse_sources(collected: list[str]) -> list[dict]:
             plain = re.sub(r"\[FIGURE_START\]|\[FIGURE_END\]", "", plain)
             plain = _TABLE_MARKER_RE.sub("", plain)
             plain = re.sub(r"^#{1,3}\s+.+$", "", plain, flags=re.MULTILINE).strip()
+            plain = re.sub(r"<br\s*/?>", " ", plain, flags=re.IGNORECASE)
+            # A chunk can itself be a raw markdown table (pymupdf4llm's own
+            # rendering of a PDF table, not wrapped in TABLE_START/END) --
+            # drop separator rows and pipe characters so the quote reads as
+            # prose instead of leaking "|---|---|" table syntax.
+            plain = re.sub(r"^\s*\|?[-:\s|]+\|?\s*$", "", plain, flags=re.MULTILINE)
+            plain = plain.replace("|", " ")
             excerpt = " ".join(plain.split())[:350]
 
             score = float(score_str) if score_str else None

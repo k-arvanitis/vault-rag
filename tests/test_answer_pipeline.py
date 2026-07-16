@@ -195,7 +195,28 @@ class TestParseSourcesContract:
         assert len(sources) == 1
         quote = sources[0]["quote"]
         assert "FIGURE" not in quote
-        assert quote.startswith("|Amendment:")
+        assert "|" not in quote
+        assert quote.startswith("Amendment:")
+
+    def test_quote_strips_markdown_table_syntax(self):
+        """A chunk can itself be a raw markdown table (pymupdf4llm's own
+        rendering of a PDF table), not wrapped in TABLE_START/END markers --
+        reproduced live: pipe characters and separator rows leaked straight
+        into the quote, along with a literal <br> tag from a wrapped cell."""
+        header = "[1] file=doc_002.pdf chunk=9 page=3 score=0.8"
+        body = (
+            "|Amendment:|An agreed addition to, deletion from, correction, or<br>"
+            "modification of a Contract signed by all authorized parties.|\n"
+            "|---|---|\n"
+            "|Contract:|The agreement between the parties.|"
+        )
+        sources = parse_sources([f"{header}\n{body}"])
+        assert len(sources) == 1
+        quote = sources[0]["quote"]
+        assert "|" not in quote
+        assert "<br>" not in quote
+        assert "---" not in quote
+        assert "Amendment:" in quote
 
     def test_eight_cap_preserves_one_slot_per_distinct_file(self):
         """A redundant re-query of a document that already has plenty of chunks

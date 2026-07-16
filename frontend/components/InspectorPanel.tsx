@@ -108,9 +108,11 @@ function PdfInspector({ filename, initialPage }: { filename: string; initialPage
   const [summary, setSummary] = useState<string | null>(null);
   const [showSummary, setShowSummary] = useState(false);
   const [pdfMissing, setPdfMissing] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
+    setLoadError(null);
     Promise.all([getDocumentMarkdown(filename), getDocumentChunks(filename)])
       .then(([md, chunks]) => {
         setHasMarkers(md.has_page_markers);
@@ -119,6 +121,7 @@ function PdfInspector({ filename, initialPage }: { filename: string; initialPage
         setSummary(chunks.summary);
         setCurrentPage(initialPage ?? 1);
       })
+      .catch((err) => setLoadError(err instanceof Error ? err.message : "Failed to load document."))
       .finally(() => setLoading(false));
   }, [filename, initialPage]);
 
@@ -135,6 +138,13 @@ function PdfInspector({ filename, initialPage }: { filename: string; initialPage
   const totalPages = pages.length || 0;
 
   if (loading) return <PanelSkeleton />;
+  if (loadError) {
+    return (
+      <Alert variant="destructive" className="m-3">
+        <AlertDescription>{loadError}</AlertDescription>
+      </Alert>
+    );
+  }
 
   const mdPage = pages.find((p) => p.page === currentPage);
 
@@ -262,6 +272,7 @@ function SheetCompare({
 }) {
   const [data, setData] = useState<TableSheetResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   // Open by default -- the cleaned table is the primary thing a user wants
   // to see here, not something to hunt for behind a toggle.
   const [open, setOpen] = useState(true);
@@ -270,9 +281,10 @@ function SheetCompare({
   const load = useCallback(() => {
     if (data || loading) return;
     setLoading(true);
+    setLoadError(null);
     getTableSheet(filename, sheet)
       .then(setData)
-      .catch(() => setData(null))
+      .catch((err) => setLoadError(err instanceof Error ? err.message : "Failed to load sheet."))
       .finally(() => setLoading(false));
   }, [filename, sheet, data, loading]);
 
@@ -342,7 +354,7 @@ function SheetCompare({
                 </tbody>
               </table>
             ) : (
-              <p className="p-3 text-[10px] text-muted-foreground">Not available</p>
+              <p className="p-3 text-[10px] text-muted-foreground">{loadError || "Not available"}</p>
             )}
           </div>
 
@@ -362,7 +374,7 @@ function SheetCompare({
                 </ReactMarkdown>
               </div>
             ) : (
-              <p className="p-3 text-[10px] text-muted-foreground">Not available</p>
+              <p className="p-3 text-[10px] text-muted-foreground">{loadError || "Not available"}</p>
             )}
           </div>
         </div>
@@ -388,18 +400,28 @@ function TableInspector({
   // Collapsed by default -- this is what the SQL generator reads, not
   // something a normal user opening the inspector wants to see up front.
   const [showSummary, setShowSummary] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
+    setLoadError(null);
     getDocumentChunks(filename)
       .then((r) => {
         setSummary(r.summary);
         setChunks(r.chunks);
       })
+      .catch((err) => setLoadError(err instanceof Error ? err.message : "Failed to load document."))
       .finally(() => setLoading(false));
   }, [filename]);
 
   if (loading) return <PanelSkeleton />;
+  if (loadError) {
+    return (
+      <Alert variant="destructive" className="m-3">
+        <AlertDescription>{loadError}</AlertDescription>
+      </Alert>
+    );
+  }
 
   const sheets: Record<string, Chunk[]> = {};
   for (const c of chunks) {
