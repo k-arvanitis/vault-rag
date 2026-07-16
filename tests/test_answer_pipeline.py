@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from src.answer_pipeline import (
     _TITLE_QUESTION_RE,
     _excel_citations_to_sources,
+    _resolve_comparison_doc_ids,
     _title_shortcut_answer,
+    answer_comparison_deterministic,
     answer_one,
     answer_query,
     build_citation_map,
@@ -662,3 +665,227 @@ class TestComparisonPartialUnsupportedRetry:
                 question="Compare the leave policies in doc_009 and doc_010",
             )
         assert ans == "doc_009: Unsupported\ndoc_010: real answer."
+
+
+def _chunk(marker: int, filename: str, body: str = "Some retrieved passage text.") -> str:
+    return f"[{marker}] file={filename} chunk=1 page=1 score=0.9\n{body}"
+
+
+class _FakeTool:
+    """Stands in for the search_knowledge_base StructuredTool -- .func mirrors
+    the real (content, artifact) tuple contract, keyed by doc_id so each test
+    controls exactly what each document "has"."""
+
+    def __init__(self, responses: dict[str, str]):
+        self.responses = responses
+        self.calls: list[tuple[str, str]] = []
+
+    def func(self, question: str, doc_id: str = "") -> tuple[str, dict]:
+        self.calls.append((question, doc_id))
+        content = self.responses.get(doc_id, "No relevant information found.")
+        return content, {"rejected": []}
+
+
+class _FakeLLMResponse:
+    def __init__(self, content: str):
+        self.content = content
+
+
+class _FakeLLM:
+    def __init__(self, answer: str):
+        self.answer = answer
+        self.invoked_with: list = []
+
+    def invoke(self, messages):
+        self.invoked_with.append(messages)
+        return _FakeLLMResponse(self.answer)
+
+
+def _fake_agent(tool: _FakeTool, llm: _FakeLLM, doc_registry: dict[str, str]) -> SimpleNamespace:
+    return SimpleNamespace(
+        _tools_by_name={"search_knowledge_base": tool},
+        _llm=llm,
+        _doc_registry=doc_registry,
+    )
+
+
+class TestResolveComparisonDocIds:
+    def test_two_named_doc_ids_in_question(self):
+        result = _resolve_comparison_doc_ids(
+            "Compare the leave policies in doc_009 and doc_010", None, {}
+        )
+        assert result == ["doc_009", "doc_010"]
+
+    def test_more_than_two_named_doc_ids(self):
+        result = _resolve_comparison_doc_ids(
+            "Compare doc_001, doc_002 and doc_003", None, {}
+        )
+        assert result is not None
+        assert set(result) == {"doc_001", "doc_002", "doc_003"}
+
+    def test_two_docs_via_source_scope(self):
+        registry = {
+            "doc_006_purchase_card_transactions_q1_2025_26": "doc_006",
+            "doc_007_published_spend_report_april_25": "doc_007",
+        }
+        result = _resolve_comparison_doc_ids(
+            "Compare these two",
+            ["doc_006_purchase_card_transactions_q1_2025_26.xlsx", "doc_007_published_spend_report_april_25.csv"],
+            registry,
+        )
+        assert result == ["doc_006", "doc_007"]
+
+    def test_similar_filenames_resolve_to_distinct_ids(self):
+        """doc_016b/doc_016c share almost their entire stem -- substring
+        matching must not collapse them into the same document."""
+        registry = {
+            "doc_016a_original_lease": "doc_016a",
+            "doc_016b_first_amendment": "doc_016b",
+            "doc_016c_second_amendment": "doc_016c",
+        }
+        result = _resolve_comparison_doc_ids(
+            "Compare these",
+            ["doc_016b_first_amendment.pdf", "doc_016c_second_amendment.pdf"],
+            registry,
+        )
+        assert result == ["doc_016b", "doc_016c"]
+
+    def test_ambiguous_question_returns_none(self):
+        """No named doc_ids, no source scope, no registry match -- must fall
+        back to the agent-based path rather than guessing."""
+        result = _resolve_comparison_doc_ids(
+            "Compare the two most recent versions of the contract", None, {}
+        )
+        assert result is None
+
+
+class TestAnswerComparisonDeterministic:
+    def test_two_named_documents_both_covered(self):
+        tool = _FakeTool({"doc_009": _chunk(1, "doc_009_hr.pdf"), "doc_010": _chunk(1, "doc_010_handbook.pdf")})
+        llm = _FakeLLM("Doc 009 says X [1]. Doc 010 says Y [2].")
+        agent = _fake_agent(tool, llm, {})
+        result = answer_comparison_deterministic(
+            agent, "Compare the leave policies in doc_009 and doc_010"
+        )
+        assert result is not None
+        filenames = {s["filename"] for s in result["sources"]}
+        assert filenames == {"doc_009_hr.pdf", "doc_010_handbook.pdf"}
+        assert "No relevant evidence" not in result["answer"]
+
+    def test_two_documents_selected_through_source_scope(self):
+        registry = {"doc_006_data": "doc_006", "doc_007_data": "doc_007"}
+        tool = _FakeTool({"doc_006": _chunk(1, "doc_006_data.xlsx"), "doc_007": _chunk(1, "doc_007_data.csv")})
+        llm = _FakeLLM("Comparison answer.")
+        agent = _fake_agent(tool, llm, registry)
+        result = answer_comparison_deterministic(
+            agent,
+            "Compare these two spreadsheets",
+            forced_doc_id=["doc_006_data.xlsx", "doc_007_data.csv"],
+        )
+        assert result is not None
+        assert {s["filename"] for s in result["sources"]} == {"doc_006_data.xlsx", "doc_007_data.csv"}
+
+    def test_one_document_missing_evidence_notes_it_without_fabricating(self):
+        tool = _FakeTool({"doc_009": _chunk(1, "doc_009_hr.pdf")})  # doc_010 absent -> "No relevant information found."
+        llm = _FakeLLM("Doc 009 says X [1].")
+        agent = _fake_agent(tool, llm, {})
+        result = answer_comparison_deterministic(
+            agent, "Compare the leave policies in doc_009 and doc_010"
+        )
+        assert result is not None
+        assert {s["filename"] for s in result["sources"]} == {"doc_009_hr.pdf"}
+        assert "No relevant evidence was found for doc_010" in result["answer"]
+
+    def test_more_than_two_compared_documents_all_retrieved(self):
+        tool = _FakeTool(
+            {
+                "doc_001": _chunk(1, "doc_001_a.pdf"),
+                "doc_002": _chunk(1, "doc_002_b.pdf"),
+                "doc_003": _chunk(1, "doc_003_c.pdf"),
+            }
+        )
+        llm = _FakeLLM("Three-way comparison.")
+        agent = _fake_agent(tool, llm, {})
+        result = answer_comparison_deterministic(
+            agent, "Compare doc_001, doc_002 and doc_003"
+        )
+        assert result is not None
+        assert {s["filename"] for s in result["sources"]} == {
+            "doc_001_a.pdf",
+            "doc_002_b.pdf",
+            "doc_003_c.pdf",
+        }
+        assert len(tool.calls) == 3
+
+    def test_ambiguous_question_returns_none_for_caller_fallback(self):
+        tool = _FakeTool({})
+        llm = _FakeLLM("should not be reached")
+        agent = _fake_agent(tool, llm, {})
+        result = answer_comparison_deterministic(
+            agent, "Compare the two most recent versions of the contract"
+        )
+        assert result is None
+        assert tool.calls == []
+
+    def test_all_documents_missing_evidence_returns_none(self):
+        tool = _FakeTool({})  # both doc_ids come back empty
+        llm = _FakeLLM("should not be reached")
+        agent = _fake_agent(tool, llm, {})
+        result = answer_comparison_deterministic(
+            agent, "Compare the leave policies in doc_009 and doc_010"
+        )
+        assert result is None
+
+
+class TestAnswerQueryComparisonRouting:
+    def test_non_comparison_multi_doc_question_skips_deterministic_path(self):
+        """A question that just happens to mention two doc_ids without any
+        comparison language must not be forced through the deterministic
+        comparison path -- it isn't asking for a comparison at all."""
+        with (
+            patch("src.answer_pipeline.answer_comparison_deterministic") as mock_det,
+            patch("src.answer_pipeline.answer_one", return_value=("An answer.", [], {})),
+        ):
+            answer_query(
+                agent=object(),
+                question="List everything mentioned about doc_009 and doc_010.",
+            )
+        mock_det.assert_not_called()
+
+    def test_comparison_question_tries_deterministic_path_first(self):
+        with (
+            patch(
+                "src.answer_pipeline.answer_comparison_deterministic",
+                return_value={
+                    "answer": "det answer",
+                    "sources": [],
+                    "sql": [],
+                    "tools": [],
+                    "rejected_sources": [],
+                    "collected": [],
+                },
+            ) as mock_det,
+            patch("src.answer_pipeline.answer_one") as mock_answer_one,
+        ):
+            result = answer_query(
+                agent=object(),
+                question="Compare the leave policies in doc_009 and doc_010",
+            )
+        mock_det.assert_called_once()
+        mock_answer_one.assert_not_called()
+        assert result["answer"] == "det answer"
+
+    def test_comparison_question_falls_back_when_deterministic_path_declines(self):
+        with (
+            patch("src.answer_pipeline.answer_comparison_deterministic", return_value=None),
+            patch(
+                "src.answer_pipeline.answer_one",
+                return_value=("fallback answer", [], {}),
+            ) as mock_answer_one,
+        ):
+            result = answer_query(
+                agent=object(),
+                question="Compare the two most recent versions of the contract",
+            )
+        mock_answer_one.assert_called_once()
+        assert result["answer"] == "fallback answer"

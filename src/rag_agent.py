@@ -401,6 +401,14 @@ def build_rag_agent(
     agent._system_prompt = system_prompt  # type: ignore[attr-defined]
     agent._generation_api_base = _to_openai_base(generation_api_base)  # type: ignore[attr-defined]
     agent._generation_model = model_name  # type: ignore[attr-defined]
+    # Exposed so answer_pipeline's deterministic comparison path can call
+    # search_knowledge_base directly, once per resolved document, instead of
+    # relying on the ReAct agent to decide whether/how to fan out retrieval,
+    # and synthesize the comparison answer with the same LLM client (same
+    # key-resolution logic, no duplicated client construction).
+    agent._tools_by_name = {t.name: t for t in tools}  # type: ignore[attr-defined]
+    agent._doc_registry = doc_registry  # type: ignore[attr-defined]
+    agent._llm = llm  # type: ignore[attr-defined]
     return agent
 
 

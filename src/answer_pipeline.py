@@ -129,6 +129,177 @@ def _comparison_incompleteness(
     )
     return missing, has_partial, n_sources
 
+
+# ---------------------------------------------------------------------------
+# Deterministic comparison path
+#
+# The agent-based comparison retry above (answer_one's is_comparison branch)
+# is inherently probabilistic: it lets the ReAct agent decide whether/how to
+# make a second search_knowledge_base call, then detects incompleteness after
+# the fact and re-prompts. That works most of the time but not every time.
+# This path instead retrieves independently for every resolved document
+# BEFORE any generation happens, guaranteeing (not hoping for) at least one
+# evidence item per resolvable document, then makes a single synthesis call
+# over the combined evidence. Falls back to None (caller uses the existing
+# agent-based path) whenever the requested documents can't be confidently
+# resolved -- e.g. "compare the two most recent versions" names no document,
+# so forcing this path onto it would be guessing, not determinism.
+# ---------------------------------------------------------------------------
+
+_STEM_STOPWORDS = {"the", "and", "for", "with", "from"}
+
+
+def _resolve_comparison_doc_ids(
+    question: str,
+    forced_doc_id: str | list[str] | None,
+    doc_registry: dict[str, str],
+) -> list[str] | None:
+    """Resolve which distinct documents a comparison question is actually
+    asking about. Returns None when fewer than two can be confidently
+    resolved, signaling the caller to fall back to the agent-based path.
+    """
+    if isinstance(forced_doc_id, list):
+        resolved: list[str] = []
+        for f in forced_doc_id:
+            stem = re.sub(r"\.[^.]+$", "", f.rsplit("/", 1)[-1]).lower()
+            doc_id = doc_registry.get(stem) or next(
+                (v for k, v in doc_registry.items() if stem in k or k in stem), None
+            )
+            resolved.append(doc_id or stem)
+        distinct = list(dict.fromkeys(resolved))
+        return distinct if len(distinct) >= 2 else None
+
+    mentioned = {m.lower() for m in _MENTIONED_DOC_ID_RE.findall(question)}
+    if len(mentioned) >= 2:
+        return sorted(mentioned)
+
+    # Fuzzy title match against the doc registry -- same "stem token overlap"
+    # heuristic retrieval_tool.py's own auto-scope uses, kept conservative:
+    # only trusted when exactly two candidates clear the overlap bar and the
+    # rest of the corpus doesn't (an ambiguous/no-name question won't).
+    if doc_registry:
+        q_tokens = set(re.findall(r"[a-z]{3,}", question.lower())) - _STEM_STOPWORDS
+        scored: dict[str, int] = {}
+        for stem, doc_id in doc_registry.items():
+            stem_tokens = {
+                t
+                for t in re.findall(r"[a-z]{3,}", stem)
+                if t not in _STEM_STOPWORDS and not t.startswith("doc")
+            }
+            overlap = len(q_tokens & stem_tokens)
+            if overlap >= 2:
+                scored[doc_id] = max(scored.get(doc_id, 0), overlap)
+        top = sorted(scored, key=lambda d: scored[d], reverse=True)
+        if len(top) == 2:
+            return top
+    return None
+
+
+def _retrieve_for_doc(agent: Any, question: str, doc_id: str) -> str:
+    """Call search_knowledge_base directly, scoped to exactly one document --
+    bypasses the ReAct agent's own decision of whether/how to call it."""
+    tool = getattr(agent, "_tools_by_name", {}).get("search_knowledge_base")
+    if tool is None:
+        return ""
+    token = FORCED_DOC_ID.set(doc_id)
+    try:
+        content, _artifact = tool.func(question, doc_id=doc_id)
+    finally:
+        FORCED_DOC_ID.reset(token)
+    return content or ""
+
+
+_COMPARISON_SYNTHESIS_PROMPT = (
+    "Answer this comparison question using ONLY the evidence passages below. "
+    "Each passage is numbered and belongs to one of the documents being compared. "
+    "Cite passages inline using their bracketed number, e.g. [1]. Do not use "
+    "outside/general knowledge -- if a claim isn't supported by a passage below, "
+    "do not make it. If a note below says a document has no relevant evidence, "
+    "state plainly that this comparison has no support for that document instead "
+    "of guessing.\n\nQuestion: {question}\n\nEvidence:\n{evidence}\n\nAnswer:"
+)
+
+
+def answer_comparison_deterministic(
+    agent: Any,
+    question: str,
+    forced_doc_id: str | list[str] | None = None,
+    trace: Any = None,
+) -> dict | None:
+    """Deterministic comparison path: resolve doc ids, retrieve independently
+    from each, synthesize once. Returns None to signal "not applicable here,
+    use the existing agent-based comparison path" -- either the documents
+    couldn't be confidently resolved, or every one of them came back empty.
+    """
+    doc_registry = getattr(agent, "_doc_registry", None) or {}
+    doc_ids = _resolve_comparison_doc_ids(question, forced_doc_id, doc_registry)
+    if not doc_ids or not hasattr(agent, "_tools_by_name") or not hasattr(agent, "_llm"):
+        return None
+
+    collected: list[str] = []
+    covered_doc_ids: list[str] = []
+    missing_doc_ids: list[str] = []
+    marker = 1
+    for doc_id in doc_ids:
+        raw = _retrieve_for_doc(agent, question, doc_id)
+        if not raw.strip() or raw.strip() == "No relevant information found.":
+            missing_doc_ids.append(doc_id)
+            continue
+        covered_doc_ids.append(doc_id)
+        # raw is one or more "[N] file=... \nbody" numbered blocks already --
+        # renumber into the shared collected sequence so parse_sources/
+        # citation_map treat this exactly like a normal single agent run.
+        for block in re.split(r"(?=^\[\d+\]\s+file=)", raw, flags=re.MULTILINE):
+            block = block.strip()
+            if not block:
+                continue
+            collected.append(re.sub(r"^\[\d+\]", f"[{marker}]", block, count=1))
+            marker += 1
+
+    if len(covered_doc_ids) < 2 and not (covered_doc_ids and missing_doc_ids):
+        # Nothing usable, or only one requested doc even exists -- can't
+        # produce a real comparison. Let the caller fall back.
+        return None
+
+    evidence = "\n\n".join(collected)
+    prompt = _COMPARISON_SYNTHESIS_PROMPT.format(question=question, evidence=evidence)
+    try:
+        from langchain_core.messages import HumanMessage
+
+        resp = agent._llm.invoke([HumanMessage(content=prompt)])
+        answer = (resp.content or "").strip()
+    except Exception:
+        return None
+    if not answer:
+        return None
+
+    if missing_doc_ids:
+        notes = "\n\n".join(
+            f"No relevant evidence was found for {mid} in this document set."
+            for mid in missing_doc_ids
+        )
+        answer = f"{answer}\n\n{notes}"
+
+    sources = parse_sources(collected)
+    citation_map = build_citation_map(collected, sources)
+    answer = strip_leaked_headers(answer, citation_map=citation_map)
+    if trace is not None:
+        trace.span(
+            name="comparison-deterministic",
+            input=question,
+            output=answer,
+            metadata={"covered_doc_ids": covered_doc_ids, "missing_doc_ids": missing_doc_ids},
+        )
+    return {
+        "answer": answer,
+        "sources": sources,
+        "sql": [],
+        "tools": ["search_knowledge_base"] * len(covered_doc_ids),
+        "rejected_sources": [],
+        "collected": collected,
+    }
+
+
 _COMPARISON_RETRY_INSTRUCTION = (
     "\n\nIMPORTANT: This is a retry. This is a two-part comparison question and the "
     "previous attempt only retrieved evidence from one source. Do NOT answer the other "
@@ -725,6 +896,18 @@ def answer_query(
             "rejected_sources": [],
             "collected": collected,
         }
+
+    # Try the deterministic comparison path first: only engages when at least
+    # two distinct documents can be confidently resolved (named doc_ids, the
+    # UI's multi-select scope, or a clear two-way title match) -- returns None
+    # for anything more ambiguous, which falls through to the existing
+    # agent-based comparison path below unchanged.
+    if _COMPARISON_RE.search(question):
+        det = answer_comparison_deterministic(
+            agent, question, forced_doc_id=forced_doc_id, trace=trace
+        )
+        if det is not None:
+            return det
 
     # Comparison questions are kept whole: splitting strips the "Comparing X
     # and Y" clause that binds each fragment to a specific document, so a
