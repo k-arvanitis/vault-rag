@@ -68,7 +68,7 @@ export default function SourcesPage() {
   };
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-background">
+    <div className="flex h-full flex-col overflow-hidden bg-background">
       <div className="flex shrink-0 items-center gap-3 border-b border-border bg-card px-5 py-3">
         <Button variant="ghost" size="icon-sm" onClick={() => router.push("/")} aria-label="Back to Ask">
           <ArrowLeft />
