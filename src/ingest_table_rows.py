@@ -565,8 +565,13 @@ def _save_chunks_json(file_path: str, all_chunks: list[dict]) -> Path:
 
 def _load_into_duckdb(
     file_path: str, file_name: str, verbose: bool
-) -> dict[str, list[str]]:
-    """Clean file with LLM and load all sheets into DuckDB. Returns {sheet_name: [columns]}."""
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Clean file with LLM and load all sheets into DuckDB.
+
+    Returns ({sheet_name: [columns]}, {sheet_name: [notes]}) -- notes are the
+    footnotes/titles the LLM identified as metadata rows and stripped out of
+    the cleaned data, otherwise discarded (see excel_cleaner.SheetMetadata).
+    """
     import duckdb
 
     from src.duckdb_store import _normalize_dates, _table_name
@@ -587,10 +592,11 @@ def _load_into_duckdb(
             f"  [WARNING] excel_cleaner failed for '{file_name}': {e}. Skipping DuckDB load."
         )
         con.close()
-        return {}
+        return {}, {}
 
     # Load each cleaned sheet into its own DuckDB table (skip if already present).
     sheet_columns: dict[str, list[str]] = {}
+    sheet_notes: dict[str, list[str]] = {}
     for sheet_name, sr in sheet_results.items():
         tname = _table_name(file_name, sheet_name)
         existing = con.execute(
@@ -611,8 +617,9 @@ def _load_into_duckdb(
         # Record the final column names for this sheet.
         cols = [row[0] for row in con.execute(f'DESCRIBE "{tname}"').fetchall()]
         sheet_columns[sheet_name] = cols
+        sheet_notes[sheet_name] = sr.metadata.notes
     con.close()
-    return sheet_columns
+    return sheet_columns, sheet_notes
 
 
 def _build_sheet_summary_point(
@@ -706,7 +713,7 @@ def ingest_table_rows(
     # Step 1: LLM cleaning + DuckDB load
     if verbose:
         print("  Cleaning and loading into DuckDB...")
-    sheet_columns = _load_into_duckdb(file_path, file_name, verbose)
+    sheet_columns, sheet_notes = _load_into_duckdb(file_path, file_name, verbose)
 
     # Step 2: generate sheet_summary points for Qdrant
     # Fall back to heuristic headers if DuckDB load failed for a sheet
@@ -787,6 +794,9 @@ def ingest_table_rows(
             sheet_title,
             subheader_rows=subheader_rows,
         )
+        notes = sheet_notes.get(sheet_name) or []
+        if notes:
+            full_sheet_md += "\n\n**Notes:**\n" + "\n".join(f"- {n}" for n in notes)
         md_out_dir = REPO_ROOT / "data" / "output" / "table_markdowns"
         md_out_dir.mkdir(parents=True, exist_ok=True)
         safe_sheet = sheet_name.replace("/", "_").replace("\\", "_")

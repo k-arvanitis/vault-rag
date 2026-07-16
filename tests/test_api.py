@@ -24,3 +24,18 @@ class TestTruncateMarkdownTable:
         md = "| A |\n| --- |\n| 1 |"
         result = _truncate_markdown_table(md, max_rows=60)
         assert "omitted" not in result
+
+    def test_preserves_trailing_notes_appended_after_the_table(self):
+        """Notes extracted during ingestion (excel_cleaner.SheetMetadata.notes)
+        are appended after the table in the .md file -- truncation must not
+        eat into them once the table itself is large enough to overflow
+        max_rows, since they live past table_end, not inside it."""
+        header = "| A | B |\n| --- | --- |\n"
+        rows = "\n".join(f"| r{i} | v{i} |" for i in range(100))
+        notes = "\n\n**Notes:**\n- Figures exclude VAT.\n- Source: finance team."
+        md = header + rows + notes
+        result = _truncate_markdown_table(md, max_rows=10)
+        assert result.count("| r") == 10
+        assert "90 more rows omitted" in result
+        assert "**Notes:**" in result
+        assert "Figures exclude VAT." in result

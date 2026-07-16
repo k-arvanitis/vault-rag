@@ -54,6 +54,37 @@ export function extractTableMarkdown(cleanedMd: string): string {
   return start === -1 ? cleanedMd : lines.slice(start).join("\n");
 }
 
+/** Parses a markdown pipe-table into header + data rows, skipping the
+ * `|---|---|` separator line. Rendered manually (not via ReactMarkdown) so
+ * the matched row can be ref'd and highlighted the same way the raw table
+ * is -- markdown emphasis inside cells (e.g. **bold**) is shown as literal
+ * text, a minor trade-off for that highlight. */
+export function parseMarkdownTable(md: string): { header: string[]; rows: string[][] } {
+  const lines = md.split("\n").filter((l) => l.trim().startsWith("|"));
+  if (lines.length < 2) return { header: [], rows: [] };
+  const splitRow = (line: string) =>
+    line
+      .trim()
+      .replace(/^\|/, "")
+      .replace(/\|$/, "")
+      .split("|")
+      .map((c) => c.trim());
+  return { header: splitRow(lines[0]), rows: lines.slice(2).map(splitRow) };
+}
+
+/** Whatever the ingestion pipeline appended after the table itself -- e.g. a
+ * "**Notes:**" section with footnotes/titles the LLM stripped out of the
+ * cleaned data (see excel_cleaner.SheetMetadata.notes). Empty if there's
+ * nothing past the table. */
+export function extractTrailingNotes(md: string): string {
+  const lines = md.split("\n");
+  const tableStart = lines.findIndex((l) => l.trim().startsWith("|"));
+  if (tableStart === -1) return "";
+  let i = tableStart;
+  while (i < lines.length && lines[i].trim().startsWith("|")) i++;
+  return lines.slice(i).join("\n").trim();
+}
+
 function PanelSkeleton() {
   return (
     <div className="flex-1 space-y-3 p-5">
@@ -276,7 +307,8 @@ function SheetCompare({
   // Open by default -- the cleaned table is the primary thing a user wants
   // to see here, not something to hunt for behind a toggle.
   const [open, setOpen] = useState(true);
-  const matchedRowRef = useRef<HTMLTableRowElement>(null);
+  const rawMatchedRowRef = useRef<HTMLTableRowElement>(null);
+  const cleanedMatchedRowRef = useRef<HTMLTableRowElement>(null);
 
   const load = useCallback(() => {
     if (data || loading) return;
@@ -295,11 +327,16 @@ function SheetCompare({
   }, []);
 
   useEffect(() => {
-    matchedRowRef.current?.scrollIntoView({ block: "center" });
+    rawMatchedRowRef.current?.scrollIntoView({ block: "center" });
+    cleanedMatchedRowRef.current?.scrollIntoView({ block: "center" });
   }, [data, quote]);
 
   const rawBody = (data?.raw_rows ?? []).slice(1);
   const matchedIdx = findMatchedRowIndex(rawBody, quote);
+
+  const cleanedTable = data?.cleaned_md ? parseMarkdownTable(extractTableMarkdown(data.cleaned_md)) : null;
+  const cleanedMatchedIdx = cleanedTable ? findMatchedRowIndex(cleanedTable.rows, quote) : -1;
+  const notes = data?.cleaned_md ? extractTrailingNotes(data.cleaned_md) : "";
 
   return (
     <div className="mb-2">
@@ -336,7 +373,7 @@ function SheetCompare({
                     return (
                     <tr
                       key={ri}
-                      ref={isMatch ? matchedRowRef : undefined}
+                      ref={isMatch ? rawMatchedRowRef : undefined}
                       className={cn("border-b border-border", isMatch && "bg-amber-100 dark:bg-amber-950")}
                     >
                       {row.map((cell, ci) => (
@@ -367,16 +404,50 @@ function SheetCompare({
               <div className="flex justify-center p-4">
                 <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
               </div>
-            ) : data?.cleaned_md ? (
-              <div className="prose-ui p-2 text-[9px] leading-relaxed text-foreground [&_table]:text-[9px]">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {extractTableMarkdown(data.cleaned_md)}
-                </ReactMarkdown>
-              </div>
+            ) : cleanedTable && cleanedTable.rows.length > 0 ? (
+              <table className="w-full font-mono text-[9px] text-foreground">
+                <thead>
+                  <tr className="border-b border-border bg-muted/50">
+                    {cleanedTable.header.map((h, i) => (
+                      <th key={i} className="whitespace-nowrap px-2 py-0.5 text-left font-semibold">
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {cleanedTable.rows.map((row, ri) => {
+                    const isMatch = ri === cleanedMatchedIdx;
+                    return (
+                      <tr
+                        key={ri}
+                        ref={isMatch ? cleanedMatchedRowRef : undefined}
+                        className={cn("border-b border-border", isMatch && "bg-amber-100 dark:bg-amber-950")}
+                      >
+                        {row.map((cell, ci) => (
+                          <td
+                            key={ci}
+                            className="max-w-[180px] overflow-hidden text-ellipsis whitespace-nowrap px-2 py-0.5"
+                            title={cell}
+                          >
+                            {cell}
+                          </td>
+                        ))}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             ) : (
               <p className="p-3 text-[10px] text-muted-foreground">{loadError || "Not available"}</p>
             )}
           </div>
+        </div>
+      )}
+
+      {open && notes && (
+        <div className="mt-2 rounded-md border border-border bg-card p-2 text-[10px] text-foreground">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{notes}</ReactMarkdown>
         </div>
       )}
     </div>
@@ -395,21 +466,14 @@ function TableInspector({
   quote?: string;
 }) {
   const [loading, setLoading] = useState(true);
-  const [summary, setSummary] = useState<string | null>(null);
   const [chunks, setChunks] = useState<Chunk[]>([]);
-  // Collapsed by default -- this is what the SQL generator reads, not
-  // something a normal user opening the inspector wants to see up front.
-  const [showSummary, setShowSummary] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
     setLoadError(null);
     getDocumentChunks(filename)
-      .then((r) => {
-        setSummary(r.summary);
-        setChunks(r.chunks);
-      })
+      .then((r) => setChunks(r.chunks))
       .catch((err) => setLoadError(err instanceof Error ? err.message : "Failed to load document."))
       .finally(() => setLoading(false));
   }, [filename]);
@@ -433,29 +497,7 @@ function TableInspector({
   return (
     <ScrollArea className="min-h-0 flex-1">
       <div className="space-y-4 p-5">
-        <p className="text-xs text-muted-foreground">{chunks.length} data chunks indexed</p>
-
-        {summary && (
-          <div>
-            <Button
-              variant="link"
-              size="xs"
-              className="mb-2 h-auto p-0 text-xs"
-              onClick={() => setShowSummary((v) => !v)}
-            >
-              {showSummary ? "Hide" : "Show"} schema &amp; sample values — read by the SQL generator
-            </Button>
-            {showSummary && (
-              <div className="prose-ui rounded-md border border-border bg-card p-3 text-xs text-foreground">
-                <ReactMarkdown {...MD_PLUGINS}>
-                  {summary.replace("## Document Summary\n\n", "").replace(/ 00:00:00/g, "")}
-                </ReactMarkdown>
-              </div>
-            )}
-          </div>
-        )}
-
-        {Object.entries(sheets).map(([sheet, sheetChunks]) => (
+        {Object.keys(sheets).map((sheet) => (
           <div
             key={sheet}
             ref={(el) => {
@@ -465,39 +507,6 @@ function TableInspector({
             <p className="mb-2 text-xs font-semibold text-foreground">Sheet: {sheet}</p>
 
             <SheetCompare filename={filename} sheet={sheet} quote={sheet === initialSheet ? quote : undefined} />
-
-            <p className="mb-2 mt-3 text-[10px] text-muted-foreground">
-              Indexed chunk — this sheet's data is queried directly, not read from this summary
-            </p>
-            <div className="space-y-2">
-              {sheetChunks.map((c, i) => {
-                const meta = c.metadata;
-                const chunkType = meta.chunk_type ?? "chunk";
-                const rowRef = meta.row_ref;
-                const numRows = meta.num_rows ?? 1;
-                const rowLabel =
-                  rowRef != null
-                    ? rowRef === rowRef + numRows - 1
-                      ? `row ${rowRef}`
-                      : `rows ${rowRef}–${rowRef + numRows - 1}`
-                    : null;
-                const label = [`Chunk ${i + 1}`, chunkType, rowLabel].filter(Boolean).join(" · ");
-                // Drop the leading "[File: … | Sheet: …]" line — already shown in the section header.
-                const body = c.content.replace(/^\[File:[^\]]*\]\n/, "");
-
-                return (
-                  <details key={i} className="group rounded-md border border-border bg-card">
-                    <summary className="flex cursor-pointer select-none items-center gap-2 px-3 py-2 text-[11px] text-muted-foreground hover:bg-muted">
-                      <ChevronRight className="h-3 w-3 shrink-0 transition-transform group-open:rotate-90" />
-                      {label}
-                    </summary>
-                    <pre className="overflow-x-auto whitespace-pre-wrap px-3 pb-3 font-mono text-[10px] leading-relaxed text-muted-foreground">
-                      {body}
-                    </pre>
-                  </details>
-                );
-              })}
-            </div>
           </div>
         ))}
       </div>
@@ -523,7 +532,7 @@ export default function InspectorPanel({ filename, onClose, page, sheet, quote }
               {isPdf
                 ? "PDF · side-by-side view"
                 : isTable
-                ? "Spreadsheet · chunk view"
+                ? "Spreadsheet · raw vs. cleaned"
                 : "Document inspector"}
             </p>
           </div>

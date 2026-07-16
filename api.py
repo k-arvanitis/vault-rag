@@ -866,12 +866,19 @@ def _truncate_markdown_table(md: str, max_rows: int = _TABLE_MD_MAX_ROWS) -> str
     if table_start is None:
         return md
     header_lines = lines[:table_start]
-    table_lines = lines[table_start:]
+    # Only the contiguous run of pipe-prefixed lines is "the table" -- content
+    # appended after it (e.g. extracted notes) must survive truncation intact,
+    # not get silently cut off mid-line once the table's own row count grows.
+    table_end = table_start
+    while table_end < len(lines) and lines[table_end].lstrip().startswith("|"):
+        table_end += 1
+    table_lines = lines[table_start:table_end]
+    trailing_lines = lines[table_end:]
     kept = table_lines[: 2 + max_rows]  # header row + separator row + data rows
     omitted = len(table_lines) - len(kept)
     if omitted > 0:
         kept.append(f"\n_{omitted} more rows omitted — showing first {max_rows}._")
-    return "\n".join(header_lines + kept)
+    return "\n".join(header_lines + kept + trailing_lines)
 
 
 @app.get("/documents/{filename:path}/table-sheet/{sheet}")
