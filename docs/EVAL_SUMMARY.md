@@ -1,65 +1,81 @@
 # Vault RAG — Evaluation Summary
 
-*Measured on a 82-question hold-out benchmark spanning PDFs, scanned/OCR documents,
-and spreadsheets. Judge: claim-level RAGAS-style grading (gpt-oss-120b). Larger
-215-question validation in progress.*
+*Generated from `eval/results/summary.json` by `eval/generate_summary_doc.py` --
+do not hand-edit the numbers below; re-run the script after a new `make eval`.*
+
+**Benchmark date:** 2026-07-16
+**Answer model:** `openai/gpt-oss-120b`
+**Judge model:** `gpt-4o-mini`
+**Documents:** 18
+**Questions:** 109
 
 ## Headline
 
 | What it measures | Result |
 |---|---|
-| **Finds the right source** (retrieval hit@5) | **94%** |
-| **Answers are grounded in the sources** (faithfulness) | **86%** |
-| **Answers address the question** (relevancy) | **92%** |
-| **Refuses to invent answers** (unanswerable / PII questions) | **100%** |
-| **Single-document factual & table lookups** | **~94%** |
+| Overall answer correctness (10 question types) | **83.8%** |
+| Grounded answers (faithfulness) | **86.1%** |
+| Answers address the question (relevancy) | **86.9%** |
+| Finds the right source (retrieval Hit@5) | **98.6%** |
+| Refuses to invent answers (unanswerable questions) | **78.6%** |
+| Structured data (Excel/CSV) answer accuracy | **76.2%** |
 
-The system retrieves the correct evidence, grounds its answers in it, and — critically
-for a business setting — **declines to answer when the information isn't present**
-rather than fabricating it.
+## Retrieval metrics (74 PDF/OCR questions, Qdrant dense search)
 
-## By capability
+| Metric | Value |
+|---|---|
+| Hit@5 | 98.6% |
+| Hit@10 | 98.6% |
+| MRR | 85.4% |
+| Evidence recall@10 | 94.4% |
+| Evidence recall@20 | 96.8% |
 
-| Capability | Questions | Score | Notes |
-|---|---|---|---|
-| Document retrieval (hit@5 / hit@10) | 53 | 94% / 96% | Right source surfaced in the top results |
-| Evidence recall@10 | 53 | 91% | Of all needed evidence, fraction retrieved |
-| Faithfulness (no hallucination) | 74 | 86% | Claim-level grading; ±5 run-to-run on the LLM judge |
-| Answer relevancy | 82 | 92% | |
-| Refusal on unanswerable questions | 8 | 100% | Home address, sort code, DOB, etc. — correctly declined |
-| Structured data (Excel/CSV → SQL) | 21 | 81% | Exact single-table lookups ~94%; multi-report joins lower |
-| Overall answer correctness | 82 | 79% | See "honest limitations" below |
+## Structured data (21 Excel/CSV questions, DuckDB-served)
 
-## How it's evaluated (rigor matters to a technical buyer)
+| Metric | Value |
+|---|---|
+| Answer accuracy | 76.2% |
 
-- **Hold-out benchmark**, not training data; questions span every document type.
-- **Faithfulness graded at the claim level** (RAGAS/DeepEval-style): each factual
-  claim must be inferable from the retrieved context, not just plausible.
-- **Refusal is explicitly tested** with questions whose answers are *not* in the
-  corpus (PII, absent fields) — the system must say "Unsupported."
-- Retrieval and answer quality are measured **separately**, so we know whether a
-  miss is a retrieval problem or a generation problem.
+## Refusal / abstention (14 unanswerable questions)
 
-## Honest limitations (what the 79% overall reflects)
+| Metric | Value |
+|---|---|
+| Correct refusal rate | 78.6% |
 
-Overall correctness is held down by a deliberately hard subset that does **not**
-represent typical end-user questions:
+## Correctness by question type
 
-- **Cross-document arithmetic / aggregation** — e.g. summing 25 values across a
-  scanned, multi-chunk table. (Mitigated: tables are now loaded into a SQL engine
-  so exact `SUM`/`COUNT` works.)
-- **Matching a record across two unrelated reports** that share no common key.
-- **Questions with a debatable "correct" answer** — e.g. a document's formal title
-  vs. its running header.
+| Question type | Count | Correctness |
+|---|---|---|
+| table_grounding | 3 | 100.0% |
+| table_lookup | 16 | 93.8% |
+| numeric_lookup | 6 | 91.7% |
+| ocr_extraction | 25 | 86.0% |
+| single_doc_factoid | 17 | 81.2% |
+| negation_check | 5 | 80.0% |
+| unanswerable | 10 | 80.0% |
+| cross_document_compare | 20 | 77.5% |
+| numeric_reasoning | 4 | 75.0% |
+| figure_grounding | 3 | 66.7% |
 
-On **realistic single-document questions** — the bulk of real usage — the system
-runs **~85-94%** (94% on the core table-lookup set; 85% on a broader 130-question
-verified set generated from the source data). For a specific deployment, the right
-benchmark is built from the client's own documents and the questions their users
-actually ask.
+## Judge breakdown
 
-## Engineering behind the numbers
+Scoring path used per question: {"custom_llm_judge": 77, "exact_match_shortcircuit": 26, "exact_match_fallback": 6}
 
-Hybrid dense + sparse retrieval → cross-encoder reranking → grounded generation
-with abstention guards, plus a text-to-SQL path for spreadsheet/tabular questions.
-Faithfulness guarding and refusal behavior are first-class, not afterthoughts.
+## Known gap
+
+**Multi-document evidence coverage** is not yet a formal benchmark metric in
+this run -- this run predates the deterministic comparison path
+(`answer_comparison_deterministic` in `src/answer_pipeline.py`). A manual
+spot-check against the live API (5 repeated runs of a real two-document
+comparison question) showed 5/5 returning evidence from both requested
+documents; this is not a substitute for a real benchmark number and is not
+reported as one here. Measuring it formally requires a fresh `make eval`
+run with cross_document_compare questions specifically checked for
+per-document source coverage, not just answer correctness.
+
+## Regenerating
+
+```bash
+uv run python eval/run_eval.py       # full run: generate + judge (real LLM calls)
+uv run python eval/generate_summary_doc.py   # re-render this doc from summary.json
+```

@@ -1091,7 +1091,14 @@ def judge_answers(raw_answers_path: Path = RAW_ANSWERS_PATH) -> dict[str, Any]:
         1 for r in unanswerable_rows if (r.get("correctness") or 0) >= 1.0
     )
 
+    judge_model_name, _judge_base, _judge_key = _judge_config()
     summary = {
+        "benchmark_date": time.strftime("%Y-%m-%d"),
+        "answer_model": GENERATION_MODEL,
+        "judge_model": judge_model_name,
+        "document_count": len(
+            json.loads((REPO_ROOT / "eval" / "document_manifest.json").read_text())
+        ),
         "question_count": len(raw_rows),
         "vector_retrieval_metrics": {
             "scope": "PDF/OCR questions only (Qdrant dense search)",

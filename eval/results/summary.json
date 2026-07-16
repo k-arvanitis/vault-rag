@@ -1,4 +1,8 @@
 {
+  "benchmark_date": "2026-07-16",
+  "answer_model": "openai/gpt-oss-120b",
+  "judge_model": "gpt-4o-mini",
+  "document_count": 18,
   "question_count": 109,
   "vector_retrieval_metrics": {
     "scope": "PDF/OCR questions only (Qdrant dense search)",
