@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
+import json
 import logging
 import re
 import uuid
@@ -29,7 +30,7 @@ from fastapi import (  # noqa: E402
     UploadFile,
 )
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
-from fastapi.responses import JSONResponse  # noqa: E402
+from fastapi.responses import JSONResponse, StreamingResponse  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
 from src.config import (  # noqa: E402
@@ -499,6 +500,58 @@ async def query(req: QueryRequest):
         "sql": result["sql"],
         "tools_used": _tools_used(result["tools"]),
     }
+
+
+@app.post("/query/stream")
+async def query_stream(req: QueryRequest):
+    """POST /query/stream — SSE version of /query, for perceived-latency UX.
+
+    src.answer_pipeline.stream_answer is a plain sync generator (it drives
+    LangGraph's own sync stream_agent) — bridged to an async SSE response by
+    running it in the executor thread and relaying its items through an
+    asyncio.Queue, since a sync generator can't be iterated directly inside
+    an async endpoint. Each `data: ` line is one JSON event: {"token": str}
+    while generating, then one final {"done": true, "answer", "sources",
+    "sql", "tools_used"} — see stream_answer's docstring for which question
+    types actually stream live vs. arrive as a single lump event.
+
+    Known limitation: if the client disconnects (stop generation, or the tab
+    closes) mid-stream, the executor thread keeps running stream_answer to
+    completion — a sync generator running in a worker thread can't be
+    cancelled from the async side without extra plumbing, so its remaining
+    output just piles up in the now-unread queue until the request context
+    is garbage collected. Wasted compute on an aborted answer, not a
+    correctness bug (nothing is read from the queue after disconnect).
+    """
+    from src.answer_pipeline import stream_answer
+
+    agent = _get_agent()
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue = asyncio.Queue()
+    _SENTINEL = object()
+
+    def produce() -> None:
+        try:
+            for event in stream_answer(agent, req.question, req.doc_id):
+                loop.call_soon_threadsafe(queue.put_nowait, event)
+        except Exception as exc:  # noqa: BLE001 - report to the client, don't crash the thread
+            loop.call_soon_threadsafe(
+                queue.put_nowait, {"done": True, "error": str(exc)}
+            )
+        finally:
+            loop.call_soon_threadsafe(queue.put_nowait, _SENTINEL)
+
+    async def event_stream():
+        loop.run_in_executor(_executor, produce)
+        while True:
+            item = await queue.get()
+            if item is _SENTINEL:
+                break
+            if item.get("done") and "tools" in item:
+                item["tools_used"] = _tools_used(item.pop("tools"))
+            yield f"data: {json.dumps(item)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 # Real tool names → frontend pill keys (see TOOL_META in TraceSidebar.tsx).

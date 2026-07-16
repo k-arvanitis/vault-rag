@@ -2,7 +2,7 @@
 
 import { useRef, useState, useCallback, useEffect } from "react";
 import { Send, Square, SquarePen } from "lucide-react";
-import { queryDocuments, saveConversation, getDocuments, type Document, type InspectTarget, type Source } from "@/lib/api";
+import { streamQueryDocuments, saveConversation, getDocuments, type Document, type InspectTarget, type Source } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import MessageList, { type Message } from "./MessageList";
@@ -117,17 +117,25 @@ export default function ChatPanel({
   );
 
   // Shared by send() (new user turn) and retry() (re-ask an existing question
-  // in place) — /query is stateless per-question (no history is threaded
-  // today), so a retry is just firing the same question again and writing
-  // the result into the given assistant message slot instead of appending.
+  // in place) — /query/stream is stateless per-question (no history is
+  // threaded today), so a retry is just firing the same question again and
+  // writing the result into the given assistant message slot instead of
+  // appending. onToken fires as raw tokens stream in (perceived-latency
+  // UX — see streamQueryDocuments); onDone fires once with the final,
+  // cleaned answer, which callers should use to replace the raw
+  // concatenation, not append to it.
   const ask = useCallback(
-    async (question: string, onResult: (data: Awaited<ReturnType<typeof queryDocuments>>) => void) => {
+    async (
+      question: string,
+      onToken: (token: string) => void,
+      onDone: (data: Awaited<ReturnType<typeof streamQueryDocuments>>) => void
+    ) => {
       setStreaming(true);
       const controller = new AbortController();
       abortRef.current = controller;
       try {
-        const data = await queryDocuments(question, scopedDocIds, controller.signal);
-        onResult(data);
+        const data = await streamQueryDocuments(question, onToken, scopedDocIds, controller.signal);
+        onDone(data);
         onTrace?.({
           sources: data.sources ?? [],
           rejected_sources: data.rejected_sources ?? [],
@@ -156,21 +164,26 @@ export default function ChatPanel({
     textareaRef.current?.focus();
 
     const userMsg: Message = { id: nextId(), role: "user", content: question };
-    setMessages((prev) => [...prev, userMsg]);
+    const assistantId = nextId();
+    setMessages((prev) => [...prev, userMsg, { id: assistantId, role: "assistant", content: "" }]);
 
-    await ask(question, (data) => {
-      const assistantMsg: Message = {
-        id: nextId(),
-        role: "assistant",
-        content: data.answer,
-        sources: data.sources ?? [],
-      };
-      setMessages((prev) => {
-        const next = [...prev, assistantMsg];
-        persist(next);
-        return next;
-      });
-    });
+    await ask(
+      question,
+      (token) => {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + token } : m))
+        );
+      },
+      (data) => {
+        setMessages((prev) => {
+          const next = prev.map((m) =>
+            m.id === assistantId ? { ...m, content: data.answer, sources: data.sources ?? [] } : m
+          );
+          persist(next);
+          return next;
+        });
+      }
+    );
   }, [input, streaming, ask, persist]);
 
   const retry = useCallback(
@@ -180,17 +193,31 @@ export default function ChatPanel({
       const userMsg = idx > 0 ? messages[idx - 1] : null;
       if (!userMsg || userMsg.role !== "user") return;
 
-      await ask(userMsg.content, (data) => {
-        setMessages((prev) => {
-          const next = prev.map((m) =>
-            m.id === assistantMessageId
-              ? { ...m, content: data.answer, sources: data.sources ?? [] }
-              : m
+      setMessages((prev) =>
+        prev.map((m) => (m.id === assistantMessageId ? { ...m, content: "" } : m))
+      );
+
+      await ask(
+        userMsg.content,
+        (token) => {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantMessageId ? { ...m, content: m.content + token } : m
+            )
           );
-          persist(next);
-          return next;
-        });
-      });
+        },
+        (data) => {
+          setMessages((prev) => {
+            const next = prev.map((m) =>
+              m.id === assistantMessageId
+                ? { ...m, content: data.answer, sources: data.sources ?? [] }
+                : m
+            );
+            persist(next);
+            return next;
+          });
+        }
+      );
     },
     [messages, streaming, ask, persist]
   );

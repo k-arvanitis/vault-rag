@@ -12,6 +12,7 @@ from src.answer_pipeline import (
     answer_query,
     build_citation_map,
     parse_sources,
+    stream_answer,
     strip_leaked_headers,
 )
 
@@ -243,6 +244,70 @@ class TestInlineCitationRenumbering:
         """A bracketed year like [2024] is never a citation marker -- must not
         be touched even with an empty citation_map."""
         assert strip_leaked_headers("Filed in [2024].", citation_map={}) == "Filed in [2024]."
+
+
+class TestStreamAnswer:
+    """stream_answer streams tokens live for the common single-part case, but
+    falls back to the full non-streaming answer_query pipeline (as one lump
+    token) for comparison/multi-part questions -- those need the complete
+    answer text before their retry/merge logic can run."""
+
+    def test_streams_tokens_live_for_single_part_question(self):
+        def fake_stream_agent(agent, query, **kwargs):
+            kwargs["tool_calls"].append("search_knowledge_base")
+            yield "Hello "
+            yield "world."
+
+        with (
+            patch("src.answer_pipeline.route_question", return_value={}),
+            patch("src.answer_pipeline.stream_agent", side_effect=fake_stream_agent),
+        ):
+            events = list(stream_answer(agent=object(), question="What is X?"))
+
+        token_events = [e for e in events if "token" in e]
+        assert [e["token"] for e in token_events] == ["Hello ", "world."]
+        final = events[-1]
+        assert final["done"] is True
+        assert final["answer"] == "Hello world."
+        assert final["tools"] == ["search_knowledge_base"]
+
+    def test_comparison_question_falls_back_to_full_pipeline(self):
+        canned = {
+            "answer": "Doc A allows longer.",
+            "sources": [],
+            "sql": [],
+            "tools": ["search_knowledge_base"],
+            "rejected_sources": [],
+        }
+        with patch("src.answer_pipeline.answer_query", return_value=canned) as mock_aq:
+            events = list(
+                stream_answer(
+                    agent=object(),
+                    question="Comparing doc_a and doc_b, which allows a longer extension?",
+                )
+            )
+        mock_aq.assert_called_once()
+        assert events[0] == {"token": "Doc A allows longer."}
+        assert events[-1]["done"] is True
+        assert events[-1]["answer"] == "Doc A allows longer."
+
+    def test_multi_part_question_falls_back_to_full_pipeline(self):
+        canned = {
+            "answer": "1. First part.\n\n2. Second part.",
+            "sources": [],
+            "sql": [],
+            "tools": [],
+            "rejected_sources": [],
+        }
+        with patch("src.answer_pipeline.answer_query", return_value=canned) as mock_aq:
+            events = list(
+                stream_answer(
+                    agent=object(),
+                    question="What is the title, and what is the effective date?",
+                )
+            )
+        mock_aq.assert_called_once()
+        assert events[-1]["answer"] == canned["answer"]
 
 
 class TestExcelCitationsToSources:

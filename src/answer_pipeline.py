@@ -12,7 +12,7 @@ callers now go through the same code.
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Generator
 from urllib.parse import unquote
 
 from src.answer_quality import _is_multi_part_query, _split_multi_part_query
@@ -787,4 +787,102 @@ def answer_query(
         "tools": excel_trace.get("tools") or [],
         "rejected_sources": rejected_sources,
         "collected": collected,
+    }
+
+
+def stream_answer(
+    agent: Any,
+    question: str,
+    forced_doc_id: str | list[str] | None = None,
+) -> Generator[dict, None, None]:
+    """Stream an answer token-by-token; yields {"token": str} events, then one
+    final {"done": True, **answer_query-shaped result}.
+
+    Only a single, non-comparison, non-multi-part question streams live —
+    those are the common case (a single agent run, one attempt). Comparison
+    questions and multi-part splits need their answer's *full text* before
+    deciding whether to retry (see answer_one/answer_query) or before the
+    parts can be merged, so live token-by-token output isn't available for
+    them; they fall back to the complete non-streaming pipeline and arrive
+    as a single lump token event. A deliberate trade-off, not faked: this
+    trades away the retry safety nets for perceived speed, only for the
+    question types that don't need them to answer correctly in one pass.
+
+    The tokens streamed live are the model's raw, uncleaned output — leaked
+    header lines, un-renumbered [N] markers — since that cleanup (see
+    strip_leaked_headers/build_citation_map) needs the complete text and the
+    tool results. The final "done" event's "answer" field is the clean,
+    authoritative version; callers should replace the streamed text with it
+    once the stream ends, not keep the raw concatenation.
+    """
+    is_comparison = bool(_COMPARISON_RE.search(question))
+    is_multi_part = _is_multi_part_query(question)
+    if is_comparison or is_multi_part:
+        result = answer_query(agent, question, forced_doc_id=forced_doc_id)
+        if result["answer"]:
+            yield {"token": result["answer"]}
+        yield {"done": True, **result}
+        return
+
+    is_forced_doc_modality = None
+    if isinstance(forced_doc_id, list):
+        is_forced_doc_modality = "document"
+        route = {"modality": "document", "source_file": "the selected documents"}
+    elif forced_doc_id:
+        is_forced_doc_modality = (
+            "excel" if forced_doc_id.lower().endswith(_TABLE_EXTS) else "document"
+        )
+        route = {"modality": is_forced_doc_modality, "source_file": forced_doc_id}
+    else:
+        route = route_question(question)
+    q = routing_directive(route) + question
+
+    token = None
+    if is_forced_doc_modality == "document":
+        token = FORCED_DOC_ID.set(forced_doc_id)
+
+    collected: list[str] = []
+    sql_trace: list[str] = []
+    tool_calls: list[str] = []
+    rejected: list[dict] = []
+    excel_citations: list[dict] = []
+    raw_tokens: list[str] = []
+    try:
+        for tok in stream_agent(
+            agent,
+            q,
+            collected_chunks=collected,
+            sql_trace=sql_trace,
+            tool_calls=tool_calls,
+            rejected_chunks=rejected,
+            excel_citations=excel_citations,
+        ):
+            raw_tokens.append(tok)
+            yield {"token": tok}
+    finally:
+        if token is not None:
+            FORCED_DOC_ID.reset(token)
+
+    sources = parse_sources(collected)
+    sources += _excel_citations_to_sources(excel_citations, existing=sources)
+    citation_map = build_citation_map(collected, sources)
+    answer = strip_leaked_headers("".join(raw_tokens).strip(), citation_map=citation_map)
+    sql_list = [s for s in sql_trace if s]
+    kept_filenames = {s["filename"] for s in sources}
+    rejected_sources = []
+    seen_rejected: set[str] = set()
+    for r in rejected:
+        name = _resolve_original_name(r.get("filename", "unknown"))
+        if name in kept_filenames or name in seen_rejected:
+            continue
+        seen_rejected.add(name)
+        rejected_sources.append({"filename": name, "score": r.get("score")})
+
+    yield {
+        "done": True,
+        "answer": answer,
+        "sources": sources,
+        "sql": sql_list,
+        "tools": tool_calls,
+        "rejected_sources": rejected_sources,
     }

@@ -376,65 +376,75 @@ export default function MessageList({
               {msg.content}
             </div>
           </div>
-        ) : (
-          <div key={msg.id} className="flex items-start justify-start">
-            <div className="max-w-[85%]">
-              <div className="prose-ui rounded-xl rounded-bl-sm border border-border bg-card px-4 py-2 text-sm text-card-foreground">
-                <AnswerContent
-                  content={msg.content}
-                  sources={msg.sources ?? []}
-                  onSelectEvidence={onSelectEvidence}
-                  onOpenFullSource={onOpenFullSource}
-                />
-              </div>
-              {msg.sources && msg.sources.length > 0 ? (
-                <SourcesUsed
-                  sources={msg.sources}
-                  onSelectEvidence={onSelectEvidence}
-                  onOpenFullSource={onOpenFullSource}
-                />
-              ) : (
-                msg.content.trim().toLowerCase() !== "unsupported" && (
-                  <p className="mt-1.5 text-[10px] text-muted-foreground">
-                    No source citation available for this answer yet.
-                  </p>
-                )
-              )}
-              <div className="flex items-center">
-                <FeedbackWidget
-                  question={messages[i - 1]?.content ?? ""}
-                  answer={msg.content}
-                  sources={msg.sources ?? []}
-                />
-                {onRetry && (
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          onClick={() => onRetry(msg.id)}
-                          disabled={streaming}
-                          aria-label="Retry this answer"
-                        />
-                      }
-                    >
-                      <RotateCcw />
-                    </TooltipTrigger>
-                    <TooltipContent>Retry</TooltipContent>
-                  </Tooltip>
+        ) : (() => {
+          // A streamed answer's message exists (empty, then filling in) from
+          // the moment the request starts — the active turn's placeholder is
+          // always the last message while streaming (see ChatPanel's
+          // send()/retry()). Shows the waiting indicator until the first
+          // token lands, then live-typed content; the footer (sources,
+          // feedback, retry) only makes sense once the answer is final.
+          const isActiveStream = streaming && i === messages.length - 1;
+          return (
+            <div key={msg.id} className="flex items-start justify-start">
+              <div className="max-w-[85%]">
+                <div className="prose-ui rounded-xl rounded-bl-sm border border-border bg-card px-4 py-2 text-sm text-card-foreground">
+                  {isActiveStream && !msg.content ? (
+                    <WaitingIndicator elapsedSeconds={elapsedSeconds} />
+                  ) : (
+                    <AnswerContent
+                      content={msg.content}
+                      sources={msg.sources ?? []}
+                      onSelectEvidence={onSelectEvidence}
+                      onOpenFullSource={onOpenFullSource}
+                    />
+                  )}
+                </div>
+                {!isActiveStream && (
+                  <>
+                    {msg.sources && msg.sources.length > 0 ? (
+                      <SourcesUsed
+                        sources={msg.sources}
+                        onSelectEvidence={onSelectEvidence}
+                        onOpenFullSource={onOpenFullSource}
+                      />
+                    ) : (
+                      msg.content.trim().toLowerCase() !== "unsupported" && (
+                        <p className="mt-1.5 text-[10px] text-muted-foreground">
+                          No source citation available for this answer yet.
+                        </p>
+                      )
+                    )}
+                    <div className="flex items-center">
+                      <FeedbackWidget
+                        question={messages[i - 1]?.content ?? ""}
+                        answer={msg.content}
+                        sources={msg.sources ?? []}
+                      />
+                      {onRetry && (
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <Button
+                                variant="ghost"
+                                size="icon-xs"
+                                onClick={() => onRetry(msg.id)}
+                                disabled={streaming}
+                                aria-label="Retry this answer"
+                              />
+                            }
+                          >
+                            <RotateCcw />
+                          </TooltipTrigger>
+                          <TooltipContent>Retry</TooltipContent>
+                        </Tooltip>
+                      )}
+                    </div>
+                  </>
                 )}
               </div>
             </div>
-          </div>
-        )
-      )}
-      {streaming && (
-        <div className="flex items-start justify-start">
-          <div className="rounded-xl rounded-bl-sm border border-border bg-card px-4 py-3">
-            <WaitingIndicator elapsedSeconds={elapsedSeconds} />
-          </div>
-        </div>
+          );
+        })()
       )}
       <div ref={bottomRef} />
     </div>

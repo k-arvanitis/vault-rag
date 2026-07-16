@@ -35,10 +35,24 @@ in TODO item 2 and CLAUDE.md's vLLM cheatsheet. Config-only change, not backend 
   actual source list) — out of scope for a frontend refinement pass. Ship the "Sources
   used · N" compact list + Popover per claim instead (spec explicitly allows this as
   the fallback pattern) and flag inline placement as backend-blocked in the final report.
-- **"Preserve streaming answers / stop generation" (§3B).** There is no token streaming
-  today — `ChatPanel.tsx`'s `send()` awaits the full `/query` response; the `streaming`
-  state is really just a loading spinner. Nothing to "preserve" because it doesn't exist.
-  A real fix means the backend needs an SSE/chunked response endpoint. Flag, don't fake.
+- ~~**"Preserve streaming answers / stop generation" (§3B).** There is no token
+  streaming today...~~ **Done, 2026-07-16**: `POST /query/stream` (api.py) is a
+  real SSE endpoint — `src.answer_pipeline.stream_answer` streams tokens live
+  for single-part, non-comparison questions (the common case); comparison and
+  multi-part questions still need the complete answer before their
+  retry/merge logic runs, so those arrive as one lump token event, not faked
+  as live streaming. The streamed tokens are the model's raw, un-renumbered
+  output — the final `done` event carries the clean, citation-renumbered
+  answer, and the client replaces the raw concatenation with it, not appends.
+  `ChatPanel.tsx`'s `send()`/`retry()` now write into the message incrementally;
+  `Stop` (the existing Square button) aborts the fetch mid-stream via the same
+  `AbortController` as before. Verified live via curl against a running
+  `uvicorn api:app` — token event, then a `done` event with a correctly
+  resolved `[3]` marker and full sources. **Known limitation, documented in
+  the endpoint's docstring**: on client disconnect, the executor thread
+  keeps running stream_answer to completion (a sync generator in a worker
+  thread can't be cancelled from the async side without extra plumbing) —
+  wasted compute, not a correctness bug.
 - ~~**Retry** on a message doesn't exist either — only new-conversation. Same category.~~
   **Done, 2026-07-16**: turned out to need no backend change at all — `/query`
   is already stateless per-question (no history is threaded today), so retry

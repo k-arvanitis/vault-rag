@@ -183,6 +183,64 @@ export async function queryDocuments(
   });
 }
 
+/** SSE version of queryDocuments — calls onToken as each raw token arrives
+ * (perceived-latency streaming), then resolves with the final, cleaned
+ * QueryResponse once the "done" event lands. The streamed tokens are the
+ * model's raw, uncleaned output (see stream_answer's docstring in
+ * answer_pipeline.py) — callers should replace any partial text they built
+ * from onToken with the resolved response's `answer`, not keep the raw
+ * concatenation. Comparison/multi-part questions arrive as a single onToken
+ * call with the whole answer, not live per-token — see the same docstring. */
+export async function streamQueryDocuments(
+  question: string,
+  onToken: (token: string) => void,
+  docId?: string | string[] | null,
+  signal?: AbortSignal
+): Promise<QueryResponse> {
+  const doc_id = Array.isArray(docId) ? (docId.length ? docId : null) : docId ?? null;
+  const res = await fetch(`${BASE_URL}/query/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question, doc_id }),
+    signal,
+  });
+  if (!res.ok || !res.body) {
+    const text = await res.text().catch(() => res.statusText);
+    throw new Error(text || `HTTP ${res.status}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let final: QueryResponse | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const event = JSON.parse(line.slice("data: ".length));
+      if (event.done) {
+        if (event.error) throw new Error(event.error);
+        final = {
+          answer: event.answer,
+          sources: event.sources ?? [],
+          rejected_sources: event.rejected_sources ?? [],
+          sql: event.sql ?? [],
+          tools_used: event.tools_used ?? [],
+        };
+      } else if (typeof event.token === "string") {
+        onToken(event.token);
+      }
+    }
+  }
+  if (!final) throw new Error("Stream ended without a final response");
+  return final;
+}
+
 export async function clearCollection(): Promise<void> {
   await fetch(`${BASE_URL}/collection`, { method: "DELETE" });
 }
