@@ -232,10 +232,19 @@ _TABLE_MARKER_RE = re.compile(r"\[TABLE_START\]|\[TABLE_END\]")
 
 
 def _resolve_pdf_path(filename: str) -> Path | None:
-    """Find the on-disk PDF for a filename, or None if it cannot be located."""
+    """Find the on-disk PDF for a filename, or None if it cannot be located.
+
+    Documents ingested via the eval corpus (make seed pulls a subset into
+    data/input/, but most eval docs are only ever ingested straight from
+    eval/data/raw/) have their markdown/chunks/embeddings under data/output/
+    regardless of where the source PDF lives — but the inspector's page-image
+    and bbox-highlight endpoints need the actual PDF file, so eval/data/raw/
+    must be a real fallback location, not just data/input/.
+    """
     p = Path(filename)
     candidates = [
         INPUT_DIR / p.name,
+        REPO_ROOT / "eval" / "data" / "raw" / p.name,
         p if p.is_absolute() else None,
         REPO_ROOT / p,
     ]

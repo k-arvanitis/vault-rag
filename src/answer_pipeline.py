@@ -388,6 +388,11 @@ def parse_sources(collected: list[str]) -> list[dict]:
             )
 
             plain = _FIGURE_BLOCK_RE.sub("", body)
+            # A chunk boundary can split a figure block so only [FIGURE_END]
+            # (no matching [FIGURE_START]) lands in this chunk's body -- the
+            # paired regex above doesn't match an orphan, so it leaks through
+            # as literal visible text. Strip any leftover lone tag too.
+            plain = re.sub(r"\[FIGURE_START\]|\[FIGURE_END\]", "", plain)
             plain = _TABLE_MARKER_RE.sub("", plain)
             plain = re.sub(r"^#{1,3}\s+.+$", "", plain, flags=re.MULTILINE).strip()
             excerpt = " ".join(plain.split())[:350]

@@ -178,6 +178,24 @@ class TestParseSourcesContract:
         assert "logo" not in quote
         assert quote.startswith("Contracts are used for complex Goods")
 
+    def test_quote_strips_orphaned_figure_end_tag_with_no_matching_start(self):
+        """A chunk boundary can split a figure block so only [FIGURE_END] (no
+        [FIGURE_START]) lands in this chunk's body -- reproduced live: the
+        paired regex doesn't match an orphan tag, leaking it as literal
+        visible text ahead of the real content (a markdown table, in the
+        live case)."""
+        header = "[1] file=doc_002.pdf chunk=9 page=3 score=0.8"
+        body = (
+            "[FIGURE_END] |Amendment:|An agreed addition to, deletion from, "
+            "correction, or modification of a Contract signed by all authorized "
+            "parties.|"
+        )
+        sources = parse_sources([f"{header}\n{body}"])
+        assert len(sources) == 1
+        quote = sources[0]["quote"]
+        assert "FIGURE" not in quote
+        assert quote.startswith("|Amendment:")
+
     def test_eight_cap_preserves_one_slot_per_distinct_file(self):
         """A redundant re-query of a document that already has plenty of chunks
         must not crowd a different document's genuinely retrieved chunk out of
