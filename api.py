@@ -849,6 +849,31 @@ async def document_pdf_crop(filename: str, page: int, bbox: str):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+_TABLE_MD_MAX_ROWS = 60
+
+
+def _truncate_markdown_table(md: str, max_rows: int = _TABLE_MD_MAX_ROWS) -> str:
+    """Cap a sheet's full markdown table to its first `max_rows` data rows.
+
+    The stored .md file holds the whole sheet (thousands of rows for a real
+    spreadsheet) -- rendering that through ReactMarkdown+remarkGfm client-side
+    freezes the tab (found live: a 6701-row sheet produced a 920KB cleaned_md
+    that never finished rendering, no network error possible since nothing
+    ever hangs on the wire). Bounded to match raw_rows' own nrows=60 cap.
+    """
+    lines = md.split("\n")
+    table_start = next((i for i, ln in enumerate(lines) if ln.lstrip().startswith("|")), None)
+    if table_start is None:
+        return md
+    header_lines = lines[:table_start]
+    table_lines = lines[table_start:]
+    kept = table_lines[: 2 + max_rows]  # header row + separator row + data rows
+    omitted = len(table_lines) - len(kept)
+    if omitted > 0:
+        kept.append(f"\n_{omitted} more rows omitted — showing first {max_rows}._")
+    return "\n".join(header_lines + kept)
+
+
 @app.get("/documents/{filename:path}/table-sheet/{sheet}")
 async def document_table_sheet(filename: str, sheet: str):
     """Return raw rows and cleaned markdown for one sheet of an Excel/CSV file."""
@@ -860,7 +885,9 @@ async def document_table_sheet(filename: str, sheet: str):
     suffix = Path(filename).suffix.lower()
 
     cleaned_md: str | None = (
-        md_path.read_text(encoding="utf-8") if md_path.exists() else None
+        _truncate_markdown_table(md_path.read_text(encoding="utf-8"))
+        if md_path.exists()
+        else None
     )
 
     def _read_raw_rows() -> list[list[str]] | None:
