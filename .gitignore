@@ -66,3 +66,6 @@ docs/CODEBASE_GUIDE.md
 # scratch eval run dumps & logs
 eval/runs/
 *.log
+
+.claude/
+Screenshot*.png
