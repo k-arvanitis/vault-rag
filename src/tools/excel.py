@@ -967,7 +967,9 @@ def build_excel_agent_tools(store: DuckDBStore) -> list[StructuredTool]:
             and final_answer.strip().lower() != "unsupported"
             and not final_answer.startswith("Clarify:")
         ):
-            source = get_source_by_duckdb_table(QDRANT_URL, QDRANT_COLLECTION, tables[0])
+            source = get_source_by_duckdb_table(
+                QDRANT_URL, QDRANT_COLLECTION, tables[0]
+            )
             if source:
                 # The matched row(s), rendered as text, give SpreadsheetEvidence's
                 # row-highlight heuristic (frontend, cell-value-in-quote match)

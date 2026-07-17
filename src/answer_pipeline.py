@@ -124,9 +124,7 @@ def _comparison_incompleteness(
     sources = parse_sources(coll)
     n_sources = len({s["filename"] for s in sources})
     missing = _missing_mentioned_docs(question_text, sources)
-    has_partial = (
-        ans.strip().lower() != "unsupported" and "unsupported" in ans.lower()
-    )
+    has_partial = ans.strip().lower() != "unsupported" and "unsupported" in ans.lower()
     return missing, has_partial, n_sources
 
 
@@ -233,7 +231,11 @@ def answer_comparison_deterministic(
     """
     doc_registry = getattr(agent, "_doc_registry", None) or {}
     doc_ids = _resolve_comparison_doc_ids(question, forced_doc_id, doc_registry)
-    if not doc_ids or not hasattr(agent, "_tools_by_name") or not hasattr(agent, "_llm"):
+    if (
+        not doc_ids
+        or not hasattr(agent, "_tools_by_name")
+        or not hasattr(agent, "_llm")
+    ):
         return None
 
     collected: list[str] = []
@@ -288,7 +290,10 @@ def answer_comparison_deterministic(
             name="comparison-deterministic",
             input=question,
             output=answer,
-            metadata={"covered_doc_ids": covered_doc_ids, "missing_doc_ids": missing_doc_ids},
+            metadata={
+                "covered_doc_ids": covered_doc_ids,
+                "missing_doc_ids": missing_doc_ids,
+            },
         )
     return {
         "answer": answer,

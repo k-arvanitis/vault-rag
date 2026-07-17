@@ -32,7 +32,9 @@ def render(summary: dict) -> str:
 
     rows = "\n".join(
         f"| {qtype} | {v['count']} | {_pct(v['correctness'])} |"
-        for qtype, v in sorted(by_type.items(), key=lambda kv: kv[1]["correctness"], reverse=True)
+        for qtype, v in sorted(
+            by_type.items(), key=lambda kv: kv[1]["correctness"], reverse=True
+        )
     )
 
     return f"""# Vault RAG — Evaluation Summary

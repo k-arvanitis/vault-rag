@@ -69,7 +69,9 @@ def _save_state(state: dict[str, Any]) -> None:
     path.write_text(json.dumps(state, indent=2))
 
 
-def configure(folder_id: str, service_account_file: str | None = None) -> dict[str, Any]:
+def configure(
+    folder_id: str, service_account_file: str | None = None
+) -> dict[str, Any]:
     """Persist which Drive folder (and optionally which key file) to sync from."""
     state = _load_state()
     state["folder_id"] = folder_id
@@ -89,7 +91,9 @@ def _get_service() -> Any:
             "GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE in .env, or pass "
             "service_account_file to POST /connectors/google-drive/configure."
         )
-    creds = service_account.Credentials.from_service_account_file(key_path, scopes=_SCOPES)
+    creds = service_account.Credentials.from_service_account_file(
+        key_path, scopes=_SCOPES
+    )
     return build("drive", "v3", credentials=creds, cache_discovery=False)
 
 
@@ -121,7 +125,9 @@ def _download_file(service: Any, drive_file: dict[str, Any], dest_dir: Path) -> 
     name = drive_file["name"]
     if mime in _MIME_EXPORTS:
         export_mime, suffix = _MIME_EXPORTS[mime]
-        request = service.files().export_media(fileId=drive_file["id"], mimeType=export_mime)
+        request = service.files().export_media(
+            fileId=drive_file["id"], mimeType=export_mime
+        )
         if not name.endswith(suffix):
             name = f"{name}{suffix}"
     else:
@@ -203,7 +209,11 @@ def sync(remove_deleted: bool = False) -> dict[str, Any]:
 
     state["last_synced_at"] = datetime.now(timezone.utc).isoformat()
     _save_state(state)
-    return {"synced": results, "removed": removed, "last_synced_at": state["last_synced_at"]}
+    return {
+        "synced": results,
+        "removed": removed,
+        "last_synced_at": state["last_synced_at"],
+    }
 
 
 def status() -> dict[str, Any]:
@@ -220,4 +230,6 @@ def status() -> dict[str, Any]:
 def list_files() -> list[dict[str, Any]]:
     """Return the locally tracked sync state for every known Drive file."""
     state = _load_state()
-    return [{"file_id": file_id, **info} for file_id, info in state.get("files", {}).items()]
+    return [
+        {"file_id": file_id, **info} for file_id, info in state.get("files", {}).items()
+    ]

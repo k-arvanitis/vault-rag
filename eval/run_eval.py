@@ -895,7 +895,9 @@ def generate_answers(
         done_ids = {row["qa_id"] for row in done_rows}
         questions = [q for q in questions if q["qa_id"] not in done_ids]
         if done_rows:
-            print(f"Resuming: {len(done_rows)} already-generated answers found, {len(questions)} remaining.")
+            print(
+                f"Resuming: {len(done_rows)} already-generated answers found, {len(questions)} remaining."
+            )
 
     if not questions:
         print(f"\nAll {len(done_rows)} answers already present -> {RAW_ANSWERS_PATH}")
@@ -990,7 +992,9 @@ def generate_answers(
             encoding="utf-8",
         )
 
-    print(f"\nGenerated {len(raw_rows)}/{total_questions} answers -> {RAW_ANSWERS_PATH}")
+    print(
+        f"\nGenerated {len(raw_rows)}/{total_questions} answers -> {RAW_ANSWERS_PATH}"
+    )
     print("Run judge_answers() (or `--phase judge`) next to score them.")
     return raw_rows
 

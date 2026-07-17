@@ -98,7 +98,10 @@ def ingest_embeddings(
         }
         try:
             sparse_indices, sparse_values = get_sparse_embedder().embed(vector_text)
-            point["vector"]["sparse"] = {"indices": sparse_indices, "values": sparse_values}
+            point["vector"]["sparse"] = {
+                "indices": sparse_indices,
+                "values": sparse_values,
+            }
         except Exception:
             pass  # Fall back to dense-only point
         points.append(point)

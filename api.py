@@ -97,7 +97,9 @@ def _validate_startup_env() -> None:
         missing = "OPENROUTER_API_KEY"
     elif "groq.com" in base and not GROQ_API_KEY:
         missing = "GROQ_API_KEY"
-    elif ("localhost:4000" in base or "127.0.0.1:4000" in base) and not LITELLM_MASTER_KEY:
+    elif (
+        "localhost:4000" in base or "127.0.0.1:4000" in base
+    ) and not LITELLM_MASTER_KEY:
         # LiteLLM proxy accepts an unauthenticated request in some configs,
         # so this is a warning, not necessarily a hard failure.
         logger.warning(
@@ -375,8 +377,13 @@ def _payloads_to_docs(payloads: list[dict]) -> list[dict]:
         # Row counts only live in the document_summary chunk's concatenated
         # "Sheet summary: N rows." lines (one per sheet) -- the sheet_summary
         # points themselves carry a DuckDB-table discovery blurb, not a count.
-        if suffix in ("xlsx", "xls", "csv") and meta.get("chunk_type") == "document_summary":
-            total = sum(int(n) for n in _SHEET_ROW_COUNT_RE.findall(p.get("content") or ""))
+        if (
+            suffix in ("xlsx", "xls", "csv")
+            and meta.get("chunk_type") == "document_summary"
+        ):
+            total = sum(
+                int(n) for n in _SHEET_ROW_COUNT_RE.findall(p.get("content") or "")
+            )
             if total:
                 row_counts[name] = total
     type_map = {
@@ -1044,7 +1051,9 @@ def _truncate_markdown_table(md: str, max_rows: int = _TABLE_MD_MAX_ROWS) -> str
     ever hangs on the wire). Bounded to match raw_rows' own nrows=60 cap.
     """
     lines = md.split("\n")
-    table_start = next((i for i, ln in enumerate(lines) if ln.lstrip().startswith("|")), None)
+    table_start = next(
+        (i for i, ln in enumerate(lines) if ln.lstrip().startswith("|")), None
+    )
     if table_start is None:
         return md
     header_lines = lines[:table_start]

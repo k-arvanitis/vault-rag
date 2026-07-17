@@ -22,8 +22,6 @@ import operator
 import re
 from typing import Annotated, Any
 
-logger = logging.getLogger(__name__)
-
 from langgraph.graph import END, StateGraph
 from typing_extensions import TypedDict
 
@@ -35,6 +33,8 @@ from src.config import (
     LITELLM_MASTER_KEY,
     OPENROUTER_API_KEY,
 )
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -244,9 +244,7 @@ def build_decomposition_pipeline(
                 # Strip thinking tags (Qwen3 with extended thinking enabled)
                 raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
                 # Strip accidental markdown fences
-                raw = re.sub(
-                    r"^```[a-z]*\n?|```$", "", raw, flags=re.MULTILINE
-                ).strip()
+                raw = re.sub(r"^```[a-z]*\n?|```$", "", raw, flags=re.MULTILINE).strip()
                 sub_questions = json.loads(raw)
                 if not isinstance(sub_questions, list) or not sub_questions:
                     sub_questions = [question]
