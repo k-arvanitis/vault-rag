@@ -177,6 +177,15 @@ export async function getStats(): Promise<Stats> {
   return request<Stats>("/stats");
 }
 
+/** Non-admin-safe corpus check -- whether there's anything to ask about, with
+ * no document count or filenames (see api.py's /documents/exists). Used by
+ * ChatPanel to enable the chat input for non-admin viewers, who can't call
+ * getDocuments()/getStats() (admin-only, see require_admin on those routes). */
+export async function documentsExist(): Promise<boolean> {
+  const res = await request<{ has_documents: boolean }>("/documents/exists");
+  return res.has_documents;
+}
+
 export async function ingestFile(file: File, pipeline: "auto" | "ocr" | "text" = "auto"): Promise<IngestResponse> {
   const form = new FormData();
   form.append("file", file);
@@ -373,7 +382,10 @@ export async function deleteConversation(id: string): Promise<void> {
 
 export async function checkHealth(): Promise<boolean> {
   try {
-    const res = await fetch(`${BASE_URL}/stats`, { signal: AbortSignal.timeout(3000) });
+    // /health is a plain liveness probe, open to everyone -- /stats is now
+    // admin-only (see api.py's require_admin), so using it here made every
+    // non-admin session see a permanent false "offline" banner.
+    const res = await fetch(`${BASE_URL}/health`, { signal: AbortSignal.timeout(3000) });
     return res.ok;
   } catch {
     return false;

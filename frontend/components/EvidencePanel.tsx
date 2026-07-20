@@ -19,39 +19,79 @@ import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@
 
 const IS_PDF = (f: string) => f.toLowerCase().endsWith(".pdf");
 
-/** Renders one PDF page with the cited passage highlighted, if locatable.
+// Generous margin (PDF points) around the highlight bbox for the focused crop
+// -- wide enough to always hit the page's real edges (fitz clips to the
+// actual page rect, so an oversized request is harmless) and tall enough to
+// read as "a couple lines of context", not just the bare cited phrase.
+const CROP_MARGIN_X = 250;
+const CROP_MARGIN_Y = 70;
+
+function focusedCropBbox(
+  bbox: [number, number, number, number]
+): [number, number, number, number] {
+  const [x0, y0, x1, y1] = bbox;
+  return [
+    Math.max(0, x0 - CROP_MARGIN_X),
+    Math.max(0, y0 - CROP_MARGIN_Y),
+    x1 + CROP_MARGIN_X,
+    y1 + CROP_MARGIN_Y,
+  ];
+}
+
+/** Renders the cited passage on its PDF page, if locatable.
  *
- * The highlight bbox is computed live via exact text search against the PDF's
- * real text layer (api.py's /pdf/{page}/highlight, backed by fitz.search_for)
- * — nothing is precomputed or stored at ingestion time. Overlay position is a
- * percentage of the image's natural pixel size, not a fixed px*scale offset —
- * the <img> is CSS-scaled to fit its container, so only percentages stay
- * aligned regardless of displayed size. */
+ * Defaults to a focused crop around the highlight (a couple lines of real
+ * context, not a whole page shrunk into a narrow column) -- the highlight
+ * bbox is computed live via exact text search against the PDF's real text
+ * layer (api.py's /pdf/{page}/highlight, backed by fitz.search_for), then
+ * reused as a crop region (api.py's /pdf/{page}/crop, the same endpoint that
+ * already crops figures) padded with a margin. Falls back to the full page
+ * with an overlay box when no bbox is locatable, or on user request via the
+ * "View full page" toggle. Overlay position is a percentage of the image's
+ * natural pixel size, not a fixed px*scale offset -- the <img> is CSS-scaled
+ * to fit its container, so only percentages stay aligned regardless of
+ * displayed size. */
 function EvidencePage({ source }: { source: Source }) {
-  const [imgSrc, setImgSrc] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
   const [bbox, setBbox] = useState<[number, number, number, number] | null>(null);
+  const [cropSrc, setCropSrc] = useState<string | null>(null);
+  const [pageSrc, setPageSrc] = useState<string | null>(null);
+  const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [showFullPage, setShowFullPage] = useState(false);
 
   useEffect(() => {
-    setImgSrc(null);
-    setNaturalSize(null);
     setBbox(null);
+    setCropSrc(null);
+    setPageSrc(null);
+    setNaturalSize(null);
+    setShowFullPage(false);
     if (!IS_PDF(source.filename) || source.page == null) return;
+    const page = source.page;
     setLoading(true);
-    Promise.all([
-      getPdfPage(source.filename, source.page),
-      getPdfHighlight(source.filename, source.page, source.quote).catch(() => ({
-        bbox: null,
-      })),
-    ])
-      .then(([page, highlight]) => {
-        setImgSrc(`data:image/png;base64,${page.image_b64}`);
+    getPdfHighlight(source.filename, page, source.quote)
+      .catch(() => ({ bbox: null }))
+      .then((highlight) => {
         setBbox(highlight.bbox);
+        if (highlight.bbox) {
+          return getPdfCrop(source.filename, page, focusedCropBbox(highlight.bbox)).then((res) =>
+            setCropSrc(`data:image/png;base64,${res.image_b64}`)
+          );
+        }
+        return getPdfPage(source.filename, page).then((res) =>
+          setPageSrc(`data:image/png;base64,${res.image_b64}`)
+        );
       })
-      .catch(() => setImgSrc(null))
+      .catch(() => {})
       .finally(() => setLoading(false));
   }, [source.filename, source.page, source.quote]);
+
+  useEffect(() => {
+    if (showFullPage && !pageSrc && source.page != null) {
+      getPdfPage(source.filename, source.page).then((res) =>
+        setPageSrc(`data:image/png;base64,${res.image_b64}`)
+      );
+    }
+  }, [showFullPage, pageSrc, source.filename, source.page]);
 
   if (!IS_PDF(source.filename) || source.page == null) return null;
 
@@ -63,39 +103,66 @@ function EvidencePage({ source }: { source: Source }) {
     );
   }
 
-  if (!imgSrc) return null;
+  if (!cropSrc && !pageSrc) return null;
+
+  const displayFullPage = showFullPage || !cropSrc;
+  const imgSrc = displayFullPage ? pageSrc : cropSrc;
+  if (!imgSrc) {
+    return (
+      <div className="mt-2 flex justify-center py-6">
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   const [x0, y0, x1, y1] = bbox ?? [0, 0, 0, 0];
 
   return (
-    <div className="relative mt-2 w-full">
-      <img
-        src={imgSrc}
-        alt={`Page ${source.page}`}
-        className="w-full rounded border border-border"
-        onLoad={(e) =>
-          setNaturalSize({
-            w: e.currentTarget.naturalWidth,
-            h: e.currentTarget.naturalHeight,
-          })
-        }
-      />
-      {bbox && naturalSize && (
-        <div
-          className="pointer-events-none absolute rounded-sm border-2 border-amber-500 bg-amber-400/20"
-          style={{
-            left: `${(x0 / (naturalSize.w / 1.5)) * 100}%`,
-            top: `${(y0 / (naturalSize.h / 1.5)) * 100}%`,
-            width: `${((x1 - x0) / (naturalSize.w / 1.5)) * 100}%`,
-            height: `${((y1 - y0) / (naturalSize.h / 1.5)) * 100}%`,
-          }}
+    <div className="mt-2 w-full">
+      <div className="relative w-full">
+        <img
+          key={imgSrc}
+          src={imgSrc}
+          alt={`Page ${source.page}`}
+          className="w-full rounded border border-border"
+          onLoad={(e) =>
+            setNaturalSize({
+              w: e.currentTarget.naturalWidth,
+              h: e.currentTarget.naturalHeight,
+            })
+          }
         />
-      )}
-      {!bbox && (
-        <p className="mt-1 text-[10px] text-muted-foreground">
-          Exact region unavailable — showing full page and quote.
-        </p>
-      )}
+        {displayFullPage && bbox && naturalSize && (
+          <div
+            className="pointer-events-none absolute rounded-sm border-2 border-amber-500 bg-amber-400/20"
+            style={{
+              left: `${(x0 / (naturalSize.w / 1.5)) * 100}%`,
+              top: `${(y0 / (naturalSize.h / 1.5)) * 100}%`,
+              width: `${((x1 - x0) / (naturalSize.w / 1.5)) * 100}%`,
+              height: `${((y1 - y0) / (naturalSize.h / 1.5)) * 100}%`,
+            }}
+          />
+        )}
+      </div>
+      <div className="mt-1 flex items-center justify-between">
+        {!bbox ? (
+          <p className="text-[10px] text-muted-foreground">
+            Exact region unavailable — showing full page.
+          </p>
+        ) : (
+          <span />
+        )}
+        {bbox && (
+          <Button
+            variant="link"
+            size="xs"
+            className="h-auto p-0 text-[10px]"
+            onClick={() => setShowFullPage((v) => !v)}
+          >
+            {displayFullPage ? "View focused crop" : "View full page"}
+          </Button>
+        )}
+      </div>
     </div>
   );
 }
@@ -256,7 +323,7 @@ export default function EvidencePanel({ sources, onInspect, selectedTarget }: Pr
 
   if (sources.length === 0) {
     return (
-      <aside className="h-full w-full overflow-y-auto bg-background p-3 lg:w-[320px] lg:shrink-0 lg:border-l lg:border-border">
+      <aside className="h-full w-full overflow-y-auto bg-background p-3">
         <div className="rounded-lg border border-dashed border-border bg-card px-3 py-6 text-center">
           <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Evidence</p>
           <p className="mt-1.5 text-xs text-muted-foreground">
@@ -270,7 +337,7 @@ export default function EvidencePanel({ sources, onInspect, selectedTarget }: Pr
   const source = sources[index];
 
   return (
-    <aside className="h-full w-full overflow-y-auto bg-background p-3 lg:w-[320px] lg:shrink-0 lg:border-l lg:border-border">
+    <aside className="h-full w-full overflow-y-auto bg-background p-3">
       <div className="flex items-center justify-between gap-2">
         <Button
           variant="ghost"
@@ -304,13 +371,20 @@ export default function EvidencePanel({ sources, onInspect, selectedTarget }: Pr
         </div>
       </div>
 
+      {source.quote && (
+        <div className="mt-2">
+          <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            Supporting evidence
+          </p>
+          <blockquote className="mt-1 border-l-2 border-amber-500 pl-2 text-sm leading-relaxed text-foreground">
+            &ldquo;{source.quote}&rdquo;
+          </blockquote>
+        </div>
+      )}
+
       <FigureCrop source={source} />
       <EvidencePage source={source} />
       <SpreadsheetEvidence source={source} onInspect={onInspect} />
-
-      <blockquote className="mt-2 border-l-2 border-border pl-2 text-xs italic text-muted-foreground">
-        &ldquo;{source.quote}&rdquo;
-      </blockquote>
 
       {onInspect && (
         <Button

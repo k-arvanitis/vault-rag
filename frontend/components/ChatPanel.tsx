@@ -2,7 +2,16 @@
 
 import { useRef, useState, useCallback, useEffect } from "react";
 import { Send, Square, SquarePen } from "lucide-react";
-import { streamQueryDocuments, saveConversation, getDocuments, type Document, type InspectTarget, type Source } from "@/lib/api";
+import {
+  streamQueryDocuments,
+  saveConversation,
+  getDocuments,
+  documentsExist,
+  type Document,
+  type InspectTarget,
+  type Source,
+} from "@/lib/api";
+import { useAdminSession } from "@/lib/useAdminSession";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import MessageList, { type Message } from "./MessageList";
@@ -24,6 +33,9 @@ interface Props {
   onSelectEvidence?: (target: InspectTarget, messageSources: Source[]) => void;
   /** Secondary action — opens the full-screen document inspector. */
   onOpenFullSource?: (target: InspectTarget) => void;
+  /** Currently selected Evidence citation, so the matching chip/row can be
+   * highlighted (see MessageList's CitationChip). */
+  selectedCitation?: InspectTarget | null;
   initialMessages?: Message[];
   initialConversationId?: string | null;
   /** Preselects the source-scope control — e.g. arriving from a Sources
@@ -38,6 +50,7 @@ export default function ChatPanel({
   onTrace,
   onSelectEvidence,
   onOpenFullSource,
+  selectedCitation = null,
   initialMessages,
   initialConversationId = null,
   initialScopedDocId = null,
@@ -49,6 +62,8 @@ export default function ChatPanel({
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [conversationId, setConversationId] = useState<string | null>(initialConversationId);
   const [documents, setDocuments] = useState<Document[]>([]);
+  const [hasSourcesNonAdmin, setHasSourcesNonAdmin] = useState(false);
+  const { is_admin: isAdmin } = useAdminSession();
   const [scopedDocIds, setScopedDocIds] = useState<string[]>(
     initialScopedDocId ? [initialScopedDocId] : []
   );
@@ -68,15 +83,26 @@ export default function ChatPanel({
     return () => clearInterval(id);
   }, [streaming]);
 
+  // getDocuments()/getStats() are admin-only (a non-admin viewer must not be
+  // able to enumerate the corpus, see api.py's require_admin on those
+  // routes) -- a non-admin instead gets only a has-anything-to-ask-about
+  // boolean, and the per-document scope picker doesn't render at all (see
+  // isAdmin check below).
   useEffect(() => {
-    getDocuments()
-      .then(setDocuments)
-      .catch(() => {
-        // Backend unreachable — the source-scope control degrades to "All sources" only.
-      });
-  }, [resetSignal]);
+    if (isAdmin) {
+      getDocuments()
+        .then(setDocuments)
+        .catch(() => {
+          // Backend unreachable — the source-scope control degrades to "All sources" only.
+        });
+    } else {
+      documentsExist()
+        .then(setHasSourcesNonAdmin)
+        .catch(() => setHasSourcesNonAdmin(false));
+    }
+  }, [resetSignal, isAdmin]);
 
-  const hasSources = documents.length > 0;
+  const hasSources = isAdmin ? documents.length > 0 : hasSourcesNonAdmin;
 
   // Focus the question input as soon as there's something to ask about — but
   // only on the empty-conversation state, not on every documents refetch.
@@ -141,6 +167,7 @@ export default function ChatPanel({
           rejected_sources: data.rejected_sources ?? [],
           sql: data.sql ?? [],
           tools_used: data.tools_used ?? [],
+          answer: data.answer,
         });
       } catch (err) {
         if ((err as Error).name === "AbortError") {
@@ -245,7 +272,11 @@ export default function ChatPanel({
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col bg-background">
       <div className="flex shrink-0 items-center justify-between border-b border-border bg-card px-6 py-2">
-        <SourceScope documents={documents} scopedDocIds={scopedDocIds} onChange={setScopedDocIds} />
+        {isAdmin ? (
+          <SourceScope documents={documents} scopedDocIds={scopedDocIds} onChange={setScopedDocIds} />
+        ) : (
+          <span className="text-xs text-muted-foreground">Ask across: All sources</span>
+        )}
         <Button
           variant="outline"
           size="sm"
@@ -261,10 +292,12 @@ export default function ChatPanel({
         messages={messages}
         streaming={streaming}
         elapsedSeconds={elapsedSeconds}
+        selectedCitation={selectedCitation}
         onSelectEvidence={onSelectEvidence}
         onOpenFullSource={onOpenFullSource}
         onRetry={retry}
         hasSources={hasSources}
+        scopedDocIds={scopedDocIds}
         onExamplePick={(text) => {
           setInput(text);
           textareaRef.current?.focus();

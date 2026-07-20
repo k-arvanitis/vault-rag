@@ -674,7 +674,7 @@ def _run_ingest_pdf(
         verbose=verbose,
         output_dir=REPO_ROOT / "data/output/chunks",
         file_name=md_path.name,
-        source_file=str(pdf_path),
+        source_file=pdf_path.name,
     )
     chunks_path = REPO_ROOT / "data/output/chunks" / f"{md_path.stem}_chunks.json"
     if not chunks_path.exists():

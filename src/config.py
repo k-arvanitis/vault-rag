@@ -110,6 +110,11 @@ class Settings(BaseSettings):
     feedback_path: str = "data/feedback.json"
     eval_regression_candidates_path: str = "eval/regression_candidates.jsonl"
 
+    # Query cache -- avoids rerunning retrieval + generation for a question
+    # already answered since the corpus was last changed.
+    query_cache_enabled: bool = True
+    query_cache_path: str = "data/query_cache.json"
+
     # Conversation history
     conversation_path: str = "data/conversations.json"
 
@@ -201,6 +206,8 @@ VLM_MODEL: str = _s.vlm_model
 DUCKDB_PATH: str = _s.duckdb_path
 FEEDBACK_PATH: str = _s.feedback_path
 EVAL_REGRESSION_CANDIDATES_PATH: str = _s.eval_regression_candidates_path
+QUERY_CACHE_ENABLED: bool = _s.query_cache_enabled
+QUERY_CACHE_PATH: str = _s.query_cache_path
 INPUT_DIR: str = _s.input_dir
 GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE: str = _s.google_drive_service_account_file
 GOOGLE_DRIVE_SYNC_STATE_PATH: str = _s.google_drive_sync_state_path

@@ -50,6 +50,27 @@ export function toCitation(s: ApiSource, id: number): Citation {
   };
 }
 
+/** [N] marker numbers an answer's text actually cites. The backend renumbers
+ * citations sequentially (1, 2, 3...) in order of first appearance and
+ * reorders `sources` to match, so the cited sources are always exactly the
+ * first N entries of the array -- see citedOnlySources. */
+export function citedIndices(content: string): Set<number> {
+  const indices = new Set<number>();
+  const re = /\[(\d+)\]/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(content))) indices.add(Number(match[1]));
+  return indices;
+}
+
+/** Sources actually cited in `content`, not the full retrieved-candidate
+ * list -- e.g. a cross-document answer citing 2 of 8 retrieved sources
+ * should show "1/2" in the Evidence panel, not "1/8". Falls back to the
+ * full list when the answer cites nothing inline (e.g. a table/SQL answer). */
+export function citedOnlySources(content: string, sources: ApiSource[]): ApiSource[] {
+  const cited = citedIndices(content);
+  return cited.size > 0 ? sources.slice(0, cited.size) : sources;
+}
+
 export type AnswerStatus = "complete" | "unsupported" | "error";
 
 export interface Answer {

@@ -58,7 +58,11 @@ export default function Sidebar({ onToast, onInspect, offline }: Props) {
   const jobs = useJobTracker();
   const { is_admin: isAdmin } = useAdminSession();
 
+  // getDocuments()/getStats() are admin-only (see api.py's require_admin on
+  // those routes) -- a non-admin viewer must not be able to enumerate the
+  // corpus, so this never even calls them and the list/count stay empty.
   const refresh = useCallback(async () => {
+    if (!isAdmin) return;
     try {
       const [d, s] = await Promise.all([getDocuments(), getStats()]);
       const byName = (f: string) => (f.split("/").pop() ?? f).toLowerCase();
@@ -67,7 +71,7 @@ export default function Sidebar({ onToast, onInspect, offline }: Props) {
     } catch {
       // backend unreachable — handled by the offline banner upstream
     }
-  }, []);
+  }, [isAdmin]);
 
   useEffect(() => {
     refresh();
@@ -83,13 +87,19 @@ export default function Sidebar({ onToast, onInspect, offline }: Props) {
   return (
     <SidebarRoot collapsible="offcanvas">
       <SidebarHeader className="flex-row items-center justify-between px-3 py-3">
-        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Sources</span>
+        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          {isAdmin ? "Sources" : "Knowledge base"}
+        </span>
       </SidebarHeader>
 
       <SidebarContent className="px-3">
         <ScrollArea className="h-full">
           <div className="flex flex-col gap-1.5 pb-2">
-            {docs.length === 0 ? (
+            {!isAdmin ? (
+              <p className="px-0.5 pt-1 text-xs text-muted-foreground">
+                Ask questions in the chat — individual document details aren&apos;t shown here.
+              </p>
+            ) : docs.length === 0 ? (
               <p className="px-0.5 pt-1 text-xs text-muted-foreground">No sources added yet.</p>
             ) : (
               docs.map((doc) => {
@@ -107,7 +117,12 @@ export default function Sidebar({ onToast, onInspect, offline }: Props) {
                       <FileIcon ext={ext} />
                     </span>
                     <div className="min-w-0 flex-1 space-y-1">
-                      <p className="truncate text-xs font-medium leading-tight text-foreground">{basename}</p>
+                      <p
+                        className="truncate text-xs font-medium leading-tight text-foreground"
+                        title={basename}
+                      >
+                        {basename}
+                      </p>
                       <div className="flex items-center gap-1.5">
                         <Badge variant="outline" className="uppercase">
                           {typeLabel}

@@ -38,6 +38,7 @@ from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import JSONResponse, StreamingResponse  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
+from src import query_cache  # noqa: E402
 from src.config import (  # noqa: E402
     ACCESS_MODE,
     ADMIN_PASSWORD,
@@ -53,6 +54,7 @@ from src.config import (  # noqa: E402
     OPENROUTER_API_KEY,
     QDRANT_COLLECTION,
     QDRANT_URL,
+    QUERY_CACHE_ENABLED,
     RERANK_TOP_N,
     RERANKER_MODEL,
     RETRIEVAL_TOP_K,
@@ -194,21 +196,26 @@ def _is_valid_admin_session(token: str | None) -> bool:
     )
 
 
+def _is_admin_caller(x_api_key: str | None, vault_admin_session: str | None) -> bool:
+    """Same authorization check as require_admin, without raising -- for routes
+    that stay open to everyone but need to know the caller's role (e.g. /query
+    refusing corpus-enumeration questions from a non-admin)."""
+    if ACCESS_MODE != "admin_viewer":
+        return not API_KEY or x_api_key == API_KEY
+    return (API_KEY and x_api_key == API_KEY) or _is_valid_admin_session(
+        vault_admin_session
+    )
+
+
 async def require_admin(
     x_api_key: str | None = Header(default=None),
     vault_admin_session: str | None = Cookie(default=None),
 ) -> None:
     """Raise 401/403 unless the caller is authorized for an admin-only route."""
+    if _is_admin_caller(x_api_key, vault_admin_session):
+        return
     if ACCESS_MODE != "admin_viewer":
-        if not API_KEY:
-            return
-        if x_api_key != API_KEY:
-            raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key")
-        return
-    if API_KEY and x_api_key == API_KEY:
-        return
-    if _is_valid_admin_session(vault_admin_session):
-        return
+        raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key")
     raise HTTPException(status_code=403, detail="Admin login required")
 
 
@@ -333,6 +340,7 @@ def _run_ingest_sync(
         # invisible to title-based routing until something else (a delete, a
         # reindex of a different file) happened to rebuild the agent.
         _get_agent.cache_clear()
+        query_cache.clear()
     except Exception as exc:
         _jobs[job_id].update({"status": "failed", "stage": "failed", "error": str(exc)})
 
@@ -359,6 +367,13 @@ def _payloads_to_docs(payloads: list[dict]) -> list[dict]:
         name = meta.get("source_file") or meta.get("file_name") or ""
         if not name:
             continue
+        # Same doc ingested both as a bare filename and via the eval corpus's
+        # "eval/data/raw/<name>" path shows up as two separate source_file
+        # values for the same physical document -- normalize before grouping
+        # so it collapses into one card instead of two (see answer_pipeline.py's
+        # identical normalization for citations).
+        if name.startswith("eval/data/raw/"):
+            name = name[len("eval/data/raw/") :]
         counts[name] += 1
         ts = meta.get("ingested_at") or ""
         if ts > last_indexed.get(name, ""):
@@ -411,6 +426,20 @@ def _payloads_to_docs(payloads: list[dict]) -> list[dict]:
         }
         for name, count in sorted(counts.items())
     ]
+
+
+def _document_count_answer() -> str:
+    """Real answer to "how many documents", from the same data /stats uses --
+    not a RAG-agent guess. The agent has no counting tool, so routed to
+    search_knowledge_base it was answering from whichever chunk got
+    retrieved, which is neither reliable nor the right kind of question for
+    a retrieval agent to attempt."""
+    try:
+        payloads = scroll_all_payloads(QDRANT_URL, QDRANT_COLLECTION)
+    except Exception:
+        return "The document count is temporarily unavailable."
+    n = len(_payloads_to_docs(payloads))
+    return f"There {'is' if n == 1 else 'are'} {n} document{'' if n == 1 else 's'} in the knowledge base."
 
 
 # _TABLE_MARKER_RE is also used by _split_markdown_pages below.
@@ -508,9 +537,28 @@ async def ingest_status(job_id: str):
     }
 
 
-@app.get("/documents")
+@app.get("/documents/exists")
+async def documents_exist():
+    """GET /documents/exists — whether the corpus is non-empty, nothing else.
+
+    Non-admin callers need this to enable the chat input (see ChatPanel's
+    hasSources) without learning the document count or any filename -- the
+    full /documents listing and /stats counts are admin-only (see
+    require_admin below); this is the one piece of corpus state a non-admin
+    is allowed to see.
+    """
+    try:
+        payloads = scroll_all_payloads(QDRANT_URL, QDRANT_COLLECTION)
+    except Exception:
+        return {"has_documents": False}
+    return {"has_documents": len(payloads) > 0}
+
+
+@app.get("/documents", dependencies=[Depends(require_admin)])
 async def list_documents():
-    """GET /documents — list ingested documents as UI cards."""
+    """GET /documents — list ingested documents as UI cards. Admin-only: a
+    non-admin viewer must not be able to enumerate the corpus (see
+    /documents/exists for the one non-admin-safe signal)."""
     try:
         payloads = scroll_all_payloads(QDRANT_URL, QDRANT_COLLECTION)
     except Exception:
@@ -565,9 +613,10 @@ async def eval_status(job_id: str):
     return job
 
 
-@app.get("/stats")
+@app.get("/stats", dependencies=[Depends(require_admin)])
 async def stats():
-    """GET /stats — return total document and chunk counts."""
+    """GET /stats — return total document and chunk counts. Admin-only, same
+    reasoning as /documents above."""
     try:
         payloads = scroll_all_payloads(QDRANT_URL, QDRANT_COLLECTION)
     except Exception:
@@ -666,7 +715,11 @@ class QueryRequest(BaseModel):
 
 
 @app.post("/query")
-async def query(req: QueryRequest):
+async def query(
+    req: QueryRequest,
+    x_api_key: str | None = Header(default=None),
+    vault_admin_session: str | None = Cookie(default=None),
+):
     """POST /query — answer a question with the RAG agent.
 
     Routing, retries, and multi-part splitting all live in
@@ -674,7 +727,40 @@ async def query(req: QueryRequest):
     the live app and the benchmark measure the exact same behavior.
     """
     from src.answer_pipeline import answer_query
+    from src.guardrails import (
+        REFUSAL_MESSAGE,
+        check_corpus_enumeration,
+        check_document_count_question,
+        check_prompt_injection,
+        check_system_prompt_leak,
+    )
     from src.rag_agent import _get_langfuse
+
+    is_admin = _is_admin_caller(x_api_key, vault_admin_session)
+
+    if is_admin and check_document_count_question(req.question):
+        return {
+            "answer": _document_count_answer(),
+            "sources": [],
+            "rejected_sources": [],
+            "sql": [],
+            "tools_used": [],
+        }
+
+    if check_prompt_injection(req.question) or (
+        not is_admin and check_corpus_enumeration(req.question)
+    ):
+        return {
+            "answer": REFUSAL_MESSAGE,
+            "sources": [],
+            "rejected_sources": [],
+            "sql": [],
+            "tools_used": [],
+        }
+
+    key = query_cache.cache_key(req.question, req.doc_id)
+    if QUERY_CACHE_ENABLED and (cached := query_cache.get(key)) is not None:
+        return cached
 
     agent = _get_agent()
     loop = asyncio.get_running_loop()
@@ -694,17 +780,33 @@ async def query(req: QueryRequest):
         lf_trace.update(output=result["answer"])
         lf.flush()
 
-    return {
+    if check_system_prompt_leak(result["answer"]):
+        return {
+            "answer": REFUSAL_MESSAGE,
+            "sources": [],
+            "rejected_sources": [],
+            "sql": [],
+            "tools_used": [],
+        }
+
+    response = {
         "answer": result["answer"],
         "sources": result["sources"],
         "rejected_sources": result["rejected_sources"],
         "sql": result["sql"],
         "tools_used": _tools_used(result["tools"]),
     }
+    if QUERY_CACHE_ENABLED:
+        query_cache.set(key, response)
+    return response
 
 
 @app.post("/query/stream")
-async def query_stream(req: QueryRequest):
+async def query_stream(
+    req: QueryRequest,
+    x_api_key: str | None = Header(default=None),
+    vault_admin_session: str | None = Cookie(default=None),
+):
     """POST /query/stream — SSE version of /query, for perceived-latency UX.
 
     src.answer_pipeline.stream_answer is a plain sync generator (it drives
@@ -725,6 +827,56 @@ async def query_stream(req: QueryRequest):
     correctness bug (nothing is read from the queue after disconnect).
     """
     from src.answer_pipeline import stream_answer
+    from src.guardrails import (
+        REFUSAL_MESSAGE,
+        check_corpus_enumeration,
+        check_document_count_question,
+        check_prompt_injection,
+        check_system_prompt_leak,
+    )
+
+    is_admin = _is_admin_caller(x_api_key, vault_admin_session)
+
+    if is_admin and check_document_count_question(req.question):
+
+        async def count_stream():
+            event = {
+                "done": True,
+                "answer": _document_count_answer(),
+                "sources": [],
+                "rejected_sources": [],
+                "sql": [],
+                "tools_used": [],
+            }
+            yield f"data: {json.dumps(event)}\n\n"
+
+        return StreamingResponse(count_stream(), media_type="text/event-stream")
+
+    if check_prompt_injection(req.question) or (
+        not is_admin and check_corpus_enumeration(req.question)
+    ):
+
+        async def refused_stream():
+            event = {
+                "done": True,
+                "answer": REFUSAL_MESSAGE,
+                "sources": [],
+                "rejected_sources": [],
+                "sql": [],
+                "tools_used": [],
+            }
+            yield f"data: {json.dumps(event)}\n\n"
+
+        return StreamingResponse(refused_stream(), media_type="text/event-stream")
+
+    key = query_cache.cache_key(req.question, req.doc_id)
+    cached = query_cache.get(key) if QUERY_CACHE_ENABLED else None
+    if cached is not None:
+
+        async def cached_stream():
+            yield f"data: {json.dumps({'done': True, **cached})}\n\n"
+
+        return StreamingResponse(cached_stream(), media_type="text/event-stream")
 
     agent = _get_agent()
     loop = asyncio.get_running_loop()
@@ -732,8 +884,40 @@ async def query_stream(req: QueryRequest):
     _SENTINEL = object()
 
     def produce() -> None:
+        # Cache the write here, not in event_stream() -- a client disconnect
+        # (tab close, abort, or the frontend remounting mid-request) cancels
+        # event_stream()'s queue.get() before it ever sees the done event,
+        # while this executor thread keeps running to completion regardless
+        # (see the disconnect limitation in this endpoint's docstring). Caching
+        # only from event_stream() meant an abandoned or aborted question
+        # computed its full expensive answer and then threw it away, so the
+        # next identical ask always missed the cache too.
         try:
             for event in stream_answer(agent, req.question, req.doc_id):
+                if event.get("done") and "tools" in event:
+                    event["tools_used"] = _tools_used(event.pop("tools"))
+                if event.get("done") and check_system_prompt_leak(
+                    event.get("answer") or ""
+                ):
+                    event = {
+                        "done": True,
+                        "answer": REFUSAL_MESSAGE,
+                        "sources": [],
+                        "rejected_sources": [],
+                        "sql": [],
+                        "tools_used": [],
+                    }
+                if event.get("done") and QUERY_CACHE_ENABLED and not event.get("error"):
+                    query_cache.set(
+                        key,
+                        {
+                            "answer": event.get("answer"),
+                            "sources": event.get("sources", []),
+                            "rejected_sources": event.get("rejected_sources", []),
+                            "sql": event.get("sql", []),
+                            "tools_used": event.get("tools_used", []),
+                        },
+                    )
                 loop.call_soon_threadsafe(queue.put_nowait, event)
         except Exception as exc:  # noqa: BLE001 - report to the client, don't crash the thread
             loop.call_soon_threadsafe(
@@ -748,8 +932,6 @@ async def query_stream(req: QueryRequest):
             item = await queue.get()
             if item is _SENTINEL:
                 break
-            if item.get("done") and "tools" in item:
-                item["tools_used"] = _tools_used(item.pop("tools"))
             yield f"data: {json.dumps(item)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
@@ -778,6 +960,7 @@ async def clear_collection():
     base = QDRANT_URL.rstrip("/")
     _qdrant("DELETE", f"{base}/collections/{QDRANT_COLLECTION}")
     _get_agent.cache_clear()
+    query_cache.clear()
     return {"status": "cleared"}
 
 
@@ -789,6 +972,7 @@ async def delete_document(filename: str):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
     _get_agent.cache_clear()
+    query_cache.clear()
     return {"status": "deleted", "filename": filename, "points_deleted": deleted}
 
 
@@ -849,6 +1033,7 @@ async def sync_google_drive(req: DriveSyncRequest):
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     _get_agent.cache_clear()
+    query_cache.clear()
     return result
 
 
@@ -963,10 +1148,12 @@ async def document_pdf_highlight(filename: str, page: int, quote: str):
     """Locate a cited passage on a born-digital PDF page and return its bbox.
 
     Uses fitz's exact text search against the PDF's real text layer — no
-    ingestion-time storage, no external service. Falls back to a shorter
-    prefix of the quote since markdown reformatting (tables, headings) can
-    break an exact match on the full excerpt. Returns bbox=None (never an
-    invented region) when nothing matches.
+    ingestion-time storage, no external service. A long excerpt often fails
+    fitz's exact match as one string (line-wrap/whitespace differences), so
+    falls back to matching sentence-by-sentence and unioning every sentence
+    found — covering the actual passage instead of an arbitrary word-count
+    cutoff. Returns bbox=None (never an invented region, and never a partial
+    fragment that stops short of the cited content) when nothing matches.
     """
     pdf_path = _resolve_source_file_path(filename)
     if not pdf_path:
@@ -980,10 +1167,18 @@ async def document_pdf_highlight(filename: str, page: int, quote: str):
                 status_code=404, detail=f"Page {page} out of range (1–{len(doc)})"
             )
         fitz_page = doc[page - 1]
-        rects = fitz_page.search_for(quote)
+        # A mid-chunk excerpt is prefixed/suffixed with a literal "…" to mark
+        # truncation (see retrieval_tool.py's _best_snippet) -- that marker
+        # isn't in the PDF's real text, so strip it before an exact search.
+        search_text = quote.strip().strip("…").strip()
+        rects = fitz_page.search_for(search_text)
         if not rects:
-            prefix = " ".join(quote.split()[:12])
-            rects = fitz_page.search_for(prefix) if prefix else []
+            sentences = [
+                s.strip()
+                for s in re.split(r"(?<=[.:!?])\s+", search_text)
+                if len(s.strip()) > 15
+            ]
+            rects = [r for s in sentences for r in fitz_page.search_for(s)]
         # A multi-line match returns one rect per line it spans — union them into
         # one box covering the whole passage, not just its first line.
         bbox = (

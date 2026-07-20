@@ -285,6 +285,8 @@ def answer_comparison_deterministic(
     sources = parse_sources(collected)
     citation_map = build_citation_map(collected, sources)
     answer = strip_leaked_headers(answer, citation_map=citation_map)
+    answer, sources = _renumber_citations_sequentially(answer, sources)
+    _narrow_quotes_to_answer(sources, answer)
     if trace is not None:
         trace.span(
             name="comparison-deterministic",
@@ -477,6 +479,12 @@ def strip_leaked_headers(text: str, citation_map: dict[int, int] | None = None) 
     real source, it's renumbered to that source's position instead of being
     stripped — true inline citations. Unresolvable markers are stripped as
     before (the trace panel/eval evidence is the source list)."""
+    # The model sometimes emits fullwidth brackets ("【1】") instead of ASCII
+    # ("[1]") -- every citation regex downstream (here, renumbering, quote
+    # narrowing, the frontend's chip rendering) is ASCII-only, so an
+    # unnormalized fullwidth marker leaks into the answer as raw text and
+    # never resolves to a real source. Normalize once, at the earliest point.
+    text = text.translate(str.maketrans("【】", "[]"))
     cleaned = _LEAKED_HEADER_RE.sub("", text)
     cleaned = _LEAKED_CHANNEL_MARKER_RE.sub("", cleaned)
     cleaned = _INLINE_CITATION_RE.sub(
@@ -563,9 +571,18 @@ def parse_sources(collected: list[str]) -> list[dict]:
             else:
                 location = ""
 
+            # Only surface a figure crop when the figure IS the chunk (e.g. a
+            # standalone chart/image chunk) -- a page header logo that happens
+            # to share a text chunk with unrelated prose would otherwise show
+            # up as an irrelevant crop next to a citation about that prose.
+            figure_block_m = _FIGURE_BLOCK_RE.search(body)
             bbox_m = _FIGURE_BBOX_RE.search(body)
             figure_bbox = (
-                [float(v) for v in bbox_m.group(1).split(",")] if bbox_m else None
+                [float(v) for v in bbox_m.group(1).split(",")]
+                if bbox_m
+                and figure_block_m
+                and len(figure_block_m.group(0)) > 0.4 * len(body)
+                else None
             )
 
             plain = _FIGURE_BLOCK_RE.sub("", body)
@@ -577,13 +594,23 @@ def parse_sources(collected: list[str]) -> list[dict]:
             plain = _TABLE_MARKER_RE.sub("", plain)
             plain = re.sub(r"^#{1,3}\s+.+$", "", plain, flags=re.MULTILINE).strip()
             plain = re.sub(r"<br\s*/?>", " ", plain, flags=re.IGNORECASE)
+            # "**bold**" is pymupdf4llm's own markdown, not text in the PDF --
+            # left in, it shows literal asterisks in the citation quote and
+            # breaks fitz.search_for's exact-text PDF highlight lookup.
+            plain = plain.replace("**", "")
             # A chunk can itself be a raw markdown table (pymupdf4llm's own
             # rendering of a PDF table, not wrapped in TABLE_START/END) --
             # drop separator rows and pipe characters so the quote reads as
             # prose instead of leaking "|---|---|" table syntax.
             plain = re.sub(r"^\s*\|?[-:\s|]+\|?\s*$", "", plain, flags=re.MULTILINE)
             plain = plain.replace("|", " ")
-            excerpt = " ".join(plain.split())[:350]
+            # Capped generously here, not to 350 -- a duplicated-text artifact
+            # in a chunk (a repeated preamble phrase, seen in practice) can
+            # make the answer-bearing sentence land well past 350 chars.
+            # Truncating that early would drop it before _narrow_quotes_to_answer
+            # ever gets a chance to select it; the real 350-char display cap is
+            # applied there, after narrowing, to whatever text was actually kept.
+            excerpt = _truncate_at_sentence_boundary(" ".join(plain.split()), 2000)
 
             score = float(score_str) if score_str else None
             # 1.0 is the retriever's placeholder for filter/scroll fetches
@@ -592,7 +619,15 @@ def parse_sources(collected: list[str]) -> list[dict]:
             if score == 1.0:
                 score = None
 
-            key = (filename, excerpt[:80])
+            # Dedupe on (filename, location) when location is known (chunk/
+            # sheet/part) so two chunks from the same file+page/sheet never
+            # both survive as separate-looking "duplicate" source rows just
+            # because their excerpts differ slightly (e.g. neighbour-window
+            # padding) -- location is also citation_map's own identity key,
+            # so this keeps that mapping unambiguous too. Falls back to the
+            # excerpt for loc_keys without a location (repair_query/subquery),
+            # where "" would otherwise over-collapse distinct passages.
+            key = (filename, location or excerpt[:80])
             if key in seen:
                 continue
             seen.add(key)
@@ -634,6 +669,100 @@ def parse_sources(collected: list[str]) -> list[dict]:
         else:
             rest.append(s)
     return (diverse + rest)[:8]
+
+
+# Splits after sentence punctuation, and also before a definitions-list term
+# like "Amendment: " so a preamble ("...construed to have the following
+# meaning:") doesn't stay glued to the actual definition it introduces --
+# there's no period between them, just a colon run-on.
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\s+(?=[A-Z][a-zA-Z]{2,24}:\s)")
+_WORD_RE = re.compile(r"[a-z0-9]+")
+_ANSWER_CITATION_RE = re.compile(r"\[(\d+)\]")
+
+
+def _renumber_citations_sequentially(
+    answer: str, sources: list[dict]
+) -> tuple[str, list[dict]]:
+    """Renumber [N] markers (and reorder `sources` to match) so cited sources
+    always read 1, 2, 3... in order of first appearance.
+
+    citation_map numbers a marker by its raw position in the full retrieved
+    sources list -- e.g. an answer that cites only one source out of 8
+    retrieved can show up as "[7]", which reads as arbitrary/confusing in the
+    UI ("why 7, not 1?"). Uncited sources keep trailing after the cited ones
+    in their existing relative order (still shown as "N more retrieved
+    candidates").
+    """
+    seen_order: list[int] = []
+    for m in _ANSWER_CITATION_RE.finditer(answer):
+        n = int(m.group(1))
+        if 1 <= n <= len(sources) and n not in seen_order:
+            seen_order.append(n)
+    if not seen_order or seen_order == list(range(1, len(seen_order) + 1)):
+        return answer, sources
+    remap = {old: new for new, old in enumerate(seen_order, start=1)}
+    new_answer = _ANSWER_CITATION_RE.sub(
+        lambda m: f"[{remap[int(m.group(1))]}]" if int(m.group(1)) in remap else m.group(0),
+        answer,
+    )
+    cited = [sources[old - 1] for old in seen_order]
+    uncited = [s for i, s in enumerate(sources, start=1) if i not in remap]
+    return new_answer, cited + uncited
+
+
+def _truncate_at_sentence_boundary(text: str, limit: int) -> str:
+    """Cut `text` to about `limit` chars without severing a sentence mid-word.
+
+    A raw text[:limit] slice can stop the excerpt (and, downstream, the PDF
+    highlight search text) in the middle of the one sentence the answer
+    actually cites -- accumulate whole sentences up to the budget instead;
+    if even the first sentence alone exceeds it, keep it whole anyway (a
+    slightly long excerpt beats a mid-sentence stub).
+    """
+    if len(text) <= limit:
+        return text
+    sentences = [s.strip() for s in _SENTENCE_SPLIT_RE.split(text) if s.strip()]
+    kept: list[str] = []
+    total = 0
+    for sentence in sentences:
+        if kept and total + len(sentence) + 1 > limit:
+            break
+        kept.append(sentence)
+        total += len(sentence) + 1
+    return " ".join(kept) if kept else text[:limit]
+
+
+def _narrow_quotes_to_answer(sources: list[dict], answer: str) -> None:
+    """Trim each source's quote/excerpt down to only the sentence(s) that
+    actually overlap the final answer text, in place.
+
+    A retrieved chunk is the retrieval unit, not the attribution unit -- it
+    often carries surrounding context (a preceding "Whenever the following
+    words appear..." preamble, neighbour-chunk padding) that helped the
+    chunk get retrieved but isn't what the answer actually drew from. Left
+    in, that preamble both misleads the Evidence panel's blockquote and
+    makes the PDF-highlight endpoint search for a multi-sentence string that
+    frequently fails to match the real text layout, degrading to a partial
+    fragment. Falls back to the untouched excerpt when nothing overlaps
+    (e.g. a paraphrased/abstractive answer) -- a full-chunk highlight beats
+    guessing at fake precision.
+    """
+    answer_words = {w for w in _WORD_RE.findall(answer.lower()) if len(w) > 2}
+    for source in sources:
+        excerpt = source["excerpt"]
+        final = excerpt
+        if answer_words:
+            sentences = [s.strip() for s in _SENTENCE_SPLIT_RE.split(excerpt) if s.strip()]
+            kept = []
+            for sentence in sentences:
+                words = {w for w in _WORD_RE.findall(sentence.lower()) if len(w) > 2}
+                if words and len(words & answer_words) / len(words) >= 0.5:
+                    kept.append(sentence)
+            if len(sentences) > 1 and kept:
+                final = " ".join(kept)
+        final = _truncate_at_sentence_boundary(final, 350)
+        source["excerpt"] = final
+        source["quote"] = final
 
 
 def _excel_citations_to_sources(
@@ -974,6 +1103,8 @@ def answer_query(
     # with its own unrelated numbering, so those fall back to strip-on-sight.
     citation_map = build_citation_map(collected, sources) if is_single_part else None
     answer = strip_leaked_headers(answer, citation_map=citation_map)
+    answer, sources = _renumber_citations_sequentially(answer, sources)
+    _narrow_quotes_to_answer(sources, answer)
     sql_list = [s for s in (excel_trace.get("sql") or []) if s]
     kept_filenames = {s["filename"] for s in sources}
     rejected_sources = []
@@ -1104,6 +1235,8 @@ def stream_answer(
     sources += _excel_citations_to_sources(excel_citations, existing=sources)
     citation_map = build_citation_map(collected, sources)
     answer = strip_leaked_headers(raw_answer, citation_map=citation_map)
+    answer, sources = _renumber_citations_sequentially(answer, sources)
+    _narrow_quotes_to_answer(sources, answer)
     sql_list = [s for s in sql_trace if s]
     kept_filenames = {s["filename"] for s in sources}
     rejected_sources = []

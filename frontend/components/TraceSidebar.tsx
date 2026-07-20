@@ -11,6 +11,9 @@ export interface Trace {
   rejected_sources?: RejectedSource[];
   sql: string[];
   tools_used: string[];
+  /** Final answer text — used to pick which citation the Evidence panel
+   * defaults to (the first one actually cited, not just index 0). */
+  answer?: string;
 }
 
 interface Props {

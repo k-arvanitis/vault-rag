@@ -1,10 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Compass } from "lucide-react";
 import { toast } from "sonner";
-import { checkHealth, type Conversation, type InspectTarget, type Source } from "@/lib/api";
-import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
+import {
+  checkHealth,
+  sourceInspectTarget,
+  type Conversation,
+  type InspectTarget,
+  type Source,
+} from "@/lib/api";
+import { citedOnlySources } from "@/lib/product";
+import { SidebarProvider, SidebarInset, useSidebar } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import Sidebar from "@/components/Sidebar";
@@ -14,6 +21,28 @@ import InspectorPanel from "@/components/InspectorPanel";
 import HistoryPanel from "@/components/HistoryPanel";
 import { type Trace } from "@/components/TraceSidebar";
 import RightPanelTabs from "@/components/RightPanelTabs";
+
+// Collapses the left source sidebar while the Evidence panel is expanded,
+// restoring its prior state afterward -- reclaiming the sidebar's space is
+// how expanded Evidence gets ~45% of the screen without covering the chat
+// (side-by-side verification is the point). Must live inside SidebarProvider
+// to reach useSidebar, so it can't just be inline in Home().
+function SidebarAutoCollapse({ collapse }: { collapse: boolean }) {
+  const { open, setOpen } = useSidebar();
+  const priorOpen = useRef(open);
+  useEffect(() => {
+    if (collapse) {
+      priorOpen.current = open;
+      setOpen(false);
+    } else {
+      setOpen(priorOpen.current);
+    }
+    // Only react to `collapse` flipping -- `open`/`setOpen` intentionally
+    // excluded so restoring doesn't retrigger this effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collapse]);
+  return null;
+}
 
 export default function Home() {
   const [offline, setOffline] = useState(false);
@@ -32,6 +61,7 @@ export default function Home() {
   const [evidenceSources, setEvidenceSources] = useState<Source[]>([]);
   const [selectedCitation, setSelectedCitation] = useState<InspectTarget | null>(null);
   const [rightPanelTab, setRightPanelTab] = useState<"evidence" | "technical">("evidence");
+  const [evidenceExpanded, setEvidenceExpanded] = useState(false);
 
   // Picks up "Open" / "Ask about this source" links from /sources — read directly
   // from the URL rather than useSearchParams(), which requires wrapping this page
@@ -72,13 +102,19 @@ export default function Home() {
     setConversationLoadKey((k) => k + 1);
   }, []);
 
-  // A new answer arriving: show its own evidence by default (no citation
-  // highlighted yet — the user hasn't clicked one for THIS turn). Clicking an
-  // older message's citation afterward overrides this via handleSelectEvidence.
+  // A new answer arriving: default Evidence to the first source the answer
+  // actually cites — [N] in the answer text is already the source's 1-based
+  // position in `sources` (see build_citation_map in answer_pipeline.py), so
+  // this stays in sync with the inline chip and the Sources-used row for that
+  // same [N]. Falls back to no selection if the answer cites nothing. Clicking
+  // an older message's citation afterward overrides this via handleSelectEvidence.
   const handleTrace = useCallback((t: Trace | null) => {
     setTrace(t);
-    setEvidenceSources(t?.sources ?? []);
-    setSelectedCitation(null);
+    const sources = citedOnlySources(t?.answer ?? "", t?.sources ?? []);
+    setEvidenceSources(sources);
+    const firstCitation = t?.answer?.match(/\[(\d+)\]/);
+    const firstSource = firstCitation ? sources[Number(firstCitation[1]) - 1] : undefined;
+    setSelectedCitation(firstSource ? sourceInspectTarget(firstSource) : null);
   }, []);
 
   // Primary citation action — select this citation's evidence and switch to
@@ -100,6 +136,7 @@ export default function Home() {
 
   return (
     <SidebarProvider className="h-screen">
+      <SidebarAutoCollapse collapse={evidenceExpanded} />
       <Sidebar
         key={refreshKey}
         onToast={addToast}
@@ -121,6 +158,7 @@ export default function Home() {
             onTrace={handleTrace}
             onSelectEvidence={handleSelectEvidence}
             onOpenFullSource={handleOpenFullSource}
+            selectedCitation={selectedCitation}
             initialMessages={loadedConversation?.messages}
             initialConversationId={loadedConversation?.id ?? null}
             initialScopedDocId={initialScopedDocId}
@@ -144,6 +182,8 @@ export default function Home() {
                   selectedTarget={selectedCitation}
                   tab={rightPanelTab}
                   onTabChange={setRightPanelTab}
+                  expanded={evidenceExpanded}
+                  onExpandedChange={setEvidenceExpanded}
                 />
               </div>
               <Button

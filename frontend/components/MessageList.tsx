@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { ThumbsUp, ThumbsDown, Check, RotateCcw } from "lucide-react";
 import { submitFeedback, type Source, type FeedbackReason, type InspectTarget } from "@/lib/api";
-import { toCitation, type Citation } from "@/lib/product";
+import { toCitation, citedIndices, citedOnlySources, type Citation } from "@/lib/product";
+import { useAdminSession } from "@/lib/useAdminSession";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -30,6 +31,9 @@ interface Props {
   /** Secondary action: opens the full-screen document inspector. Only reached
    * via an explicit "Open source" link, never the citation click itself. */
   onOpenFullSource?: (target: InspectTarget) => void;
+  /** The citation currently shown in the Evidence panel — matching chips/rows
+   * render a selected state so the answer, source list, and panel agree. */
+  selectedCitation?: InspectTarget | null;
   /** Re-asks the question preceding this assistant message and replaces its
    * content/sources in place. No history is sent today, so this is just
    * firing the same question again — see ChatPanel.tsx's ask()/retry(). */
@@ -38,12 +42,21 @@ interface Props {
    * and whether the example prompts are clickable. */
   hasSources?: boolean;
   onExamplePick?: (text: string) => void;
+  /** Current "Ask across" source scope — [] means every indexed source, one
+   * filename means a single source, several means a multi-source compare.
+   * Drives the empty state's headline/subtext (see review: "make the empty
+   * state respond to scope"). */
+  scopedDocIds?: string[];
 }
 
+/** Real, verified-passing questions against this project's fixed demo
+ * corpus (see eval/data/qa_pairs/) — not generic placeholders that might
+ * miss the indexed collection. One single-doc factoid, one cross-document
+ * compare, one structured (DuckDB) lookup. */
 const EXAMPLE_PROMPTS = [
-  "Summarize the key points of this document.",
-  "What are the payment terms, and where do they appear?",
-  "Compare the two most recent versions — what changed?",
+  "Who must approve a Sole Source Procurement under the procurement policy?",
+  "Which document allows a longer contract extension period: the procurement policy or the services contract terms?",
+  "What is the NET Amount for the supplier Citycoseals?",
 ];
 
 /** Honest waiting state: one neutral message plus how long the request has
@@ -69,19 +82,31 @@ function WaitingIndicator({ elapsedSeconds }: { elapsedSeconds: number }) {
  * that leaves the chat for the full document inspector. Used both inline
  * (AnswerContent, when the backend resolves a real [N] marker) and in the
  * SourcesUsed summary below the answer. */
+/** Whether an InspectTarget refers to the same evidence location — same file,
+ * and same page/sheet when either target specifies one. */
+function isSameTarget(a: InspectTarget, b: InspectTarget | null | undefined): boolean {
+  if (!b || a.filename !== b.filename) return false;
+  if (a.page != null || b.page != null) return a.page === b.page;
+  if (a.sheet || b.sheet) return a.sheet === b.sheet;
+  return true;
+}
+
 function CitationChip({
   citation,
   messageSources,
+  selectedCitation,
   onSelectEvidence,
   onOpenFullSource,
 }: {
   citation: Citation;
   messageSources: Source[];
+  selectedCitation?: InspectTarget | null;
   onSelectEvidence?: (target: InspectTarget, messageSources: Source[]) => void;
   onOpenFullSource?: (target: InspectTarget) => void;
 }) {
   const [open, setOpen] = useState(false);
   const target: InspectTarget = { filename: citation.sourceId, page: citation.page, sheet: citation.sheet };
+  const selected = isSameTarget(target, selectedCitation);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -89,18 +114,23 @@ function CitationChip({
         render={
           <button
             type="button"
-            onMouseEnter={() => setOpen(true)}
-            onMouseLeave={() => setOpen(false)}
-            onFocus={() => setOpen(true)}
-            onBlur={() => setOpen(false)}
-            onClick={() => onSelectEvidence?.(target, messageSources)}
-            className="inline-flex size-4 items-center justify-center rounded-full bg-muted font-mono text-[10px] font-medium text-muted-foreground hover:bg-primary hover:text-primary-foreground"
+            onClick={() => {
+              onSelectEvidence?.(target, messageSources);
+              setOpen((o) => !o);
+            }}
+            aria-pressed={selected}
+            className={cn(
+              "ml-1.5 mr-0.5 inline-flex size-4 items-center justify-center rounded-full font-mono text-[10px] font-medium transition-colors hover:bg-primary hover:text-primary-foreground",
+              selected
+                ? "bg-primary text-primary-foreground ring-2 ring-primary/40"
+                : "bg-muted text-muted-foreground"
+            )}
           />
         }
       >
         {citation.id}
       </PopoverTrigger>
-      <PopoverContent className="w-80 text-xs" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+      <PopoverContent className="w-80 text-xs">
         <p className="font-medium text-foreground">{citation.sourceName}</p>
         <p className="text-[11px] text-muted-foreground">
           {citation.page != null && `Page ${citation.page}`}
@@ -111,7 +141,15 @@ function CitationChip({
           {citation.quote || "—"}
         </p>
         {onOpenFullSource && (
-          <Button variant="link" size="xs" className="mt-1 h-auto p-0" onClick={() => onOpenFullSource(target)}>
+          <Button
+            variant="link"
+            size="xs"
+            className="mt-1 h-auto p-0"
+            onClick={() => {
+              onOpenFullSource(target);
+              setOpen(false);
+            }}
+          >
             Open full source
           </Button>
         )}
@@ -135,11 +173,13 @@ const INLINE_CITATION_RE = /\[(\d+)\]/g;
 export function AnswerContent({
   content,
   sources,
+  selectedCitation,
   onSelectEvidence,
   onOpenFullSource,
 }: {
   content: string;
   sources: Source[];
+  selectedCitation?: InspectTarget | null;
   onSelectEvidence?: (target: InspectTarget, messageSources: Source[]) => void;
   onOpenFullSource?: (target: InspectTarget) => void;
 }) {
@@ -177,7 +217,8 @@ export function AnswerContent({
           <CitationChip
             key={i}
             citation={toCitation(source, segment)}
-            messageSources={sources}
+            messageSources={citedOnlySources(content, sources)}
+            selectedCitation={selectedCitation}
             onSelectEvidence={onSelectEvidence}
             onOpenFullSource={onOpenFullSource}
           />
@@ -191,42 +232,111 @@ export function AnswerContent({
  * retrieved-chunk cards (those live under Technical details). Every row's
  * primary click selects Evidence; only the popover's "Open full source" link
  * leaves the chat. */
-function SourcesUsed({
+function SourceRow({
+  citation,
   sources,
+  selectedCitation,
   onSelectEvidence,
   onOpenFullSource,
 }: {
+  citation: Citation;
   sources: Source[];
+  selectedCitation?: InspectTarget | null;
+  onSelectEvidence?: (target: InspectTarget, messageSources: Source[]) => void;
+  onOpenFullSource?: (target: InspectTarget) => void;
+}) {
+  const target: InspectTarget = { filename: citation.sourceId, page: citation.page, sheet: citation.sheet };
+  const selected = isSameTarget(target, selectedCitation);
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-1.5 rounded px-1 py-0.5 text-[11px] text-muted-foreground",
+        selected && "bg-primary/10"
+      )}
+    >
+      <CitationChip
+        citation={citation}
+        messageSources={sources}
+        selectedCitation={selectedCitation}
+        onSelectEvidence={onSelectEvidence}
+        onOpenFullSource={onOpenFullSource}
+      />
+      <button
+        type="button"
+        className="min-w-0 flex-1 truncate text-left hover:text-foreground hover:underline"
+        onClick={() => onSelectEvidence?.(target, sources)}
+      >
+        {citation.sourceName}
+        {citation.page != null && ` · Page ${citation.page}`}
+        {citation.sheet && ` · ${citation.sheet}`}
+      </button>
+    </div>
+  );
+}
+
+/** "Sources used" only lists sources the answer actually cites via [N] — the
+ * rest of the retrieved candidates (reranked out, or retrieved but unused)
+ * move to Technical details so a one-fact answer doesn't look backed by 8
+ * sources. Falls back to showing everything when the answer cites nothing
+ * (e.g. a table/SQL answer with no inline markers). */
+function SourcesUsed({
+  content,
+  sources,
+  selectedCitation,
+  onSelectEvidence,
+  onOpenFullSource,
+}: {
+  content: string;
+  sources: Source[];
+  selectedCitation?: InspectTarget | null;
   onSelectEvidence?: (target: InspectTarget, messageSources: Source[]) => void;
   onOpenFullSource?: (target: InspectTarget) => void;
 }) {
   if (sources.length === 0) return null;
+  // "Unsupported" means nothing actually backed the answer -- falling back to
+  // "show every retrieved candidate" here (the no-inline-markers fallback
+  // below, meant for table/SQL answers) would misleadingly read as "8 sources
+  // used" for an answer that used none of them.
+  const isUnsupported = content.trim().toLowerCase() === "unsupported";
+  const cited = citedIndices(content);
   const citations = sources.map((s, i) => toCitation(s, i + 1));
+  const shown = isUnsupported
+    ? []
+    : cited.size > 0
+      ? citations.filter((c) => cited.has(c.id))
+      : citations;
+  const remaining = citations.length - shown.length;
+  const shownSources = citedOnlySources(content, sources);
+
+  if (isUnsupported) {
+    return (
+      <p className="mt-2 text-[10px] text-muted-foreground">
+        {citations.length} retrieved candidate{citations.length > 1 ? "s" : ""} didn&apos;t support an
+        answer — see Technical details.
+      </p>
+    );
+  }
 
   return (
     <div className="mt-2">
-      <p className="text-[11px] font-medium text-muted-foreground">Sources used · {sources.length}</p>
+      <p className="text-[11px] font-medium text-muted-foreground">Sources used · {shown.length}</p>
       <div className="mt-1 space-y-1">
-        {citations.map((c) => (
-          <div key={c.id} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-            <CitationChip
-              citation={c}
-              messageSources={sources}
-              onSelectEvidence={onSelectEvidence}
-              onOpenFullSource={onOpenFullSource}
-            />
-            <button
-              type="button"
-              className="min-w-0 flex-1 truncate text-left hover:text-foreground hover:underline"
-              onClick={() => onSelectEvidence?.({ filename: c.sourceId, page: c.page, sheet: c.sheet }, sources)}
-            >
-              {c.sourceName}
-              {c.page != null && ` · Page ${c.page}`}
-              {c.sheet && ` · ${c.sheet}`}
-            </button>
-          </div>
+        {shown.map((c) => (
+          <SourceRow
+            key={c.id}
+            citation={c}
+            sources={shownSources}
+            selectedCitation={selectedCitation}
+            onSelectEvidence={onSelectEvidence}
+            onOpenFullSource={onOpenFullSource}
+          />
         ))}
       </div>
+      {remaining > 0 && (
+        <p className="mt-1 text-[10px] text-muted-foreground">
+          {remaining} more retrieved candidate{remaining > 1 ? "s" : ""} in Technical details
+        </p>
+      )}
     </div>
   );
 }
@@ -328,24 +438,48 @@ export default function MessageList({
   elapsedSeconds = 0,
   onSelectEvidence,
   onOpenFullSource,
+  selectedCitation = null,
   onRetry,
   hasSources,
   onExamplePick,
+  scopedDocIds = [],
 }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const { is_admin: isAdmin } = useAdminSession();
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streaming]);
 
   if (messages.length === 0 && !streaming) {
+    let headline = "Ask across your organisation's knowledge base.";
+    let subtext =
+      "Get answers grounded in approved PDFs, spreadsheets, policies and business records, with citations to the exact page, sheet or row.";
+    if (scopedDocIds.length === 1) {
+      headline = `Ask about ${scopedDocIds[0].split("/").pop()}.`;
+      subtext = "Answers will be restricted to this source and linked to the original evidence.";
+    } else if (scopedDocIds.length > 1) {
+      headline = `Ask across ${scopedDocIds.length} selected sources.`;
+      subtext = "Compare and combine information from the selected documents, with evidence from each source.";
+    }
+
     return (
       <div className="flex flex-1 select-none flex-col items-center justify-center px-8 text-center">
-        <h2 className="text-lg font-semibold text-foreground">Ask questions across your documents.</h2>
+        <h2 className="text-lg font-semibold text-foreground">
+          {hasSources
+            ? headline
+            : isAdmin
+              ? "Build your organisation's knowledge base."
+              : "Ask across your organisation's knowledge base."}
+        </h2>
         <p className="mt-1.5 max-w-sm text-sm text-muted-foreground">
-          Every answer can be checked against the original page, sheet, or row it came from.
+          {hasSources
+            ? subtext
+            : isAdmin
+              ? "Add PDFs, spreadsheets and business documents so users can ask verified questions across them."
+              : "No approved sources are available yet. Contact your administrator to add content to the knowledge base."}
         </p>
-        {hasSources ? (
+        {hasSources && (
           <div className="mt-5 flex max-w-md flex-col gap-1.5 select-text">
             {EXAMPLE_PROMPTS.map((p) => (
               <button
@@ -358,10 +492,6 @@ export default function MessageList({
               </button>
             ))}
           </div>
-        ) : (
-          <p className="mt-5 text-xs text-muted-foreground">
-            Add a source in the sidebar to get started.
-          </p>
         )}
       </div>
     );
@@ -394,6 +524,7 @@ export default function MessageList({
                     <AnswerContent
                       content={msg.content}
                       sources={msg.sources ?? []}
+                      selectedCitation={selectedCitation}
                       onSelectEvidence={onSelectEvidence}
                       onOpenFullSource={onOpenFullSource}
                     />
@@ -403,7 +534,9 @@ export default function MessageList({
                   <>
                     {msg.sources && msg.sources.length > 0 ? (
                       <SourcesUsed
+                        content={msg.content}
                         sources={msg.sources}
+                        selectedCitation={selectedCitation}
                         onSelectEvidence={onSelectEvidence}
                         onOpenFullSource={onOpenFullSource}
                       />
