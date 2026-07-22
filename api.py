@@ -1331,9 +1331,76 @@ def _truncate_markdown_table(md: str, max_rows: int = _TABLE_MD_MAX_ROWS) -> str
     return "\n".join(header_lines + kept + trailing_lines)
 
 
+def _normalize_cell(value: object) -> str:
+    """Mirror frontend/lib/tableMatch.ts's normalizeCell exactly, so the
+    server-side row search agrees with the client-side one it replaces the
+    input for."""
+    return str(value).strip().lower()
+
+
+def _find_matched_row_index(rows: list[list[str]], quote: str | None) -> int:
+    """Mirror frontend/lib/tableMatch.ts's findMatchedRowIndex: the index of
+    the row with the MOST cells (len > 2) that appear verbatim in `quote`,
+    or -1 if none match / quote is empty.
+
+    Ties broken by earliest row index. Scoring by match COUNT rather than
+    stopping at the first single-cell match matters once the search spans a
+    whole sheet instead of only 60 rows (see _window_rows_around_match):
+    reproduced live -- a category value like "PLAY EQUIPMENT TEAM" repeats
+    across many unrelated rows, so "first row with any one matching cell"
+    picked a real but WRONG transaction. The quote also contains the row's
+    other distinguishing values (e.g. the exact total "317.50"), which only
+    the true row matches on top of the category -- counting cells picks it.
+    """
+    quote_norm = _normalize_cell(quote or "")
+    if not quote_norm:
+        return -1
+    best_idx = -1
+    best_count = 0
+    for i, row in enumerate(rows):
+        count = sum(
+            1
+            for cell in row
+            if len(cell_norm := _normalize_cell(cell)) > 2 and cell_norm in quote_norm
+        )
+        if count > best_count:
+            best_count = count
+            best_idx = i
+    return best_idx
+
+
+def _window_rows_around_match(
+    header: list[list[str]],
+    body: list[list[str]],
+    quote: str | None,
+    max_rows: int,
+) -> list[list[str]] | None:
+    """Return header + a max_rows-sized window of body centered on the row
+    matching `quote`, or None if no match was found anywhere in `body` (the
+    caller falls back to the existing "first max_rows" behavior in that case).
+    """
+    matched_idx = _find_matched_row_index(body, quote)
+    if matched_idx < 0:
+        return None
+    half = max_rows // 2
+    start = max(0, matched_idx - half)
+    end = min(len(body), start + max_rows)
+    return header + body[start:end]
+
+
 @app.get("/documents/{filename:path}/table-sheet/{sheet}")
-async def document_table_sheet(filename: str, sheet: str):
-    """Return raw rows and cleaned markdown for one sheet of an Excel/CSV file."""
+async def document_table_sheet(filename: str, sheet: str, quote: str | None = None):
+    """Return raw rows and cleaned markdown for one sheet of an Excel/CSV file.
+
+    quote: a citation's quoted evidence text. When given, the row it was
+    drawn from is searched for across the WHOLE sheet (not just the first 60
+    rows the response caps at) and a window of rows around it is returned
+    instead of always "the first 60" -- reproduced live: a citation whose
+    real row fell past row 60 in a larger CSV (doc_007, hundreds of rows)
+    could never be found or highlighted, no matter how good the client-side
+    matching was, since it was never in the data sent to the browser at all.
+    Without a quote (or no match found), behavior is unchanged: first 60 rows.
+    """
     TABLE_MD_DIR = REPO_ROOT / "data" / "output" / "table_markdowns"
     file_stem = Path(filename).stem
     safe_sheet = sheet.replace("/", "_").replace("\\", "_")
@@ -1351,11 +1418,50 @@ async def document_table_sheet(filename: str, sheet: str):
         try:
             import pandas as pd
 
+            if quote:
+                # Search the full sheet for the citation's real row -- reading
+                # the whole file server-side is fine (this is what earlier
+                # froze: rendering thousands of rows through ReactMarkdown
+                # client-side, not pandas parsing them here); only the
+                # windowed slice actually sent to the browser stays bounded.
+                if suffix == ".csv":
+                    # encoding_errors="replace": some source CSVs have a stray
+                    # non-UTF8 byte (e.g. a Windows-1252 non-breaking space)
+                    # that the old nrows=60 cap never reached -- reading the
+                    # whole file to search it now does, and a hard decode
+                    # error there must not take down row search entirely.
+                    full_df = pd.read_csv(
+                        raw_path, header=None, dtype=str, encoding_errors="replace"
+                    ).fillna("")
+                else:
+                    full_df = pd.read_excel(
+                        raw_path, sheet_name=sheet, header=None, dtype=str
+                    ).fillna("")
+                full_rows = full_df.values.tolist()
+                header, body = full_rows[:1], full_rows[1:]
+                windowed = _window_rows_around_match(
+                    header, body, quote, _TABLE_MD_MAX_ROWS
+                )
+                if windowed is not None:
+                    return windowed
+                # No match anywhere in the sheet -- fall through to the
+                # existing "first 60" behavior below, same as no quote given.
+
             if suffix == ".csv":
-                df = pd.read_csv(raw_path, header=None, dtype=str, nrows=60).fillna("")
+                df = pd.read_csv(
+                    raw_path,
+                    header=None,
+                    dtype=str,
+                    nrows=_TABLE_MD_MAX_ROWS,
+                    encoding_errors="replace",
+                ).fillna("")
             else:
                 df = pd.read_excel(
-                    raw_path, sheet_name=sheet, header=None, dtype=str, nrows=60
+                    raw_path,
+                    sheet_name=sheet,
+                    header=None,
+                    dtype=str,
+                    nrows=_TABLE_MD_MAX_ROWS,
                 ).fillna("")
             return df.values.tolist()
         except Exception:

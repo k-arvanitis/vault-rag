@@ -223,11 +223,11 @@ function SpreadsheetEvidence({
     setRows(null);
     if (!source.sheet) return;
     setLoading(true);
-    getTableSheet(source.filename, source.sheet)
+    getTableSheet(source.filename, source.sheet, source.quote)
       .then((res) => setRows(res.raw_rows))
       .catch(() => setRows(null))
       .finally(() => setLoading(false));
-  }, [source.filename, source.sheet]);
+  }, [source.filename, source.sheet, source.quote]);
 
   if (!source.sheet) return null;
   if (loading) {

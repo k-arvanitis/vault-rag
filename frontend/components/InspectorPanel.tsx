@@ -314,11 +314,11 @@ function SheetCompare({
     if (data || loading) return;
     setLoading(true);
     setLoadError(null);
-    getTableSheet(filename, sheet)
+    getTableSheet(filename, sheet, quote)
       .then(setData)
       .catch((err) => setLoadError(err instanceof Error ? err.message : "Failed to load sheet."))
       .finally(() => setLoading(false));
-  }, [filename, sheet, data, loading]);
+  }, [filename, sheet, quote, data, loading]);
 
   useEffect(() => {
     load();

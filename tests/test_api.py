@@ -1,7 +1,13 @@
 from unittest.mock import patch
 
 import api
-from api import _payloads_to_docs, _truncate_markdown_table, _validate_startup_env
+from api import (
+    _find_matched_row_index,
+    _payloads_to_docs,
+    _truncate_markdown_table,
+    _validate_startup_env,
+    _window_rows_around_match,
+)
 
 
 class TestTruncateMarkdownTable:
@@ -27,6 +33,87 @@ class TestTruncateMarkdownTable:
         md = "| A |\n| --- |\n| 1 |"
         result = _truncate_markdown_table(md, max_rows=60)
         assert "omitted" not in result
+
+
+class TestFindMatchedRowIndex:
+    """Mirrors frontend/lib/tableMatch.ts's findMatchedRowIndex -- kept in
+    sync deliberately so server-side search and client-side display agree
+    on which row is "the" match."""
+
+    def test_finds_row_whose_cell_appears_in_quote(self):
+        rows = [["a", "b"], ["PLAY EQUIPMENT TEAM", "317.50"]]
+        assert _find_matched_row_index(rows, "...PLAY EQUIPMENT TEAM 317.50") == 1
+
+    def test_no_match_returns_minus_one(self):
+        rows = [["a", "b"], ["c", "d"]]
+        assert _find_matched_row_index(rows, "nothing here matches") == -1
+
+    def test_empty_quote_returns_minus_one(self):
+        rows = [["a", "b"]]
+        assert _find_matched_row_index(rows, "") == -1
+        assert _find_matched_row_index(rows, None) == -1
+
+    def test_short_cells_ignored_to_avoid_false_positives(self):
+        # A 2-char cell like "of" would match almost any prose quote.
+        rows = [["of", "to"]]
+        assert _find_matched_row_index(rows, "the summary of expenditure") == -1
+
+    def test_prefers_row_with_more_matching_cells_over_first_match(self):
+        # Reproduced live: "PLAY EQUIPMENT TEAM" is a category repeated
+        # across many unrelated rows -- the row that ALSO matches the
+        # quote's exact total ("317.50") is the real one, not whichever
+        # same-category row happens to come first in the sheet.
+        rows = [
+            ["03/04/2025", "PLAY EQUIPMENT TEAM", "420.00"],  # wrong row, earlier
+            ["03/04/2025", "PLAY EQUIPMENT TEAM", "317.50"],  # true match
+        ]
+        quote = "PLAY EQUIPMENT TEAM 317.50"
+        assert _find_matched_row_index(rows, quote) == 1
+
+    def test_tie_breaks_to_earliest_row(self):
+        rows = [["MATCH", "x"], ["MATCH", "y"]]
+        assert _find_matched_row_index(rows, "MATCH") == 0
+
+
+class TestWindowRowsAroundMatch:
+    """Server-side row search + windowing -- reproduced live 2026-07-22: a
+    citation's real row (transaction 6089041, doc_007) fell past the
+    endpoint's first-60-rows cap on a larger CSV, so no amount of
+    client-side matching could ever find or highlight it (it was never in
+    the data sent to the browser). This searches the FULL sheet and returns
+    a window around the real match instead."""
+
+    def test_returns_none_when_no_match(self):
+        header = [["H1", "H2"]]
+        body = [["a", "b"]] * 5
+        assert _window_rows_around_match(header, body, "no match here", 60) is None
+
+    def test_finds_match_beyond_first_60_rows(self):
+        header = [["H1", "H2"]]
+        body = [["filler", str(i)] for i in range(100)]
+        body[85] = ["PLAY EQUIPMENT TEAM", "317.50"]
+        result = _window_rows_around_match(
+            header, body, "...PLAY EQUIPMENT TEAM 317.50...", max_rows=60
+        )
+        assert result is not None
+        assert result[0] == header[0]
+        assert ["PLAY EQUIPMENT TEAM", "317.50"] in result[1:]
+
+    def test_window_stays_within_max_rows_bound(self):
+        header = [["H1"]]
+        body = [["filler"]] * 500
+        body[250] = ["TARGET"]
+        result = _window_rows_around_match(header, body, "TARGET", max_rows=60)
+        assert result is not None
+        # header + up to max_rows body rows.
+        assert len(result) <= 61
+
+    def test_match_near_start_does_not_go_negative(self):
+        header = [["H1"]]
+        body = [["TARGET"]] + [["filler"]] * 100
+        result = _window_rows_around_match(header, body, "TARGET", max_rows=60)
+        assert result is not None
+        assert result[1] == ["TARGET"]
 
     def test_preserves_trailing_notes_appended_after_the_table(self):
         """Notes extracted during ingestion (excel_cleaner.SheetMetadata.notes)

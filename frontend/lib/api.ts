@@ -499,9 +499,18 @@ export async function getPdfCrop(
   );
 }
 
-export async function getTableSheet(filename: string, sheet: string): Promise<TableSheetResponse> {
+export async function getTableSheet(
+  filename: string,
+  sheet: string,
+  quote?: string
+): Promise<TableSheetResponse> {
+  // quote lets the backend search the WHOLE sheet for the citation's real
+  // row and return a window around it, instead of always "the first 60
+  // rows" -- without it, a citation whose row falls past that cap can never
+  // be found or highlighted no matter how good the client-side matching is.
+  const query = quote ? `?quote=${encodeURIComponent(quote)}` : "";
   return request<TableSheetResponse>(
-    `/documents/${encodeURIComponent(filename)}/table-sheet/${encodeURIComponent(sheet)}`,
+    `/documents/${encodeURIComponent(filename)}/table-sheet/${encodeURIComponent(sheet)}${query}`,
     undefined,
     INSPECTOR_TIMEOUT_MS
   );
