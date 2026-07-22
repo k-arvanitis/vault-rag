@@ -123,6 +123,64 @@ estimates: [`eval/results/investigation_20260722_backend.md`](eval/results/inves
 
 ---
 
+## Session 2026-07-22, part 2 — LACERA UI report: false refusal, wrong citation quote, retrieval drill-in gap
+
+Live UI testing (client-facing accuracy pass) surfaced a worse failure than any of part 1's
+findings: "Who is the authorizing manager listed in the LACERA procurement policy?" returned a
+flat `Unsupported` while the Evidence panel correctly showed the right chunk ("Authorizing
+Manager: Ricki Contreras, Administrative Services Division"). Correct evidence, refused answer —
+unacceptable for a verified-knowledge product. Root-caused with instrumented live traces (not
+guessed), three separate bugs found and fixed:
+
+1. **Grounding-check false-negative nukes the retry too.** `answer_one`'s forced retry on a bare
+   `Unsupported` (`src/answer_pipeline.py`) reran the same probabilistic LLM grounding judge
+   (`_apply_grounding_check`) that had just downgraded the first attempt — instrumented trace
+   caught it hitting BOTH attempts in the same run (both correct "Ricki Contreras..." answers,
+   both downgraded to `Unsupported`). Fixed: retry now passes `skip_grounding_check=True`,
+   mirroring the identical precedent already used for the comparison-retry two lines below.
+   Verified: 0/10 false-`Unsupported` post-fix vs 1-3/10 pre-fix across repeated live traces.
+2. **Citation quote deleted the answer line.** `parse_sources` stripped whole markdown heading
+   lines from a citation's displayed quote (`^#{1,3}\s+.+$` → deleted), on the assumption
+   headings are navigational noise. This source's actual answer field got rendered as a heading
+   by the PDF extractor ("## **Authorizing Manager: Ricki Contreras...**"), so the quote shown to
+   the user was a different, unrelated sentence from the same chunk even when the answer was
+   correct. Fixed: strip only the `#` markup, keep the heading's own text in the quote.
+3. **Retrieval drill-in isn't guaranteed — the deeper bug.** Even after 1-2, ~40% of runs still
+   answered wrong ("Administrative Services Division Manager, the Purchasing Agent for LACERA" —
+   a different fact from a different section, confidently wrong). Deterministic tie-breaker
+   (`_direct_answer_from_context` fed the broad-only pool vs. the doc-scoped pool directly,
+   bypassing the agent's stochastic tool-planning): broad pool 5/5 `Unsupported`, scoped pool 5/5
+   correct. Not a generation problem — the answer-bearing chunk simply wasn't retrieved on broad
+   queries; whether the agent chose to fire a second targeted search was left to chance. Root
+   cause: `_fetch_docs`'s existing stage1-doc-boost injection (`src/tools/retrieval_tool.py`) only
+   force-fetched a doc's chunks when the doc was entirely absent from the pool — here doc_001 had
+   plenty of *other* chunks present (other pages ranked fine against the generic embedding), so
+   the net never fired even though the one chunk holding the field never made the global top-k.
+   Fixed: unconditional per-stage1-doc scoped injection (same union-and-dedupe pattern already
+   used for `filter_token`), not just for missing docs. Confirmed no model change needed first
+   (targeted context → 5/5 correct generation) before touching retrieval.
+
+**Confirmed no model change needed.** Generation is correct every time the right chunk is present;
+the defect was retrieval-planning determinism, not model quality.
+
+**Found, not fixed — separate, pre-existing gap.** Generality-testing 3 other single-doc factoid
+questions against real gold answers (`eval/questions.jsonl`) surfaced a different failure class:
+page-1/header lookups on `doc_002`/`doc_003` ("which agency is in the document header", "what does
+FOIA stand for", "what organization issued the report") — wrong, `Unsupported`, or inconsistent
+across repeats. These docs get no filename-stem doc-routing boost (generic filenames, no term
+overlap with the question), so fix #3 above doesn't engage for them at all — this is the same
+already-known gap logged in part 1 (`doc_003_qa_5`, the Fed creation-date question: answer chunk
+retrieved, value in context, still `Unsupported`, "no clean code-level fix available" at the time).
+Not chased further today — flagged for a dedicated session; likely needs a different mechanism
+(stage-1 doc routing missing these docs' summaries entirely, or page-1/cover-page chunk quality).
+
+**Verification:** 378/378 unit tests pass, ruff clean. Fixes #1-2 live-verified and committed
+(`426a168`, pushed). Fix #3 (`src/tools/retrieval_tool.py`) held back pending the full eval
+replay — this repo has a documented 12-point regression from exactly this class of retrieval
+change (see below); ship gate, not optional, "for a client" raises the stakes not lowers them.
+
+---
+
 ## Session 2026-07-09, part 10 — eval/live-app divergence closed; found and fixed a real client-caching bug
 
 User's question ("is this a model problem?" / "why not let the agent do it?") led to

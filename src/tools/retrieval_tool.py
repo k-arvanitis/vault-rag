@@ -997,13 +997,23 @@ def _make_unified_tool(
         # Combine literal and HyDE hits, dedupe and cap the candidate pool.
         hits = _merge_hits(raw_hits, hyde_hits)[: max(retrieval_top_k, _rerank_top_n)]
 
-        # Inject chunks from stage1-boosted docs that the dense+sparse search missed.
-        # The boost only reorders candidates — if doc_001's chunks aren't in the pool,
-        # there's nothing to reorder. Force-fetch a few chunks per missing boosted doc
-        # so the reranker gets to see them.
+        # Inject chunks from stage1-boosted docs, scoped to each doc directly — not
+        # just when the doc is entirely absent from the pool. Reproduced live: a
+        # narrow-field question ("who is the authorizing manager...") landed
+        # stage1 on doc_001, and doc_001 chunks WERE in the broad pool (other
+        # pages ranked well against the generic embedding) -- so the old
+        # "missing doc" check never fired, yet the one chunk actually holding
+        # the field ("Authorizing Manager: Ricki Contreras...") never made the
+        # global top-k on its own weak embedding match and was silently absent.
+        # A doc-scoped fetch (same query, far smaller candidate pool) reliably
+        # surfaces it at rank 0 -- verified directly with _direct_answer_from_context
+        # on the scoped vs. unscoped pool (5/5 correct scoped, 5/5 Unsupported
+        # unscoped). Unconditional per stage1 doc, same as the union pattern
+        # used for filter_token above; _merge_hits dedupes so an already-present
+        # doc's chunks just get reinforced, not duplicated.
         if stage1_doc_ids and not effective_scope:
-            # Older ingestions only set metadata.doc_id on document_summary chunks; PDF
-            # chunks may lack it. Detect doc presence via filename regex too.
+            # Older ingestions only set metadata.doc_id on document_summary chunks;
+            # PDF chunks may lack it. Also used below to reserve must-include slots.
             def _hit_doc_id(hit: dict) -> str:
                 """Return a hit's doc_id, falling back to one parsed from its filename."""
                 meta = hit.get("metadata") or {}
@@ -1013,12 +1023,9 @@ def _make_unified_tool(
                 m = _DOC_ID_RE.search(src)
                 return m.group(0) if m else ""
 
-            # Force-fetch a few chunks for each boosted doc absent from the pool.
-            present_doc_ids = {_hit_doc_id(h) for h in hits}
-            missing_doc_ids = [
-                d for d in stage1_doc_ids if d and d not in present_doc_ids
-            ]
-            for missing_id in missing_doc_ids:
+            for stage1_id in stage1_doc_ids:
+                if not stage1_id:
+                    continue
                 try:
                     injected = retrieve(
                         query=retrieval_query,
@@ -1029,7 +1036,7 @@ def _make_unified_tool(
                         filter_token=None,
                         force_chunk_types=chunk_types,
                         force_exclude_chunk_types=["sheet_summary", "document_summary"],
-                        scope_doc_id=missing_id,
+                        scope_doc_id=stage1_id,
                     )
                     hits = _merge_hits(hits, injected)
                 except Exception:

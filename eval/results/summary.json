@@ -16,16 +16,16 @@
   "structured_retrieval_metrics": {
     "scope": "Excel/CSV questions (DuckDB-served, not Qdrant)",
     "question_count": 21,
-    "answer_accuracy": 0.9523809523809523
+    "answer_accuracy": 0.9047619047619048
   },
   "unanswerable_metrics": {
     "question_count": 14,
-    "correct_refusal_rate": 0.9285714285714286
+    "correct_refusal_rate": 0.8571428571428571
   },
   "agent_answer_metrics": {
-    "correctness": 0.9064220183486238,
-    "faithfulness": 0.9038461538461539,
-    "answer_relevancy": 0.9403669724770642
+    "correctness": 0.9220183486238532,
+    "faithfulness": 0.8910256410256411,
+    "answer_relevancy": 0.9339449541284404
   },
   "judge_breakdown": {
     "custom_llm_judge": 94,
@@ -46,7 +46,7 @@
   "correctness_by_question_type": {
     "cross_document_compare": {
       "count": 20,
-      "correctness": 0.865
+      "correctness": 0.9
     },
     "figure_grounding": {
       "count": 3,
@@ -58,19 +58,19 @@
     },
     "numeric_lookup": {
       "count": 6,
-      "correctness": 0.75
+      "correctness": 0.9166666666666666
     },
     "numeric_reasoning": {
       "count": 4,
-      "correctness": 1.0
+      "correctness": 0.5
     },
     "ocr_extraction": {
       "count": 25,
-      "correctness": 0.88
+      "correctness": 0.92
     },
     "single_doc_factoid": {
       "count": 17,
-      "correctness": 0.8823529411764706
+      "correctness": 0.9411764705882353
     },
     "table_grounding": {
       "count": 3,
@@ -78,11 +78,11 @@
     },
     "table_lookup": {
       "count": 16,
-      "correctness": 1.0
+      "correctness": 0.9375
     },
     "unanswerable": {
       "count": 10,
-      "correctness": 0.9
+      "correctness": 1.0
     }
   },
   "answer_result_file": "/home/karvanitis/vault-rag/eval/results/answer_results.jsonl",
