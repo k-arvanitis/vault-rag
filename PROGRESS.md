@@ -1,7 +1,125 @@
 # vault-rag — Progress & Plan
 
 Single source of truth. Update this at the start of every session.
-Last updated: 2026-07-09
+Last updated: 2026-07-22
+
+---
+
+## Session 2026-07-22 — backend investigation, 8 fixes shipped, real numbers: correctness 91%, refusal 93%, structured 95%
+
+Picked up the backend investigation queued in `TODO.md` (Finding 5: "model answers from
+general knowledge, cites a real-but-unrelated chunk to look grounded" — two prior grounding-gate
+attempts already reverted, see `eval/results/investigation_20260721.md`). Investigation-only
+pass first (`eval/results/investigation_20260722_backend.md`), then implemented and verified
+every finding, then a full eval re-run to lock real numbers, then a second round after the user
+asked why Excel couldn't clear 80% — which turned into the single biggest fix of the session.
+
+**Root cause of the flagship "confident wrong answer, fake citation" problem: two deterministic
+bugs, not inference nondeterminism.**
+
+1. **Corpus pollution (F1).** 133 of 862 chunks (15%, concentrated in `doc_001`, `doc_015`, and
+   both lease docs) had a literal LLM rate-limit error string embedded as their context prefix —
+   `contextualize_chunk` (`src/chunker.py`) returned `f"Error: {e}"` on any enrichment failure and
+   the string got baked straight into `vector_text`. Fixed at the source (empty context on
+   failure, defense-in-depth guard in `chunk_markdown` too) and repaired in place: wrote
+   `scripts/repair_polluted_contexts.py`, re-enriched/re-embedded/re-upserted all 133 chunks into
+   Qdrant via their existing deterministic point IDs (same no-reingest pattern as the earlier
+   doc_008 figure-label patch). Verified: 0/862 chunks polluted after, confirmed live in Qdrant.
+
+2. **filter_token hard-exclusion (F2).** `_resolve_scope` (`src/tools/retrieval_tool.py`) assigns
+   a keyword filter to essentially every query — built for table-row lookups, but applied as a
+   hard Qdrant content must-match on plain prose questions too. Reproduced live: "the LACERA
+   procurement policy" → `filter_token="LACERA"`, but the answer chunk's own text (OCR'd logo)
+   read "L/CERA" — never contained the literal token, silently excluded from every result. Without
+   the filter the reranker placed it #3. Same mechanism excluded doc_015's handwashing chunk on
+   the query "food safety SOP" (token "safety" not in the answer sentence) — this was the exact
+   case documented as Finding 5's flagship example in the prior session. Fixed with union
+   retrieval: the filtered search still runs first (preserves the exact-match boost for real ID
+   lookups), an unfiltered pass is merged in so the reranker arbitrates instead of the filter
+   deciding recall outright. Live-verified: both previously-broken cases now retrieve correctly.
+
+**Also fixed, all live-verified with regression tests:**
+- **Excel FORMAT-step fabrication (F3).** Caught live: SQL result was the single clean row
+  `Purchase of Expenditure: MATERIALS`; the format LLM (gpt-4o-mini) output `"150.00"` — a real
+  number from elsewhere in the table, absent from its own input, ~1/3 of repeated runs. Added
+  `_answer_in_result` extractive-verification guard in `src/tools/excel.py` — a formatted answer
+  must appear in the SQL result text (numeric compare float-equal) or it's discarded in favor of
+  the existing deterministic single-column fallback.
+- **Bare-filename guard gap (F5).** `_is_bare_filename_answer` missed an extension-less filename
+  stem (`doc_005_fueling_records_invoice`, no `.pdf`) — regex required a real extension. Fixed.
+- **A new leaked tool-call JSON shape.** `{"tool": "search_knowledge_base", "parameters": {...}}`
+  slipped past the existing `_MALFORMED_GENERATION_RE` guard (which only caught the `{"action":
+  ...}` shape) — found in the post-fix eval run itself, added the fourth variant.
+- **Pure-spreadsheet retrieval dead end.** A question about the file itself ("what year is this
+  titled for") against a pure-.xlsx doc (only `sheet_summary` chunks, zero page text) returned
+  "No relevant information found" on all 9/9 tool calls — the sheet_summary column-overlap gate
+  (built for "does this sheet have the right column") rejected every hit since the question
+  names no column. Added a graceful-degrade fallback to the best-scoring sheet_summary hit when
+  nothing else survives the normal routing.
+- **Retriever waste (not a bug, cleanup).** `retrieve()`'s scoped-search retry ran three
+  byte-identical Qdrant queries under different `scope_doc_key` values — the parameter is dead
+  (`_metadata_filter` never reads it). Removed the redundant two; kept the genuinely different
+  filter_token-drop retry.
+
+**Eval-harness measurement fixes — separate from the pipeline, but they were hiding/distorting
+the real numbers:**
+- **Reflection override, default OFF.** `eval/run_eval.py` had a "give an Unsupported answer
+  another try" pass that bypassed every one of `answer_query`'s own guards (malformed-generation
+  check, leak stripping, no-sources gate) — it doesn't exist in `api.py`'s production path.
+  Zero-cost offline analysis (instrumented `override_fired`/`pre_override_answer` on every row
+  first, no extra eval spend needed) showed it net-harmful: it "recovered" 2 answerable questions
+  production still refuses anyway, at the cost of fabricating answers on 3 gold-`Unsupported`
+  refusal questions. Now off by default (`EVAL_ENABLE_REFLECTION_OVERRIDE=1` to re-enable for
+  comparison).
+- **Judge prompt contamination — the real explanation for the Excel plateau.** User asked why
+  structured accuracy couldn't clear 80% after everything else was fixed. Traced it: all 16
+  single-doc Excel lookups scored 1.0; all 5 zero-scores were cross-document Excel comparisons
+  with demonstrably correct values. The custom judge (`_custom_judge_answer`,
+  `eval/run_eval.py`) scores correctness and faithfulness in ONE prompt call — Excel answers have
+  no retrieved text context (query_excel returns a value, not passages), so that call's
+  "RETRIEVED CONTEXT" section was always blank, and the faithfulness-scoring rules sitting next to
+  a blank context section were dragging the *correctness* score down too. Reproduced directly: the
+  identical answer/gold pair scored `correctness: 0.0` with the full prompt, `1.0` with only the
+  correctness rules. Fixed by splitting the prompt — Excel/unanswerable questions (already flagged
+  `no_faithfulness` downstream) now skip the faithfulness rules and the context section entirely,
+  not just get the returned score nulled out after the fact. This alone moved structured accuracy
+  76.2% → 95.2%. Never a pipeline defect.
+
+**Verification discipline:** every code fix live-verified against its exact reproduced case
+before being called done (not just unit-tested against a mock). 363/363 tests pass, ruff clean.
+Two full eval runs: one post-pipeline-fixes (correctness 84.4%, refusal 64.3% — the override was
+still on and visibly hurting refusal), one honest run with the override off and the judge fixed
+(see final numbers below). A third judge-only re-run (cheap, no regeneration) locked the numbers
+after the Excel judge fix landed.
+
+**Final numbers, 109-question benchmark, `openai/gpt-oss-120b` answer model, `gpt-4o-mini` judge:**
+
+| Metric | Before this session | After |
+|---|---:|---:|
+| Correctness | 84.4%* | **90.6%** |
+| Faithfulness | 85.6%* | **90.4%** |
+| Answer relevancy | 87.5%* | **94.0%** |
+| Correct refusal rate | 78.6% | **92.9%** |
+| Structured (Excel/CSV) accuracy | 76.2% | **95.2%** |
+| Hit@5 (retrieval) | 98.6% | 98.6% (unchanged) |
+
+\* "Before" correctness/faithfulness/relevancy is the same-day pre-fix baseline
+(`summary_baseline_no_gate_20260722.json`); refusal/structured compare against the last
+previously-committed run (2026-07-16) since those two buckets weren't separately re-measured then.
+
+**One thing traced but not fixed — a real generation gap, not a code bug.** `doc_003_qa_5` (Fed
+creation date): the answer chunk was retrieved, the exact date ("December 23, 1913") was sitting
+in the model's context, and it still returned `Unsupported`. No clean code-level fix available —
+this project's history is full of prompt-only patches verified not to work reliably; flagging,
+not chasing without a validated approach.
+
+**Committed and pushed** (`8815785`): 22 files, all 8 fix-spec tasks + the judge-prompt fix +
+sheet_summary fallback + retriever cleanup. `eval/results/backup_20260722/` (the pre-repair
+chunk/embeddings backup, 4.4MB) deliberately left untracked, same convention as `data/output/*`.
+
+Full root-cause detail, considered-but-rejected alternatives, and per-finding effort/risk
+estimates: [`eval/results/investigation_20260722_backend.md`](eval/results/investigation_20260722_backend.md),
+[`eval/results/fix_specs_20260722.md`](eval/results/fix_specs_20260722.md).
 
 ---
 
