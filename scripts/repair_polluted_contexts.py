@@ -31,6 +31,7 @@ from pathlib import Path
 
 from openai import OpenAI
 
+from src import query_cache
 from src.chunker import contextualize_chunk
 from src.config import (
     CHUNK_LLM_API_BASE,
@@ -192,6 +193,15 @@ def main() -> None:
     args = parser.parse_args()
     for stem in AFFECTED_STEMS:
         repair_file(stem, dry_run=args.dry_run)
+    if not args.dry_run:
+        # This script upserts into Qdrant directly, bypassing the normal
+        # /ingest endpoint's own automatic query_cache.clear() -- reproduced
+        # live: a question cached before this repair ran kept serving its
+        # stale pre-repair answer indefinitely, since the corpus visibly
+        # changed but nothing told the cache. Same invariant query_cache.py's
+        # own docstring states ("cleared whenever the corpus changes").
+        query_cache.clear()
+        print("[REPAIR] query cache cleared (corpus changed)")
 
 
 if __name__ == "__main__":
