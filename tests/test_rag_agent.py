@@ -509,6 +509,39 @@ class TestStreamAgent:
         result = "".join(stream_agent(agent, "q"))
         assert result == "Unsupported"
 
+    def test_excel_citations_list_collected_from_query_excel_artifact(self):
+        """query_excel's artifact now carries "citations" (a list, one per
+        distinct table queried) instead of a single "citation" -- stream_agent
+        must extend, not append-if-present."""
+        tool_msg = ToolMessage(
+            content="answer text",
+            tool_call_id="tc1",
+            name="query_excel",
+            artifact={
+                "sql": ["SELECT 1"],
+                "citations": [
+                    {"source_file": "doc_006.xlsx", "sheet_name": "S1"},
+                    {"source_file": "doc_007.csv", "sheet_name": "S2"},
+                ],
+            },
+        )
+        agent = MagicMock()
+        agent.stream.return_value = [
+            (tool_msg, None),
+            (AIMessageChunk(content="ok"), None),
+        ]
+        excel_citations: list[dict] = []
+        list(
+            stream_agent(
+                agent, "q", sql_trace=[], excel_citations=excel_citations
+            )
+        )
+        assert len(excel_citations) == 2
+        assert {c["source_file"] for c in excel_citations} == {
+            "doc_006.xlsx",
+            "doc_007.csv",
+        }
+
 
 class TestStreamAgentHarmonyChannels:
     """gpt-oss's "harmony" response format wraps hidden chain-of-thought in an

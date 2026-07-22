@@ -999,31 +999,41 @@ def build_excel_agent_tools(store: DuckDBStore) -> list[StructuredTool]:
             "sql": list(result.get("sql_trace") or []),
             "subquestions": list(result.get("subquestions") or []),
         }
-        # Attribute the answer to its source spreadsheet — only when the question
-        # wasn't decomposed into multiple sub-questions, since a synthesized
-        # multi-part answer has no single source table to point at (a wrong
-        # citation here is worse than none, so this stays conservative rather
-        # than guessing which sub-answer's table to cite).
-        subqs = result.get("subquestions") or []
+        # Attribute the answer to its source spreadsheet(s) -- one citation per
+        # DISTINCT table actually queried, not gated on a single subquestion.
+        # table_trace/result_trace only ever get an entry together (see
+        # sql_agent_node), and only on a genuinely non-empty successful SQL
+        # result (see evaluate()'s final_result), so every (table, result) pair
+        # here is real, citable evidence -- including when a field-only question
+        # ("X and Y?") was internally decomposed into 2+ subquestions against the
+        # SAME table, which previously fell through this gate and got zero
+        # citation for a genuinely single-source answer (reproduced live
+        # 2026-07-22: the Screwfix Purchase-of-Expenditure-and-NET-Amount
+        # question decomposed into 2 subquestions, both against doc_006, and
+        # got no citation at all despite a real evidence row existing).
         tables = result.get("table_trace") or []
         results = result.get("result_trace") or []
         final_answer = result.get("final_answer") or "Unsupported"
-        if (
-            len(subqs) == 1
-            and len(tables) == 1
-            and final_answer.strip().lower() != "unsupported"
-            and not final_answer.startswith("Clarify:")
+        if final_answer.strip().lower() != "unsupported" and not final_answer.startswith(
+            "Clarify:"
         ):
-            source = get_source_by_duckdb_table(
-                QDRANT_URL, QDRANT_COLLECTION, tables[0]
-            )
-            if source:
+            citations: list[dict[str, Any]] = []
+            seen_tables: set[str] = set()
+            for table, table_result in zip(tables, results):
+                if table in seen_tables:
+                    continue
+                seen_tables.add(table)
+                source = get_source_by_duckdb_table(QDRANT_URL, QDRANT_COLLECTION, table)
+                if not source:
+                    continue
                 # The matched row(s), rendered as text, give SpreadsheetEvidence's
                 # row-highlight heuristic (frontend, cell-value-in-quote match)
                 # something real to match against instead of nothing.
-                if results and results[0]:
-                    source["quote"] = results[0][:500]
-                artifact["citation"] = source
+                if table_result:
+                    source["quote"] = table_result[:500]
+                citations.append(source)
+            if citations:
+                artifact["citations"] = citations
         return result.get("final_answer") or "Unsupported", artifact
 
     return [

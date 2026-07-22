@@ -832,8 +832,9 @@ def stream_agent(
         rejected_chunks: If provided, reranked-but-not-selected candidates from
             search_knowledge_base calls are appended to this list (UI-only).
         excel_citations: If provided, the {source_file, sheet_name, quote}
-            citation query_excel attributes its answer to (single-table calls
-            only) is appended to this list (UI-only, see EvidencePanel).
+            citations query_excel attributes its answer to -- one per distinct
+            table actually queried -- are appended to this list (UI-only,
+            see EvidencePanel).
         trace: Optional Langfuse trace/span to record the grounding-check verdict on.
         usage: If provided, {input_tokens, output_tokens, total_tokens} are summed
             into it in place from the main streaming call (needs stream_usage=True
@@ -1003,8 +1004,8 @@ def stream_agent(
                     artifact = getattr(chunk, "artifact", None)
                     if isinstance(artifact, dict):
                         sql_trace.extend(s for s in (artifact.get("sql") or []) if s)
-                        if excel_citations is not None and artifact.get("citation"):
-                            excel_citations.append(artifact["citation"])
+                        if excel_citations is not None:
+                            excel_citations.extend(artifact.get("citations") or [])
                 if (
                     rejected_chunks is not None
                     and chunk.name == "search_knowledge_base"

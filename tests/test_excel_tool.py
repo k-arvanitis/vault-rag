@@ -10,6 +10,7 @@ from src.tools.excel import (
     _column_matches_question,
     _extract_sql,
     _target_field_phrase,
+    build_excel_agent_tools,
 )
 
 
@@ -171,3 +172,92 @@ class TestFabricationGuard:
         }
         result = inner.invoke(state, config={"recursion_limit": 60})
         assert result["answer"] == "MATERIALS"
+
+
+class TestQueryExcelCitations:
+    """query_excel attributes its answer to the DuckDB table(s) it actually
+    queried. Reproduced live 2026-07-22: a field-only question ("Purchase of
+    Expenditure and NET Amount?") decomposes into 2 subquestions against the
+    SAME table -- the old gate (len(subquestions)==1) treated that as
+    "multi-source, can't attribute" and emitted zero citations for a
+    genuinely single-source, fully-evidenced answer. The fix cites once per
+    DISTINCT table actually queried, regardless of subquestion count."""
+
+    class _FakeStore:
+        """One table, one generic column ("Amount"), one row."""
+
+        def describe(self, table_name):
+            return [("Amount", "VARCHAR")]
+
+        def sample(self, table_name, n=8):
+            return [{"Amount": "VALUE1"}]
+
+        def execute(self, sql):
+            return pd.DataFrame({"Amount": ["VALUE1"]})
+
+    @staticmethod
+    def _fake_llm_chat(messages, temperature=0.0, max_tokens=700):
+        system = messages[0]["content"] if messages else ""
+        if "question-decomposition planner" in system:
+            return '["What is the Amount?", "What is the Amount?"]'
+        if "DuckDB SQL expert" in system:
+            return '```sql\nSELECT "Amount" FROM t1;\n```'
+        return "VALUE1"
+
+    def test_shared_table_gets_exactly_one_citation(self, monkeypatch):
+        monkeypatch.setattr("src.tools.excel.EXCEL_AGENT_API_KEY", "fake-key")
+        monkeypatch.setattr("src.tools.excel._llm_chat", self._fake_llm_chat)
+        monkeypatch.setattr(
+            "src.tools.excel._doc_tables",
+            lambda store: {"doc_006_t1": ["Amount"]},
+        )
+        monkeypatch.setattr(
+            "src.tools.excel.get_source_by_duckdb_table",
+            lambda url, collection, table: {
+                "source_file": "doc_006_transactions.xlsx",
+                "sheet_name": "DataAnalysis",
+            },
+        )
+        tool = build_excel_agent_tools(self._FakeStore())[0]
+        answer, artifact = tool.func(
+            "For Supplier X what is the Purchase of Expenditure and NET Amount?"
+        )
+        assert "citations" in artifact
+        assert len(artifact["citations"]) == 1
+        assert artifact["citations"][0]["source_file"] == "doc_006_transactions.xlsx"
+
+    def test_two_distinct_tables_get_two_citations(self, monkeypatch):
+        monkeypatch.setattr("src.tools.excel.EXCEL_AGENT_API_KEY", "fake-key")
+        monkeypatch.setattr(
+            "src.tools.excel._doc_tables",
+            lambda store: {"doc_006_t1": ["Amount"], "doc_007_t2": ["Amount"]},
+        )
+        sources = {
+            "doc_006_t1": {"source_file": "doc_006.xlsx", "sheet_name": "S1"},
+            "doc_007_t2": {"source_file": "doc_007.csv", "sheet_name": "S2"},
+        }
+        monkeypatch.setattr(
+            "src.tools.excel.get_source_by_duckdb_table",
+            lambda url, collection, table: dict(sources[table]),
+        )
+
+        def fake_llm_chat(messages, temperature=0.0, max_tokens=700):
+            system = messages[0]["content"] if messages else ""
+            if "question-decomposition planner" in system:
+                return (
+                    '["What is the Amount in doc_006?", '
+                    '"What is the Amount in doc_007?"]'
+                )
+            if "DuckDB SQL expert" in system:
+                table = "t1" if "doc_006" in messages[1]["content"] else "t2"
+                return f'```sql\nSELECT "Amount" FROM {table};\n```'
+            return "VALUE1"
+
+        monkeypatch.setattr("src.tools.excel._llm_chat", fake_llm_chat)
+        tool = build_excel_agent_tools(self._FakeStore())[0]
+        answer, artifact = tool.func(
+            "What is the Amount in doc_006? And in doc_007?"
+        )
+        assert len(artifact.get("citations") or []) == 2
+        cited_files = {c["source_file"] for c in artifact["citations"]}
+        assert cited_files == {"doc_006.xlsx", "doc_007.csv"}
