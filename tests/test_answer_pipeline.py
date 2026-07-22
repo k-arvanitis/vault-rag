@@ -9,6 +9,7 @@ from src.answer_pipeline import (
     _TITLE_QUESTION_RE,
     _excel_citations_to_sources,
     _is_malformed_generation,
+    _narrow_quotes_to_answer,
     _resolve_comparison_doc_ids,
     _title_shortcut_answer,
     answer_comparison_deterministic,
@@ -286,6 +287,48 @@ class TestParseSourcesContract:
         -- a fake citation for content that was never actually retrieved.
         Must be skipped entirely instead."""
         assert parse_sources(["No relevant results found for this query."]) == []
+
+    def test_figure_bbox_nulled_when_answer_is_about_unrelated_text_in_same_chunk(self):
+        """Reproduced live: a short chunk pairing real answer text with a
+        verbose logo description passed the "figure is >40% of the chunk"
+        gate even though the answer has nothing to do with the logo --
+        _narrow_quotes_to_answer must null the bbox out once the answer
+        text is known, since it has nothing to do with the figure."""
+        header = "[1] file=doc_001_procurement_policy.pdf chunk=4 page=2 score=0.79"
+        body = (
+            "## Authorizing Manager: Ricki Contreras, Administrative Services Division\n"
+            "**Original Issue Date: December 15, 2005**\n"
+            "[FIGURE_START]\n"
+            "<!-- bbox:[54.0, 36.0, 559.0, 64.8] -->\n"
+            "The image displays a logo for LACERA in large light blue block letters "
+            "with a thick black background border and a thin blue line at the bottom.\n"
+            "[FIGURE_END]\n"
+            "**Mandatory Review: September 2027**"
+        )
+        sources = parse_sources([f"{header}\n{body}"])
+        assert sources[0]["figure_bbox"] is not None  # present pre-narrowing
+        _narrow_quotes_to_answer(
+            sources, "Ricki Contreras, Administrative Services Division"
+        )
+        assert sources[0]["figure_bbox"] is None
+        assert "_figure_text" not in sources[0]
+
+    def test_figure_bbox_kept_when_answer_is_about_the_figure(self):
+        """A genuinely figure-grounded answer (the figure IS what the
+        citation supports) must keep its bbox."""
+        header = "[1] file=doc_008.pdf chunk=17 page=16 score=1.2"
+        body = (
+            "[FIGURE_START]\n"
+            "<!-- bbox:[10.0, 20.0, 300.0, 150.0] -->\n"
+            "Figure 4: Defense mission achieved the largest financial benefits, "
+            "with a Budget of $197 billion identified in 2024.\n"
+            "[FIGURE_END]"
+        )
+        sources = parse_sources([f"{header}\n{body}"])
+        _narrow_quotes_to_answer(
+            sources, "Defense, with $197 billion in identified financial benefits"
+        )
+        assert sources[0]["figure_bbox"] == [10.0, 20.0, 300.0, 150.0]
 
     def test_excerpt_strips_page_boundary_marker(self):
         """<!-- PAGE N pymupdf4llm --> is pipeline bookkeeping, not text on the

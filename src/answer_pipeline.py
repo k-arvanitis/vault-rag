@@ -700,6 +700,16 @@ def parse_sources(collected: list[str]) -> list[dict]:
             # standalone chart/image chunk) -- a page header logo that happens
             # to share a text chunk with unrelated prose would otherwise show
             # up as an irrelevant crop next to a citation about that prose.
+            # This 40%-of-body heuristic isn't sufficient on its own though:
+            # reproduced live, a short chunk pairing real answer text
+            # ("Authorizing Manager: Ricki Contreras...") with a verbose logo
+            # description (LACERA's letterhead image) let the logo's own text
+            # dominate the chunk's length, passing this gate for a citation
+            # whose actual claim has nothing to do with the figure. The
+            # figure's own description text is kept alongside the bbox (under
+            # a leading-underscore key, stripped before this dict is returned)
+            # so _narrow_quotes_to_answer can null the bbox out when the
+            # figure isn't actually what the answer drew from.
             figure_block_m = _FIGURE_BLOCK_RE.search(body)
             bbox_m = _FIGURE_BBOX_RE.search(body)
             figure_bbox = (
@@ -708,6 +718,14 @@ def parse_sources(collected: list[str]) -> list[dict]:
                 and figure_block_m
                 and len(figure_block_m.group(0)) > 0.4 * len(body)
                 else None
+            )
+            figure_text = (
+                _FIGURE_BBOX_RE.sub("", figure_block_m.group(0))
+                .replace("[FIGURE_START]", "")
+                .replace("[FIGURE_END]", "")
+                .strip()
+                if figure_bbox is not None
+                else ""
             )
 
             plain = _FIGURE_BLOCK_RE.sub("", body)
@@ -780,6 +798,7 @@ def parse_sources(collected: list[str]) -> list[dict]:
                     "chunk_id": chunk_id,
                     "score": round(score, 4) if score else None,
                     "figure_bbox": figure_bbox,
+                    "_figure_text": figure_text,
                 }
             )
     # Cap at 8, but guarantee every distinct file that produced a chunk keeps at
@@ -892,6 +911,20 @@ def _narrow_quotes_to_answer(sources: list[dict], answer: str) -> None:
                 final = " ".join(kept)
         final = _truncate_at_sentence_boundary(final, 350)
         source["excerpt"] = final
+        source["quote"] = final
+
+        # A figure crop is only real evidence for THIS citation if the
+        # figure's own description is what the answer actually drew from --
+        # reproduced live: a chunk pairing real answer text with a verbose
+        # logo description passed parse_sources' "figure is >40% of the
+        # chunk" gate even though the answer had nothing to do with the
+        # logo. Null the bbox out here, where the answer text is actually
+        # known, unless the figure's own words meaningfully overlap it.
+        figure_text = source.pop("_figure_text", "")
+        if source.get("figure_bbox") is not None and answer_words:
+            figure_words = {w for w in _WORD_RE.findall(figure_text.lower()) if len(w) > 2}
+            if not figure_words or len(figure_words & answer_words) / len(figure_words) < 0.3:
+                source["figure_bbox"] = None
         source["quote"] = final
 
 
