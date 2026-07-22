@@ -740,7 +740,15 @@ def parse_sources(collected: list[str]) -> list[dict]:
             # not text on the page -- left in, they show up as literal HTML
             # comments in the Evidence panel's quote.
             plain = re.sub(r"<!--\s*PAGE\s+\d+.*?-->", "", plain, flags=re.IGNORECASE)
-            plain = re.sub(r"^#{1,3}\s+.+$", "", plain, flags=re.MULTILINE).strip()
+            # Strip only the "#" markup, not the heading's own text -- reproduced
+            # live: pymupdf4llm sometimes renders an actual answer-bearing field
+            # ("## **Authorizing Manager: Ricki Contreras...**") as a markdown
+            # heading, not just navigational section titles. Deleting the whole
+            # line dropped the one sentence that answered the question from the
+            # displayed quote, even though the answer itself cited it -- the
+            # heading text still ends up in `section` too (see heading_m above),
+            # which is fine, it's the same sentence appearing in both places.
+            plain = re.sub(r"^#{1,3}\s+", "", plain, flags=re.MULTILINE).strip()
             plain = re.sub(r"<br\s*/?>", " ", plain, flags=re.IGNORECASE)
             # "**bold**" is pymupdf4llm's own markdown, not text in the PDF --
             # left in, it shows literal asterisks in the citation quote and
@@ -1162,12 +1170,22 @@ def answer_one(
         # channel that never reached "final" -- see _strip_channels in
         # rag_agent.py) is strictly worse than a bare "Unsupported" and gets
         # the same forced retry.
+        #
+        # skip_grounding_check=True: reproduced live -- the grounding judge
+        # itself is flaky (~1 in 3-4 calls) and can independently downgrade a
+        # correct retry answer the same way it downgraded the original, which
+        # defeats the retry entirely (both attempts nuked, correct answer
+        # never reaches the user despite correct evidence). Same rationale as
+        # the comparison-retry above; the retry is already a stricter re-ask
+        # via _RETRY_INSTRUCTION and still passes through _normalize_final and
+        # answer_query's own no-sources-forces-Unsupported guard.
         if not ans.strip() or ans.lower() == "unsupported":
             r_ans, r_coll, r_tr = run_once(
                 agent,
                 q + _RETRY_INSTRUCTION,
                 attempt="unsupported-retry",
                 trace=trace,
+                skip_grounding_check=True,
                 usage=usage,
             )
             if r_ans.strip() and r_ans.lower() != "unsupported":
