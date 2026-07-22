@@ -1,5 +1,5 @@
 {
-  "benchmark_date": "2026-07-16",
+  "benchmark_date": "2026-07-22",
   "answer_model": "openai/gpt-oss-120b",
   "judge_model": "gpt-4o-mini",
   "document_count": 18,
@@ -9,28 +9,27 @@
     "question_count": 74,
     "hit_at_5": 0.9864864864864865,
     "hit_at_10": 0.9864864864864865,
-    "mrr": 0.8538288288288289,
-    "evidence_recall_at_10": 0.9436936936936938,
-    "evidence_recall_at_20": 0.9684684684684686
+    "mrr": 0.8505890505890507,
+    "evidence_recall_at_10": 0.9504504504504506,
+    "evidence_recall_at_20": 0.9752252252252253
   },
   "structured_retrieval_metrics": {
     "scope": "Excel/CSV questions (DuckDB-served, not Qdrant)",
     "question_count": 21,
-    "answer_accuracy": 0.7619047619047619
+    "answer_accuracy": 0.9523809523809523
   },
   "unanswerable_metrics": {
     "question_count": 14,
-    "correct_refusal_rate": 0.7857142857142857
+    "correct_refusal_rate": 0.9285714285714286
   },
   "agent_answer_metrics": {
-    "correctness": 0.8376146788990826,
-    "faithfulness": 0.8611111111111112,
-    "answer_relevancy": 0.8689320388349514
+    "correctness": 0.9064220183486238,
+    "faithfulness": 0.9038461538461539,
+    "answer_relevancy": 0.9403669724770642
   },
   "judge_breakdown": {
-    "custom_llm_judge": 77,
-    "exact_match_shortcircuit": 26,
-    "exact_match_fallback": 6
+    "custom_llm_judge": 94,
+    "exact_match_shortcircuit": 15
   },
   "question_breakdown": {
     "cross_document_compare": 20,
@@ -47,31 +46,31 @@
   "correctness_by_question_type": {
     "cross_document_compare": {
       "count": 20,
-      "correctness": 0.775
+      "correctness": 0.865
     },
     "figure_grounding": {
       "count": 3,
-      "correctness": 0.6666666666666666
+      "correctness": 1.0
     },
     "negation_check": {
       "count": 5,
-      "correctness": 0.8
+      "correctness": 1.0
     },
     "numeric_lookup": {
       "count": 6,
-      "correctness": 0.9166666666666666
+      "correctness": 0.75
     },
     "numeric_reasoning": {
       "count": 4,
-      "correctness": 0.75
+      "correctness": 1.0
     },
     "ocr_extraction": {
       "count": 25,
-      "correctness": 0.86
+      "correctness": 0.88
     },
     "single_doc_factoid": {
       "count": 17,
-      "correctness": 0.8117647058823529
+      "correctness": 0.8823529411764706
     },
     "table_grounding": {
       "count": 3,
@@ -79,11 +78,11 @@
     },
     "table_lookup": {
       "count": 16,
-      "correctness": 0.9375
+      "correctness": 1.0
     },
     "unanswerable": {
       "count": 10,
-      "correctness": 0.8
+      "correctness": 0.9
     }
   },
   "answer_result_file": "/home/karvanitis/vault-rag/eval/results/answer_results.jsonl",

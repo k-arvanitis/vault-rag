@@ -172,9 +172,14 @@ def _normalize_unsupported(answer: str) -> str:
 # Bare-filename detection — reject answers that name a file but extract no value
 # ---------------------------------------------------------------------------
 
-# Matches an ingested document filename (doc_NNN...ext) inside an answer.
+# Matches an ingested document filename (doc_NNN...ext) OR its extension-less
+# stem (doc_NNN_word...) inside an answer -- the model sometimes names the
+# stem alone (reproduced live: "doc_005_fueling_records_invoice" answered a
+# question with no such value), which must trip this guard the same way the
+# full filename does. A bare "doc_NNN" id with no trailing underscore-word is
+# NOT matched: legitimate cross-document answers cite documents that way.
 _BARE_FILENAME_RE = re.compile(
-    r"\bdoc_\d+[_a-z0-9-]*\.(?:pdf|csv|xlsx|xls|md|json|txt|tsv)\b",
+    r"\bdoc_\d+(?:[_a-z0-9-]*\.(?:pdf|csv|xlsx|xls|md|json|txt|tsv)|(?:_[a-z0-9-]+)+)\b",
     re.IGNORECASE,
 )
 

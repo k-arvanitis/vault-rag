@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import tiktoken
 
-from src.chunker import chunk_markdown, extract_literal_title
+from src.chunker import chunk_markdown, contextualize_chunk, extract_literal_title
 from src.config import CHUNK_MAX_TOKENS, CHUNK_MIN_TOKENS
 
 
@@ -217,3 +217,62 @@ def test_chunk_merge_pass_keeps_previous_chunk_page():
         )
     assert len(chunks) == 1
     assert chunks[0].metadata.get("page") == 1
+
+
+def test_enrichment_failure_stores_empty_context():
+    """A raising enrichment client must return "" from contextualize_chunk, not
+    a leaked "Error: ..." string that would get embedded as chunk context."""
+    mock_client = type(
+        "MockClient",
+        (),
+        {
+            "chat": type(
+                "Chat",
+                (),
+                {
+                    "completions": type(
+                        "Completions",
+                        (),
+                        {
+                            "create": staticmethod(
+                                lambda **kwargs: (_ for _ in ()).throw(
+                                    RuntimeError("429 rate limited")
+                                )
+                            )
+                        },
+                    )()
+                },
+            )()
+        },
+    )()
+    result = contextualize_chunk(mock_client, "some-model", "doc context", "chunk text")
+    assert result == ""
+    assert not result.lower().startswith("error")
+
+
+def test_error_context_never_reaches_vector_text():
+    """chunk_markdown must never bake a leaked "Error: ..." string into a
+    chunk's embedded vector_text — enrichment failures embed via the content
+    fallback instead (see src/embedder.py's _text_for_embedding)."""
+    md = "## Section One\n\nSome real document content about a policy.\n\n"
+    with (
+        tempfile.TemporaryDirectory() as tmp,
+        patch(
+            "src.chunker.contextualize_chunk",
+            side_effect=lambda *a, **k: "Error: 429 rate limited",
+        ),
+        patch(
+            "src.chunker.generate_document_summary",
+            side_effect=lambda *a, **k: "A summary.",
+        ),
+    ):
+        chunks = chunk_markdown(
+            md,
+            enrich_with_llm=True,
+            verbose=False,
+            output_dir=Path(tmp),
+            file_name="test.md",
+        )
+    for chunk in chunks:
+        assert not (chunk.vector_text or "").startswith("CONTEXT: Error")
+        assert chunk.metadata.get("context", "") != "Error: 429 rate limited"

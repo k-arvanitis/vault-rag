@@ -156,6 +156,16 @@ class TestMalformedGeneration:
         )
         assert _is_malformed_generation('[query_excel query="SELECT * FROM t"]')
 
+    def test_detects_tool_key_json_leak(self):
+        # Reproduced live 2026-07-22: doc_015_food_sop_manual_qa__qa_13 --
+        # a different key name ("tool" not "action") than the already-caught
+        # bare tool-call JSON shape, same underlying failure.
+        assert _is_malformed_generation(
+            '{\n  "tool": "search_knowledge_base",\n  "parameters": {\n'
+            '    "query": "penalty amount for failing to submit SOPs",\n'
+            '    "doc_id": "doc_015"\n  }\n}'
+        )
+
     def test_does_not_flag_a_real_answer(self):
         assert not _is_malformed_generation("The total is $297 billion.")
 

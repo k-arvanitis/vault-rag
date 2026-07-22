@@ -358,6 +358,39 @@ def _execute_sql(
     return True, out, single_col_first, ambiguous_values
 
 
+def _answer_in_result(answer: str, result_text: str) -> bool:
+    """True when every value in a formatted answer appears in the SQL result text.
+
+    The FORMAT step is copy-only by contract (FORMAT_PROMPT rule 5), so any
+    output value absent from the result rows is a fabrication — reproduced
+    live: a single-row result containing only "Purchase of Expenditure:
+    MATERIALS" was formatted as "150.00", a number that exists elsewhere in
+    the table but nowhere in this call's own input. Numeric values compare
+    float-equal so "150.0" in the rows matches "150.00" in the answer; text
+    values compare case- and whitespace-insensitively.
+    """
+    norm_result = re.sub(r"\s+", " ", result_text).lower()
+    result_nums: set[float] = set()
+    for tok in re.findall(r"-?\d[\d,]*\.?\d*", result_text):
+        try:
+            result_nums.add(float(tok.replace(",", "")))
+        except ValueError:
+            pass
+    for part in answer.split(";"):
+        value = part.split("=", 1)[-1].strip()
+        if not value:
+            continue
+        try:
+            if float(value.replace(",", "")) in result_nums:
+                continue
+        except ValueError:
+            pass
+        if re.sub(r"\s+", " ", value).lower() in norm_result:
+            continue
+        return False
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Decomposition: split cross-document questions into per-doc subqueries
 # ---------------------------------------------------------------------------
@@ -694,6 +727,17 @@ def _build_inner_graph(store: DuckDBStore) -> Any:
             # resurface the same (likely wrong) column value.
             if answer.strip().lower() == "query returned 0 rows.":
                 return {"answer": "Unsupported", "final_sql": last_sql}
+            # Fabrication guard: the format step may only copy values that exist in
+            # the result rows (reproduced live: correct single-row "MATERIALS" input
+            # formatted as a fabricated "150.00"). A non-copied answer is discarded
+            # so the deterministic single-column fallback / Unsupported path below
+            # applies instead of trusting it.
+            if (
+                answer
+                and answer.lower() != "unsupported"
+                and not _answer_in_result(answer, last_result)
+            ):
+                answer = ""
             # When the SQL projects exactly one column and rows came back, the answer is
             # unambiguous — a punted "Unsupported" from the format LLM is a false negative.
             if (not answer or answer.lower() == "unsupported") and state.get(
@@ -868,8 +912,11 @@ def _build_outer_graph(store: DuckDBStore) -> Any:
         if all(a.strip().lower() == "unsupported" for a in answers):
             return {"final_answer": "Unsupported"}
         # Pair each subquestion with its answer for clarity in multi-part outputs.
+        # _target_field_phrase strips row-qualifier clauses (dates, department
+        # names) so the label reads as the field asked for, not a garbled
+        # fragment of the row filters (e.g. "PLACE / STREET SCENE what is...").
         joined = "; ".join(
-            f"{sq.split(' in ')[-1].rstrip('?').strip() or f'part {i + 1}'}: {a}"
+            f"{_target_field_phrase(sq) or f'part {i + 1}'}: {a}"
             if a.strip().lower() != "unsupported"
             else f"part {i + 1}: Unsupported"
             for i, (sq, a) in enumerate(zip(subqs, answers))

@@ -198,7 +198,10 @@ def contextualize_chunk(
         chunk_content=chunk_content,
     )
 
-    # Call the LLM; on failure return an error string rather than aborting.
+    # Call the LLM; on failure return empty context rather than aborting or
+    # embedding an error string (an earlier "Error: {e}" fallback here ended up
+    # baked into 133 chunks' embedded vector_text corpus-wide — see chunk_markdown's
+    # guard below for the defense-in-depth half of this fix).
     try:
         response = client.chat.completions.create(
             model=model_name,
@@ -208,7 +211,8 @@ def contextualize_chunk(
         )
         return (response.choices[0].message.content or "").strip()
     except Exception as e:
-        return f"Error: {e}"
+        print(f"[CHUNKER][WARN] context enrichment failed, storing empty context: {e}")
+        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -438,8 +442,12 @@ def chunk_markdown(
                 client, model_name, doc_context, chunk.content
             )
             context = context.strip()
+            if context.lower().startswith("error"):
+                # Defense in depth: an error string must never become embedded context.
+                context = ""
             chunk.metadata["context"] = context
-            chunk.vector_text = f"CONTEXT: {context}\n\nCONTENT:\n{chunk.content}"
+            if context:
+                chunk.vector_text = f"CONTEXT: {context}\n\nCONTENT:\n{chunk.content}"
             if verbose and (i == 1 or i == total_chunks or i % 5 == 0):
                 _debug(f"Enriched {i}/{total_chunks} chunks")
 

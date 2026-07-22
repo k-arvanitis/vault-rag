@@ -439,7 +439,12 @@ _MALFORMED_GENERATION_RE = re.compile(
     # query=\"...\"]" -- the model emitting its own tool invocation as visible
     # bracket-wrapped text instead of a real tool call. Never legitimate
     # answer content (no real answer starts with a raw tool name in brackets).
-    r"|\[(?:search_knowledge_base|query_excel)\b",
+    r"|\[(?:search_knowledge_base|query_excel)\b"
+    # A fourth variant, reproduced live 2026-07-22 (doc_015_food_sop_manual_qa__qa_13):
+    # '{"tool": "search_knowledge_base", "parameters": {...}}' -- a different
+    # key name than the already-caught "action" shape, same failure class (a
+    # raw tool-call object emitted as visible text instead of a real call).
+    r'|^\s*\{\s*"tool"\s*:',
     re.IGNORECASE,
 )
 

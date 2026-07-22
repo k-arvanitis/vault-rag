@@ -174,6 +174,50 @@ class TestRetrievalToolBehavior:
             out, _artifact = _build_tool().func("which supplier had the largest transaction amount?")
         assert "doc_009_spend.xlsx" in out
 
+    def test_pure_spreadsheet_doc_falls_back_to_sheet_summary_without_column_overlap(self):
+        """A question about the FILE ITSELF ("what year is this titled for")
+        mentions no real column name, so the col_overlap>=2 gate rejects every
+        sheet_summary hit -- reproduced live: a pure-.xlsx corpus doc (only
+        sheet_summary chunks exist, no page_content) returned "No relevant
+        information found." on every call despite a highly-relevant
+        sheet_summary hit existing. Must fall back to it when nothing else
+        survived, not return empty."""
+        sheet = _hit(
+            "[File: doc_011_spain_maturity_2025.xlsx | Sheet: Portal]\ncolumns: id, question, answer",
+            chunk_type="sheet_summary",
+            source_file="doc_011_spain_maturity_2025.xlsx",
+            sheet_name="Portal",
+            score=0.83,
+        )
+        retrieve_fn = _make_retrieve(sheet_summary=[sheet], content=[])
+        with patch.object(retrieval_tool, "retrieve", side_effect=retrieve_fn), \
+             patch.object(retrieval_tool, "_fetch_neighbor_chunks", return_value={}):
+            out, _artifact = _build_tool().func(
+                "What year is the Spain maturity questionnaire titled for?"
+            )
+        assert out is not None
+        assert "doc_011_spain_maturity_2025.xlsx" in out
+
+    def test_sheet_summary_fallback_does_not_fire_when_content_hits_exist(self):
+        """The fallback must only cover the "nothing else survived" case -- it
+        must not paper over a genuinely irrelevant sheet_summary when real
+        page_content hits already answer the question."""
+        sheet = _hit(
+            "Sheet summary.\ncolumns: unrelated, columns, here",
+            chunk_type="sheet_summary",
+            source_file="doc_020_other.xlsx",
+            sheet_name="X",
+        )
+        retrieve_fn = _make_retrieve(
+            sheet_summary=[sheet],
+            content=[_hit("the real answer text", chunk_index=0, source_file="doc_009_report.pdf")],
+        )
+        with patch.object(retrieval_tool, "retrieve", side_effect=retrieve_fn), \
+             patch.object(retrieval_tool, "_fetch_neighbor_chunks", return_value={}):
+            out, _artifact = _build_tool().func("what does the report say?")
+        assert "doc_020_other.xlsx" not in out
+        assert "the real answer text" in out
+
     def test_stem_token_overlap_boosts_doc_from_registry(self):
         injected: list = []
         retrieve_fn = _make_retrieve(
@@ -186,3 +230,65 @@ class TestRetrievalToolBehavior:
              patch.object(retrieval_tool, "_fetch_neighbor_chunks", return_value={}):
             out, _artifact = _build_tool(doc_registry=registry).func("procurement policy approval rules")
         assert "doc_001_procurement_policy.pdf" in out
+
+    def test_filter_token_merges_unfiltered_pool(self):
+        """A hard content filter_token (e.g. "LACERA") must not be the only
+        thing deciding recall — reproduced live: the answer chunk's own text
+        read "L/CERA" (OCR'd logo), never the literal token, and was silently
+        excluded until the unfiltered pool was merged in."""
+        filtered_hit = _hit("filtered-only content", chunk_index=0)
+        unfiltered_hit = _hit("unfiltered-only content", chunk_index=1)
+
+        def retrieve_fn(**kwargs):
+            forced = kwargs.get("force_chunk_types")
+            if forced == ["document_summary"]:
+                return []
+            if forced == ["sheet_summary"]:
+                return []
+            if kwargs.get("filter_token"):
+                return [filtered_hit]
+            return [unfiltered_hit]
+
+        with patch.object(retrieval_tool, "retrieve", side_effect=retrieve_fn), \
+             patch.object(retrieval_tool, "_fetch_neighbor_chunks", return_value={}):
+            out, _artifact = _build_tool().func("Who is the manager in the LACERA document?")
+        assert "filtered-only content" in out
+        assert "unfiltered-only content" in out
+
+    def test_no_filter_token_no_extra_call(self):
+        """A query with no extractable filter_token must not trigger the
+        extra unfiltered merge pass — only the normal retrieval calls fire."""
+        calls: list = []
+        retrieve_fn = _make_retrieve(
+            content=[_hit("plain content", chunk_index=0)],
+            spy=lambda kw: calls.append(kw),
+        )
+        with patch.object(retrieval_tool, "retrieve", side_effect=retrieve_fn), \
+             patch.object(retrieval_tool, "_fetch_neighbor_chunks", return_value={}):
+            _build_tool().func("what time is it")
+        content_calls = [
+            c for c in calls
+            if c.get("force_chunk_types") not in (["document_summary"], ["sheet_summary"])
+        ]
+        assert all(c.get("filter_token") is None for c in content_calls)
+
+    def test_filtered_hits_rank_first_pre_rerank(self):
+        """Merged pool keeps filtered hits ahead of unfiltered ones before
+        reranking — preserves the exact-match boost for real ID lookups."""
+        filtered_hit = _hit("filtered content", chunk_index=0, source_file="doc_005_report.pdf")
+        unfiltered_hit = _hit("unfiltered content", chunk_index=2, source_file="doc_005_report.pdf")
+
+        def retrieve_fn(**kwargs):
+            forced = kwargs.get("force_chunk_types")
+            if forced == ["document_summary"]:
+                return []
+            if forced == ["sheet_summary"]:
+                return []
+            if kwargs.get("filter_token"):
+                return [filtered_hit]
+            return [unfiltered_hit]
+
+        with patch.object(retrieval_tool, "retrieve", side_effect=retrieve_fn), \
+             patch.object(retrieval_tool, "_fetch_neighbor_chunks", return_value={}):
+            out, _artifact = _build_tool().func("Who is the manager in the LACERA document?")
+        assert out.index("filtered content") < out.index("unfiltered content")

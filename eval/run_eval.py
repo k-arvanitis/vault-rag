@@ -38,6 +38,7 @@ from src.pipeline import (  # noqa: E402
     _looks_excel,
     ask_with_decomposition,
     ask_with_reflection,
+    ask_with_reflection_state,
     build_decomposition_pipeline,
     build_reflection_pipeline,
 )
@@ -199,49 +200,86 @@ def _custom_judge_answer(
     normalized_answer: str,
     gold_answer: str,
     retrieved_contexts: list[str],
+    skip_faithfulness: bool = False,
 ) -> dict[str, Any]:
-    """Score answer quality with one compact JSON-only judge call."""
+    """Score answer quality with one compact JSON-only judge call.
+
+    skip_faithfulness: True for Excel/SQL-answered and unanswerable questions,
+    which have no retrieved TEXT context (query_excel returns a value, not
+    passages -- see evaluate_answer's no_faithfulness). Reproduced live
+    2026-07-22: sending the full faithfulness-scoring rules (which discuss
+    "claims must be inferable from RETRIEVED CONTEXT") alongside an empty
+    "RETRIEVED CONTEXT: No context retrieved." section made gpt-4o-mini score
+    CORRECTNESS 0.0 too on demonstrably correct Excel comparison answers --
+    the same prompt with only the correctness rules scored the identical pair
+    1.0. The faithfulness rules were bleeding into correctness judgment when
+    there was nothing to be faithful to. Dropping the faithfulness rules and
+    the RETRIEVED CONTEXT section entirely for these questions (the caller
+    already discards the judge's faithfulness score as None for them) fixes
+    the contamination at the source instead of papering over it afterward.
+    """
     import openai
 
     judge_model_name, judge_base_url, judge_api_key = _judge_config()
     if not judge_api_key:
         raise RuntimeError("No judge API key configured")
 
-    context = _select_judge_context(
-        retrieved_contexts,
-        question["question"],
-        normalized_answer,
-        gold_answer,
-    )
-    prompt = (
-        "You are grading a RAG system. Return ONLY valid JSON with numeric scores from 0 to 1.\n"
-        "Use this schema exactly: "
-        '{"correctness": number, "faithfulness": number, "answer_relevancy": number, "reason": string}\n\n'
-        "Scoring rules:\n"
-        "- correctness: compare ACTUAL ANSWER to EXPECTED ANSWER for the facts requested. "
-        "Accept paraphrases, concise answers, source labels, currency symbols, and formatting differences. "
-        "If all requested values/facts are present, score 1.0 even if wording differs.\n"
-        "- faithfulness: judge at the CLAIM level (RAGAS-style) — a claim is supported if it can be "
-        "inferred from the RETRIEVED CONTEXT, not only if it appears verbatim. A comparison, ranking, or "
-        "conclusion that follows from facts that ARE present in the context (e.g. 'X allows a longer term "
-        "than Y' when X's and Y's terms are both in the context) IS supported — score it faithful. "
-        "Do not require exact wording; values under matching field labels count as support. "
-        "Do not penalize missing citations. Penalize only claims that CONTRADICT the context, introduce "
-        "facts ABSENT from the context, or mix values across the wrong sources.\n"
-        "- HEDGED/INFERRED CLAIMS ARE UNFAITHFUL: if the answer justifies a claim with language like "
-        "'implied by', 'the absence of X suggests', 'typically involves', 'is likely', or otherwise "
-        "reasons from general/domain knowledge rather than quoting or restating something actually in "
-        "the RETRIEVED CONTEXT, that claim is NOT supported — score it unfaithful (low score) even if "
-        "the conclusion happens to match the expected answer. A guess that turns out right is still a "
-        "guess. Only score a comparative claim faithful when BOTH compared facts are explicitly present "
-        "in the RETRIEVED CONTEXT (directly stated or a clear paraphrase), not when one side is inferred.\n"
-        "- answer_relevancy: score whether ACTUAL ANSWER directly addresses the QUESTION. "
-        "Concise direct answers are relevant.\n\n"
-        f"QUESTION:\n{question['question']}\n\n"
-        f"EXPECTED ANSWER:\n{gold_answer}\n\n"
-        f"ACTUAL ANSWER:\n{normalized_answer}\n\n"
-        f"RETRIEVED CONTEXT:\n{context}\n"
-    )
+    if skip_faithfulness:
+        prompt = (
+            "You are grading a RAG system's answer to a database-lookup question "
+            "(no retrieved text passages apply here -- the answer came from a "
+            "structured data query). Return ONLY valid JSON with numeric scores "
+            "from 0 to 1.\n"
+            "Use this schema exactly: "
+            '{"correctness": number, "answer_relevancy": number, "reason": string}\n\n'
+            "Scoring rules:\n"
+            "- correctness: compare ACTUAL ANSWER to EXPECTED ANSWER for the facts requested. "
+            "Accept paraphrases, concise answers, source labels, currency symbols, and formatting "
+            "differences. If all requested values/facts are present, score 1.0 even if wording "
+            "differs. Do not penalize for the absence of retrieved text context -- this question "
+            "type never has any.\n"
+            "- answer_relevancy: score whether ACTUAL ANSWER directly addresses the QUESTION. "
+            "Concise direct answers are relevant.\n\n"
+            f"QUESTION:\n{question['question']}\n\n"
+            f"EXPECTED ANSWER:\n{gold_answer}\n\n"
+            f"ACTUAL ANSWER:\n{normalized_answer}\n"
+        )
+    else:
+        context = _select_judge_context(
+            retrieved_contexts,
+            question["question"],
+            normalized_answer,
+            gold_answer,
+        )
+        prompt = (
+            "You are grading a RAG system. Return ONLY valid JSON with numeric scores from 0 to 1.\n"
+            "Use this schema exactly: "
+            '{"correctness": number, "faithfulness": number, "answer_relevancy": number, "reason": string}\n\n'
+            "Scoring rules:\n"
+            "- correctness: compare ACTUAL ANSWER to EXPECTED ANSWER for the facts requested. "
+            "Accept paraphrases, concise answers, source labels, currency symbols, and formatting differences. "
+            "If all requested values/facts are present, score 1.0 even if wording differs.\n"
+            "- faithfulness: judge at the CLAIM level (RAGAS-style) — a claim is supported if it can be "
+            "inferred from the RETRIEVED CONTEXT, not only if it appears verbatim. A comparison, ranking, or "
+            "conclusion that follows from facts that ARE present in the context (e.g. 'X allows a longer term "
+            "than Y' when X's and Y's terms are both in the context) IS supported — score it faithful. "
+            "Do not require exact wording; values under matching field labels count as support. "
+            "Do not penalize missing citations. Penalize only claims that CONTRADICT the context, introduce "
+            "facts ABSENT from the context, or mix values across the wrong sources.\n"
+            "- HEDGED/INFERRED CLAIMS ARE UNFAITHFUL: if the answer justifies a claim with language like "
+            "'implied by', 'the absence of X suggests', 'typically involves', 'is likely', or otherwise "
+            "reasons from general/domain knowledge rather than quoting or restating something actually in "
+            "the RETRIEVED CONTEXT, that claim is NOT supported — score it unfaithful (low score) even if "
+            "the conclusion happens to match the expected answer. A guess that turns out right is still a "
+            "guess. Only score a comparative claim faithful when BOTH compared facts are explicitly present "
+            "in the RETRIEVED CONTEXT (directly stated or a clear paraphrase), not when one side is inferred.\n"
+            "- answer_relevancy: score whether ACTUAL ANSWER directly addresses the QUESTION. "
+            "Concise direct answers are relevant.\n\n"
+            f"QUESTION:\n{question['question']}\n\n"
+            f"EXPECTED ANSWER:\n{gold_answer}\n\n"
+            f"ACTUAL ANSWER:\n{normalized_answer}\n\n"
+            f"RETRIEVED CONTEXT:\n{context}\n"
+        )
 
     client = openai.OpenAI(base_url=judge_base_url, api_key=judge_api_key)
     # Retry transient rate limits AND malformed-JSON responses (the shared free-tier
@@ -694,7 +732,11 @@ def evaluate_answer(
     if os.getenv("EVAL_JUDGE_MODE", "custom").lower() != "deepeval":
         try:
             judged = _custom_judge_answer(
-                question, normalized_answer, gold_answer, retrieved_contexts
+                question,
+                normalized_answer,
+                gold_answer,
+                retrieved_contexts,
+                skip_faithfulness=no_faithfulness,
             )
             if no_faithfulness:
                 judged["faithfulness"] = None
@@ -966,12 +1008,30 @@ def generate_answers(
                     print(f"  [ERROR] reflection pipeline also failed: {exc2}")
                     answer = "Unsupported"
 
-        # If answer is still Unsupported, give reflection a chance regardless of question type.
-        if answer.strip().lower() == "unsupported":
+        # Reflection override, DEFAULT OFF as of 2026-07-22. This re-runs an
+        # Unsupported answer through ask_with_reflection and blindly accepts any
+        # non-Unsupported result, bypassing answer_query's own guards
+        # (malformed-generation check, leak stripping, no-sources gate). It does
+        # NOT exist in the production api.py path, so including it made the eval
+        # measure behavior users never get. Ablation from the 2026-07-22 full run
+        # (override instrumented, see below) showed it net-harmful: it "recovered"
+        # 2 answerable questions (that production still refuses anyway) at the cost
+        # of fabricating answers on 3 gold-Unsupported refusal questions. Off by
+        # default so the eval reflects the real product pipeline; set
+        # EVAL_ENABLE_REFLECTION_OVERRIDE=1 to re-enable it for a comparison run.
+        override_fired = False
+        pre_override_answer = None
+        if answer.strip().lower() == "unsupported" and os.getenv(
+            "EVAL_ENABLE_REFLECTION_OVERRIDE"
+        ):
             try:
-                reflected = ask_with_reflection(reflection_pipeline, query)
+                reflect_state = ask_with_reflection_state(reflection_pipeline, query)
+                reflected = reflect_state.get("answer", "")
                 if reflected.strip().lower() != "unsupported":
+                    override_fired = True
+                    pre_override_answer = answer
                     answer = reflected
+                    retrieved_contexts = reflect_state.get("retrieved_contexts") or []
             except Exception as exc:
                 print(f"  [WARN] reflection retry failed: {exc}")
 
@@ -984,6 +1044,8 @@ def generate_answers(
                 "evidence": question.get("evidence") or [],
                 "predicted_answer": answer,
                 "retrieved_contexts": retrieved_contexts,
+                "override_fired": override_fired,
+                "pre_override_answer": pre_override_answer,
             }
         )
 

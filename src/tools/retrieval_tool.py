@@ -876,8 +876,14 @@ def _make_unified_tool(
             # Parallel scoped retrieval: fan out to each doc simultaneously then merge.
             # Equivalent to LangGraph Send fan-out but within a synchronous tool call.
             def _retrieve_scoped(doc_id: str) -> list[dict[str, Any]]:
-                """Retrieve content chunks scoped to a single doc_id."""
-                return retrieve(
+                """Retrieve content chunks scoped to a single doc_id.
+
+                filter_token is a hard content must-match — merges in an
+                unfiltered pass so the reranker (not the filter) decides
+                relevance when the answer chunk doesn't literally contain the
+                token (see the non-parallel branch below for the reproduced
+                case)."""
+                filtered = retrieve(
                     query=retrieval_query,
                     top_k=retrieval_top_k,
                     qdrant_url=qdrant_url,
@@ -888,6 +894,23 @@ def _make_unified_tool(
                     force_exclude_chunk_types=["sheet_summary", "document_summary"],
                     scope_doc_id=doc_id,
                 )
+                if not filter_token:
+                    return filtered
+                try:
+                    unfiltered = retrieve(
+                        query=retrieval_query,
+                        top_k=retrieval_top_k,
+                        qdrant_url=qdrant_url,
+                        collection=collection,
+                        use_qdrant=True,
+                        filter_token=None,
+                        force_chunk_types=chunk_types,
+                        force_exclude_chunk_types=["sheet_summary", "document_summary"],
+                        scope_doc_id=doc_id,
+                    )
+                    return _merge_hits(filtered, unfiltered)
+                except Exception:
+                    return filtered
 
             with ThreadPoolExecutor(max_workers=len(_parallel_doc_ids)) as pool:
                 futures = [pool.submit(_retrieve_scoped, d) for d in _parallel_doc_ids]
@@ -904,6 +927,32 @@ def _make_unified_tool(
                 force_exclude_chunk_types=["sheet_summary", "document_summary"],
                 scope_doc_id=effective_scope,
             )
+            # filter_token is a hard content must-match tuned for table/ID
+            # lookups; on prose questions it can exclude the answer chunk
+            # entirely (reproduced live: query "...LACERA procurement
+            # policy?" -> filter_token="LACERA", but the answer chunk's own
+            # text reads "L/CERA" from an OCR'd logo, so it never contains
+            # the literal token and was silently dropped from every result;
+            # without the filter the reranker placed it #3). Merge in an
+            # unfiltered pass so the reranker arbitrates relevance instead
+            # of the filter deciding recall. Filtered hits stay first in the
+            # merge, preserving the exact-match boost for genuine ID lookups.
+            if filter_token:
+                try:
+                    unfiltered_hits = retrieve(
+                        query=retrieval_query,
+                        top_k=retrieval_top_k,
+                        qdrant_url=qdrant_url,
+                        collection=collection,
+                        use_qdrant=True,
+                        filter_token=None,
+                        force_chunk_types=chunk_types,
+                        force_exclude_chunk_types=["sheet_summary", "document_summary"],
+                        scope_doc_id=effective_scope,
+                    )
+                    raw_hits = _merge_hits(raw_hits, unfiltered_hits)
+                except Exception:
+                    pass
 
         # Older PDF chunks have no metadata.doc_id — if the doc_id filter returned
         # nothing, retry with metadata.source_file text match (contains the doc_id
@@ -1188,6 +1237,18 @@ def _make_unified_tool(
         # like "and/the/of"; cap at 2 to avoid crowding PDF/text chunks.
         top_sheet = [h for h in ranked_sheet_hits if _col_overlap(h) >= 2][:2]
         top_hits = (top_sheet + top_other)[:_rerank_top_n]
+
+        # Graceful degrade for pure-spreadsheet documents (no page_content chunks
+        # at all -- only sheet_summary): a question about the FILE ITSELF ("what
+        # year is this titled for") mentions no real column name, so the
+        # col_overlap>=2 gate above rejects every sheet_summary hit even when
+        # they're highly relevant, and top_other is empty (nothing else exists to
+        # fall back on) -- reproduced live: 9/9 tool calls on doc_011 (a pure
+        # .xlsx corpus doc) returned "No relevant information found." despite the
+        # top sheet_summary hit scoring 0.83. Only fires when nothing else
+        # survived; never overrides the column-based routing above.
+        if not top_hits and ranked_sheet_hits:
+            top_hits = ranked_sheet_hits[:1]
 
         if _RETRIEVAL_DEBUG:
             returned = [

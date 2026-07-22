@@ -596,25 +596,19 @@ def retrieve(
                 exclude_chunk_types=exclude_chunk_types,
                 scope_doc_id=scope_doc_id,
             )
-        # Single-doc scoping: retry across doc_id → source_file → file_name so a
-        # small doc is found regardless of which id field its chunks carry. If
-        # all fail and a filter_token is set, drop the token and retry once more.
-        if scope_doc_id:
+        # Single-doc scoping: the primary search above already applied
+        # scope_doc_id (which itself ORs across doc_id/source_file/file_name
+        # in _metadata_filter, see its docstring) -- scope_doc_key is a dead
+        # parameter (_metadata_filter never reads it), so re-running
+        # _search_with_scope under three different scope_doc_key values used
+        # to issue three byte-identical, fully redundant Qdrant round-trips
+        # per scoped call. If nothing matched and a filter_token is set, drop
+        # the token and retry once more -- that IS a genuinely different query.
+        if scope_doc_id and not points and filter_token:
+            original_filter_token = filter_token
+            filter_token = None
             points = _search_with_scope("metadata.doc_id")
-            if not points:
-                points = _search_with_scope("metadata.source_file")
-            if not points:
-                # Fall back to file_name text index (works for PDF chunks that lack doc_id)
-                points = _search_with_scope("metadata.file_name")
-            if not points and filter_token:
-                original_filter_token = filter_token
-                filter_token = None
-                points = _search_with_scope("metadata.doc_id")
-                if not points:
-                    points = _search_with_scope("metadata.source_file")
-                if not points:
-                    points = _search_with_scope("metadata.file_name")
-                filter_token = original_filter_token
+            filter_token = original_filter_token
         # Exact-match boost: scroll the filter_token (and alternate terms) to
         # surface verbatim hits, then prepend them ahead of the vector results.
         if filter_token:

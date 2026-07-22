@@ -137,7 +137,14 @@ def build_reflection_pipeline(agent: Any) -> Any:
 
 def ask_with_reflection(pipeline: Any, question: str) -> str:
     """Invoke a reflection pipeline and return the final answer string."""
-    result = pipeline.invoke(
+    return ask_with_reflection_state(pipeline, question)["answer"]
+
+
+def ask_with_reflection_state(pipeline: Any, question: str) -> dict:
+    """Like ask_with_reflection but returns the full final state, so callers
+    can read retrieved_contexts alongside the answer (see eval/run_eval.py's
+    override instrumentation, which needs both)."""
+    return pipeline.invoke(
         {
             "question": question,
             "answer": "",
@@ -146,7 +153,6 @@ def ask_with_reflection(pipeline: Any, question: str) -> str:
             "retrieved_contexts": [],
         }
     )
-    return result["answer"]
 
 
 # ---------------------------------------------------------------------------

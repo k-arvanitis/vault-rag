@@ -259,3 +259,44 @@ class TestRetrieveFromQdrant:
             results = retrieve("query", use_qdrant=True, top_k=5)
         mock_hybrid.assert_called_once()
         assert len(results) == 2
+
+    @patch("src.retriever._collection_has_sparse", return_value=False)
+    @patch("src.retriever._qdrant_search")
+    @patch("src.retriever._ollama_embed_query")
+    def test_scoped_retrieval_with_results_issues_one_search(
+        self, mock_embed, mock_search, _
+    ):
+        """scope_doc_key is a dead parameter (_metadata_filter never reads
+        it) -- re-running the same scoped query under three different
+        scope_doc_key values used to issue three byte-identical, wasted
+        Qdrant round-trips whenever the primary scoped search already found
+        results."""
+        mock_embed.return_value = self._FAKE_EMBED
+        mock_search.return_value = self._QDRANT_POINTS
+        results = retrieve(
+            "query", use_qdrant=True, top_k=5, scope_doc_id="doc_001"
+        )
+        assert len(results) == 2
+        mock_search.assert_called_once()
+
+    @patch("src.retriever._qdrant_scroll_filter", return_value=[])
+    @patch("src.retriever._collection_has_sparse", return_value=False)
+    @patch("src.retriever._qdrant_search")
+    @patch("src.retriever._ollama_embed_query")
+    def test_scoped_retrieval_empty_with_filter_token_retries_once(
+        self, mock_embed, mock_search, _, __
+    ):
+        """An empty scoped result with a filter_token set retries exactly
+        once with the token dropped -- the only genuinely different query
+        in this path -- not the old three-scope_doc_key fan-out."""
+        mock_embed.return_value = self._FAKE_EMBED
+        mock_search.side_effect = [[], self._QDRANT_POINTS]
+        results = retrieve(
+            "query",
+            use_qdrant=True,
+            top_k=5,
+            scope_doc_id="doc_001",
+            filter_token="LACERA",
+        )
+        assert len(results) == 2
+        assert mock_search.call_count == 2
