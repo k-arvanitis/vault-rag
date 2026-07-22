@@ -277,15 +277,12 @@ export default function ChatPanel({
         ) : (
           <span className="text-xs text-muted-foreground">Ask across: All sources</span>
         )}
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={newConversation}
-          disabled={streaming || messages.length === 0}
-        >
-          <SquarePen data-icon="inline-start" />
-          New conversation
-        </Button>
+        {messages.length > 0 && (
+          <Button variant="outline" size="sm" onClick={newConversation} disabled={streaming}>
+            <SquarePen data-icon="inline-start" />
+            New conversation
+          </Button>
+        )}
       </div>
 
       <MessageList
@@ -312,9 +309,19 @@ export default function ChatPanel({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder={hasSources ? "Ask about your documents…" : "Add a source to get started…"}
+            placeholder={
+              !hasSources
+                ? "Add a source to get started…"
+                : scopedDocIds.length === 1
+                  ? `Ask about ${scopedDocIds[0].split("/").pop()}…`
+                  : scopedDocIds.length > 1
+                    ? `Ask across ${scopedDocIds.length} selected sources…`
+                    : isAdmin
+                      ? `Ask across all ${documents.length} approved sources…`
+                      : "Ask across the approved knowledge base…"
+            }
             rows={1}
-            className="max-h-40 min-h-0 flex-1 resize-none border-0 bg-transparent px-0 py-0 text-sm leading-relaxed shadow-none focus-visible:ring-0"
+            className="max-h-40 min-h-0 flex-1 resize-none rounded-none border-0 bg-transparent px-0 py-0 text-sm leading-relaxed shadow-none focus-visible:ring-0 dark:bg-transparent"
             disabled={streaming || !hasSources}
           />
           {streaming ? (

@@ -10,6 +10,7 @@ import io
 import json
 import logging
 import re
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
@@ -346,14 +347,17 @@ def _run_ingest_sync(
 
 
 _SHEET_ROW_COUNT_RE = re.compile(r"Sheet summary: (\d+) rows\.")
+_TITLE_LINE_RE = re.compile(r"^Title: (.+)$", re.MULTILINE)
 
 
 def _payloads_to_docs(payloads: list[dict]) -> list[dict]:
     """Group Qdrant payloads into one document card per source file.
 
-    page_count/sheet_count/row_count are derived from metadata already on
-    these payloads (chunk page numbers, sheet_name, the sheet_summary
-    chunk's own "N rows." text) -- no extra file I/O per document.
+    page_count/sheet_count/row_count/display_title are derived from metadata
+    already on these payloads (chunk page numbers, sheet_name, the
+    sheet_summary chunk's own "N rows." text, the document_summary chunk's
+    own "Title: ..." line -- same one src/answer_pipeline.py's title-shortcut
+    answer already quotes verbatim) -- no extra file I/O per document.
     """
     from collections import defaultdict
 
@@ -362,6 +366,7 @@ def _payloads_to_docs(payloads: list[dict]) -> list[dict]:
     max_page: dict[str, int] = {}
     sheets: dict[str, set[str]] = defaultdict(set)
     row_counts: dict[str, int] = defaultdict(int)
+    titles: dict[str, str] = {}
     for p in payloads:
         meta = p.get("metadata", {}) or {}
         name = meta.get("source_file") or meta.get("file_name") or ""
@@ -401,6 +406,10 @@ def _payloads_to_docs(payloads: list[dict]) -> list[dict]:
             )
             if total:
                 row_counts[name] = total
+        if meta.get("chunk_type") == "document_summary" and name not in titles:
+            title_match = _TITLE_LINE_RE.search(p.get("content") or "")
+            if title_match:
+                titles[name] = title_match.group(1).strip()
     type_map = {
         "pdf": "PDF",
         "xlsx": "Excel",
@@ -416,6 +425,7 @@ def _payloads_to_docs(payloads: list[dict]) -> list[dict]:
     return [
         {
             "filename": name,
+            "display_title": titles.get(name) or None,
             "file_type": type_map.get(Path(name).suffix.lstrip(".").lower(), "File"),
             "chunk_count": count,
             "status": "indexed",
@@ -563,7 +573,32 @@ async def list_documents():
         payloads = scroll_all_payloads(QDRANT_URL, QDRANT_COLLECTION)
     except Exception:
         return []
-    return _payloads_to_docs(payloads)
+    from src.title_overrides import get_overrides
+
+    docs = _payloads_to_docs(payloads)
+    overrides = get_overrides()
+    for doc in docs:
+        if doc["filename"] in overrides:
+            doc["display_title"] = overrides[doc["filename"]]
+    return docs
+
+
+class SetTitleRequest(BaseModel):
+    title: str | None = None
+
+
+@app.patch("/documents/{filename:path}/title", dependencies=[Depends(require_admin)])
+async def set_document_title(filename: str, req: SetTitleRequest):
+    """PATCH /documents/{filename}/title — set or clear this source's
+    admin display title. A blank/missing title clears the override,
+    reverting to the extracted title (or filename, if none)."""
+    from src.title_overrides import clear_title, set_title
+
+    if req.title and req.title.strip():
+        set_title(filename, req.title.strip())
+    else:
+        clear_title(filename)
+    return {"status": "ok"}
 
 
 @app.get("/eval/summary")
@@ -623,6 +658,14 @@ async def stats():
         return {"total_docs": 0, "total_chunks": 0}
     docs = _payloads_to_docs(payloads)
     return {"total_docs": len(docs), "total_chunks": len(payloads)}
+
+
+@app.get("/usage", dependencies=[Depends(require_admin)])
+async def usage():
+    """GET /usage — per-question token/cost log and daily rollups. Admin-only."""
+    from src.usage_log import stats as usage_stats
+
+    return usage_stats()
 
 
 class FeedbackRequest(BaseModel):
@@ -767,8 +810,19 @@ async def query(
     lf = _get_langfuse()
     lf_trace = lf.trace(name="query", input=req.question) if lf else None
 
+    _start = time.monotonic()
     result = await loop.run_in_executor(
         _executor, answer_query, agent, req.question, lf_trace, req.doc_id
+    )
+    _latency_ms = (time.monotonic() - _start) * 1000
+
+    from src.usage_log import log as log_usage
+
+    log_usage(
+        req.question,
+        getattr(agent, "_generation_model", None),
+        result.get("usage", {}),
+        latency_ms=_latency_ms,
     )
 
     if lf_trace is not None:
@@ -892,10 +946,20 @@ async def query_stream(
         # only from event_stream() meant an abandoned or aborted question
         # computed its full expensive answer and then threw it away, so the
         # next identical ask always missed the cache too.
+        _start = time.monotonic()
         try:
             for event in stream_answer(agent, req.question, req.doc_id):
                 if event.get("done") and "tools" in event:
                     event["tools_used"] = _tools_used(event.pop("tools"))
+                if event.get("done"):
+                    from src.usage_log import log as log_usage
+
+                    log_usage(
+                        req.question,
+                        getattr(agent, "_generation_model", None),
+                        event.get("usage") or {},
+                        latency_ms=(time.monotonic() - _start) * 1000,
+                    )
                 if event.get("done") and check_system_prompt_leak(
                     event.get("answer") or ""
                 ):

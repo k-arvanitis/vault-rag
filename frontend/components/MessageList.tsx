@@ -55,8 +55,8 @@ interface Props {
  * compare, one structured (DuckDB) lookup. */
 const EXAMPLE_PROMPTS = [
   "Who must approve a Sole Source Procurement under the procurement policy?",
-  "Which document allows a longer contract extension period: the procurement policy or the services contract terms?",
-  "What is the NET Amount for the supplier Citycoseals?",
+  "Compare the procurement policy and the services contract terms — which allows a longer contract extension?",
+  "What is the NET Amount for supplier Citycoseals?",
 ];
 
 /** Honest waiting state: one neutral message plus how long the request has
@@ -481,6 +481,9 @@ export default function MessageList({
         </p>
         {hasSources && (
           <div className="mt-5 flex max-w-md flex-col gap-1.5 select-text">
+            <p className="mb-0.5 text-[11px] font-medium tracking-wide text-muted-foreground">
+              Try asking
+            </p>
             {EXAMPLE_PROMPTS.map((p) => (
               <button
                 key={p}

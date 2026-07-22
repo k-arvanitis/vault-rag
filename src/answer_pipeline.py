@@ -284,7 +284,13 @@ def answer_comparison_deterministic(
 
     sources = parse_sources(collected)
     citation_map = build_citation_map(collected, sources)
-    answer = strip_leaked_headers(answer, citation_map=citation_map)
+    # marker - 1 = the real highest marker number assigned across both docs'
+    # combined evidence, which can legitimately exceed MAX_TOOL_RESULTS (a
+    # bound that only holds for a single tool call) -- see
+    # _strip_inline_citation's docstring.
+    answer = strip_leaked_headers(
+        answer, citation_map=citation_map, max_plausible_marker=marker - 1
+    )
     answer, sources = _renumber_citations_sequentially(answer, sources)
     _narrow_quotes_to_answer(sources, answer)
     if trace is not None:
@@ -366,6 +372,23 @@ _LEAKED_HEADER_RE = re.compile(
     r"^[ \t]*(?:\[\d+\][ \t]+file=\S+.*|sources?[ \t]*:[ \t]*)$",
     re.MULTILINE | re.IGNORECASE,
 )
+# Same leak as _LEAKED_HEADER_RE, but glued mid-sentence instead of on its own
+# line ("$297 billion. Source: file=doc_003.pdf") -- _LEAKED_HEADER_RE's ^...$
+# anchors never match that, so it reached the user raw. Matches the same
+# file=/chunk=/page=/score= field sequence as _HEADER_RE.
+_INLINE_LEAKED_SOURCE_RE = re.compile(
+    r"\s*Sources?\s*:\s*file=\S+"
+    r"(?:\s+(?:chunk|sheet|part|repair_query|subquery)=\S+)?"
+    r"(?:\s+page=\S+)?(?:\s+score=\S+)?",
+    re.IGNORECASE,
+)
+# Same leak, cut short before the model ever wrote "file=..." -- a dangling
+# "Source:"/"Sources:" label with nothing after it on that line. Only matches
+# when nothing follows before end-of-line/string, so real prose like "the
+# source: the annual report" (content on the same line) is left alone.
+_DANGLING_SOURCE_LABEL_RE = re.compile(
+    r"[ \t]*Sources?\s*:[ \t]*(?=\n|$)", re.IGNORECASE | re.MULTILINE
+)
 # Inline [N] citation markers — dropped because the answer's numbering does not
 # correspond to the trace panel's, so they would be misleading. Only [N] within
 # the retrieved-chunk range (1..MAX_TOOL_RESULTS) is treated as a citation — a
@@ -383,7 +406,48 @@ _BLANK_LINES_RE = re.compile(r"\n{3,}")
 # of these words ("the final amount", "further analysis shows") always has a
 # space after, so this can't strip real content.
 _LEAKED_CHANNEL_MARKER_RE = re.compile(r"\b(?:analysis|final)(?=[A-Z0-9])")
+# gpt-oss also emits citations as a dagger-glued marker naming the raw source
+# file inside the brackets ("[3†file=doc_002_services_contract_terms.pdf]") --
+# _INLINE_CITATION_RE's \[(\d+)\] never matches (a † follows the digit, not ]),
+# so this used to leak the raw internal filename into user-facing answers and
+# get unconditionally stripped. Reproduced live 2026-07-21: the marker's N is
+# a REAL, resolvable citation index (same numbering space as plain [N]) --
+# blind stripping was throwing away the model's only citation, leaving an
+# answer with zero [N] markers and the UI falling back to showing every
+# retrieved candidate as if cited. Resolve N via citation_map like [N] does;
+# only strip when unresolvable (leading whitespace included).
+_LEAKED_DAGGER_CITATION_RE = re.compile(r"([ \t]*)\[(\d+)†[^\]]*\]")
+# The same source-file token left bare (not inside brackets), glued to the end of
+# a sentence after a now-stripped "[N]" marker ("...investigation. file=doc_010.pdf")
+# or written as a parenthetical ("(file=doc_010_...pdf)"). "file=" is never
+# legitimate answer prose, so stripping it plus optional wrapping parens is safe.
+_LEAKED_BARE_FILE_RE = re.compile(r"[ \t]*\(?file=\S+?\.\w+\)?")
 _INLINE_CITATION_RE = re.compile(r"([ \t]*)\[(\d+)\]")
+# gpt-oss occasionally never separates hidden chain-of-thought / a raw tool-call
+# payload from the real answer at all -- reproduced live: a full raw
+# "<|channel|>commentary<|message|>We need to query the sheet..." reasoning dump,
+# and separately a bare '{"action": "search_knowledge_base", "arguments": {...}}'
+# tool-call JSON object, each returned as the entire "answer". Neither can ever
+# be legitimate answer content, so detecting either and forcing Unsupported is
+# content-safe -- unlike _LEAKED_CHANNEL_MARKER_RE (which strips a stray glued
+# marker from an otherwise-real answer), this is a full-generation failure.
+_MALFORMED_GENERATION_RE = re.compile(
+    r"<\|(?:channel|message|start|end|constrain)\|>"
+    r'|^\s*\{\s*"action"\s*:'
+    # A third leaked-tool-call syntax, reproduced live 2026-07-21:
+    # "[search_knowledge_base: topic=\"...\"]" / "[search_knowledge_base
+    # query=\"...\"]" -- the model emitting its own tool invocation as visible
+    # bracket-wrapped text instead of a real tool call. Never legitimate
+    # answer content (no real answer starts with a raw tool name in brackets).
+    r"|\[(?:search_knowledge_base|query_excel)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_malformed_generation(text: str) -> bool:
+    """True when `text` is raw leaked reasoning or a raw tool-call payload
+    rather than a real answer (see _MALFORMED_GENERATION_RE)."""
+    return bool(_MALFORMED_GENERATION_RE.search(text))
 _BLANK_LINES_RE = re.compile(r"\n{3,}")
 
 
@@ -461,24 +525,61 @@ def build_citation_map(collected: list[str], sources: list[dict]) -> dict[int, i
     return citation_map
 
 
-def _strip_inline_citation(match: re.Match, citation_map: dict[int, int] | None) -> str:
+def _strip_inline_citation(
+    match: re.Match, citation_map: dict[int, int] | None, max_plausible_marker: int
+) -> str:
     """Renumber a [N] marker to its real position in `sources` when resolvable,
     otherwise drop it (leading whitespace included) if N is a plausible (but
-    unresolvable) retrieved-chunk index."""
+    unresolvable) retrieved-chunk index -- i.e. N was actually shown to the
+    model as a real chunk marker, just didn't survive into the final (deduped,
+    capped) sources list. `max_plausible_marker` is the true upper bound of
+    marker numbers the model could have seen in THIS call: normally
+    MAX_TOOL_RESULTS (a single tool call is capped there), but
+    answer_comparison_deterministic renumbers markers across two independent
+    per-document retrieval calls combined, so its real ceiling can legitimately
+    exceed MAX_TOOL_RESULTS -- passing the global constant there caused a real,
+    high (but genuine) marker like [15] to be misread as "probably a literal
+    year in prose" and left leaking raw into the answer. Reproduced live
+    2026-07-21."""
     leading, n = match.group(1), int(match.group(2))
     if citation_map and n in citation_map:
         return f"{leading}[{citation_map[n]}]"
-    return "" if 1 <= n <= MAX_TOOL_RESULTS else match.group(0)
+    return "" if 1 <= n <= max_plausible_marker else match.group(0)
 
 
-def strip_leaked_headers(text: str, citation_map: dict[int, int] | None = None) -> str:
+def _strip_dagger_citation(match: re.Match, citation_map: dict[int, int] | None) -> str:
+    """Renumber a "[N†file=...]" dagger citation to its real position in
+    `sources` when resolvable, otherwise drop it (leading whitespace
+    included) -- unlike a plain [N], the dagger form is never legitimate
+    prose (a bracketed year is never followed by "†file="), so an
+    unresolvable marker is always a leak and always gets fully stripped,
+    never left dangling in the answer."""
+    leading, n = match.group(1), int(match.group(2))
+    if citation_map and n in citation_map:
+        return f"{leading}[{citation_map[n]}]"
+    return ""
+
+
+def strip_leaked_headers(
+    text: str,
+    citation_map: dict[int, int] | None = None,
+    max_plausible_marker: int | None = None,
+) -> str:
     """Remove raw chunk-header lines, leaked reasoning-channel markers, and
     inline [N] citation markers the LLM echoes into its answer.
 
     citation_map (see build_citation_map): when a [N] marker resolves to a
     real source, it's renumbered to that source's position instead of being
     stripped — true inline citations. Unresolvable markers are stripped as
-    before (the trace panel/eval evidence is the source list)."""
+    before (the trace panel/eval evidence is the source list).
+
+    max_plausible_marker (see _strip_inline_citation): the true upper bound of
+    marker numbers the model could have legitimately seen in this call.
+    Defaults to MAX_TOOL_RESULTS (correct for a normal single-tool-call
+    answer); answer_comparison_deterministic passes its own real per-call
+    marker count instead, since it can legitimately exceed MAX_TOOL_RESULTS."""
+    if max_plausible_marker is None:
+        max_plausible_marker = MAX_TOOL_RESULTS
     # The model sometimes emits fullwidth brackets ("【1】") instead of ASCII
     # ("[1]") -- every citation regex downstream (here, renumbering, quote
     # narrowing, the frontend's chip rendering) is ASCII-only, so an
@@ -486,10 +587,20 @@ def strip_leaked_headers(text: str, citation_map: dict[int, int] | None = None) 
     # never resolves to a real source. Normalize once, at the earliest point.
     text = text.translate(str.maketrans("【】", "[]"))
     cleaned = _LEAKED_HEADER_RE.sub("", text)
+    cleaned = _INLINE_LEAKED_SOURCE_RE.sub("", cleaned)
     cleaned = _LEAKED_CHANNEL_MARKER_RE.sub("", cleaned)
-    cleaned = _INLINE_CITATION_RE.sub(
-        lambda m: _strip_inline_citation(m, citation_map), cleaned
+    cleaned = _LEAKED_DAGGER_CITATION_RE.sub(
+        lambda m: _strip_dagger_citation(m, citation_map), cleaned
     )
+    cleaned = _LEAKED_BARE_FILE_RE.sub("", cleaned)
+    cleaned = _INLINE_CITATION_RE.sub(
+        lambda m: _strip_inline_citation(m, citation_map, max_plausible_marker), cleaned
+    )
+    # Runs AFTER the [N] pass, not before: "Source: [1]" is only a leak when
+    # its [N] didn't resolve to a real citation and got stripped above,
+    # leaving a bare dangling "Source:" -- a RESOLVED citation ("Source: [2]")
+    # is the model's own legitimate citation style and must survive.
+    cleaned = _DANGLING_SOURCE_LABEL_RE.sub("", cleaned)
     cleaned = _BLANK_LINES_RE.sub("\n\n", cleaned)
     return cleaned.strip()
 
@@ -518,11 +629,20 @@ def parse_sources(collected: list[str]) -> list[dict]:
             if not lines:
                 continue
             m = _HEADER_RE.match(lines[0])
-            filename = m.group("file") if m else "unknown"
-            loc_key = m.group("loc_key") or "" if m else ""
-            loc_val = m.group("loc_val") or "" if m else ""
-            score_str = m.group("score") if m else None
-            page_str = m.group("page") if m else None
+            if not m:
+                # Not a real "[N] file=..." chunk at all -- a tool's own
+                # plain error/no-results message, e.g. "No relevant results
+                # found for query X", ended up in `collected` (see
+                # stream_agent's regex-split fallback for unformatted tool
+                # output). Reproduced live 2026-07-21: this used to become a
+                # fabricated "unknown"-filename source card. It was never a
+                # real chunk, so it must never become a citation.
+                continue
+            filename = m.group("file")
+            loc_key = m.group("loc_key") or ""
+            loc_val = m.group("loc_val") or ""
+            score_str = m.group("score")
+            page_str = m.group("page")
             page = int(page_str) if page_str and page_str.isdigit() else None
 
             doc_meta_m = _DOC_META_RE.search(lines[0])
@@ -592,6 +712,11 @@ def parse_sources(collected: list[str]) -> list[dict]:
             # as literal visible text. Strip any leftover lone tag too.
             plain = re.sub(r"\[FIGURE_START\]|\[FIGURE_END\]", "", plain)
             plain = _TABLE_MARKER_RE.sub("", plain)
+            # Page-boundary markers ("<!-- PAGE 6 pymupdf4llm -->", or the
+            # inspector's "<!-- PAGE N | label -->") are pipeline bookkeeping,
+            # not text on the page -- left in, they show up as literal HTML
+            # comments in the Evidence panel's quote.
+            plain = re.sub(r"<!--\s*PAGE\s+\d+.*?-->", "", plain, flags=re.IGNORECASE)
             plain = re.sub(r"^#{1,3}\s+.+$", "", plain, flags=re.MULTILINE).strip()
             plain = re.sub(r"<br\s*/?>", " ", plain, flags=re.IGNORECASE)
             # "**bold**" is pymupdf4llm's own markdown, not text in the PDF --
@@ -814,6 +939,7 @@ def run_once(
     attempt: str = "initial",
     trace: Any = None,
     skip_grounding_check: bool = False,
+    usage: dict | None = None,
 ) -> tuple[str, list[str], dict]:
     """Run the agent once for a question; return (answer, collected chunks, trace dict).
 
@@ -825,6 +951,9 @@ def run_once(
     questions, whose own doc-coverage retry (see answer_one) already checks
     what matters here without the grounding judge's false-positive risk on
     comparative claims (see stream_agent's docstring).
+
+    usage: if provided, token counts from this attempt are summed into it in
+    place (see stream_agent's usage param).
     """
     collected: list[str] = []
     tokens: list[str] = []
@@ -842,6 +971,7 @@ def run_once(
         excel_citations=excel_citations,
         trace=trace,
         skip_grounding_check=skip_grounding_check,
+        usage=usage,
     ):
         tokens.append(token)
     answer = "".join(tokens).strip()
@@ -882,6 +1012,7 @@ def answer_one(
     question: str,
     trace: Any = None,
     forced_doc_id: str | list[str] | None = None,
+    usage: dict | None = None,
 ) -> tuple[str, list[str], dict]:
     """Answer one question, with a forced retry on a bare Unsupported.
 
@@ -934,7 +1065,12 @@ def answer_one(
         token = FORCED_DOC_ID.set(forced_doc_id)
     try:
         ans, coll, tr = run_once(
-            agent, q, attempt="initial", trace=trace, skip_grounding_check=is_comparison
+            agent,
+            q,
+            attempt="initial",
+            trace=trace,
+            skip_grounding_check=is_comparison,
+            usage=usage,
         )
         if is_comparison:
             # One unified check-and-retry pass. Reproduced live: a flat
@@ -969,6 +1105,7 @@ def answer_one(
                     attempt="comparison-retry",
                     trace=trace,
                     skip_grounding_check=True,
+                    usage=usage,
                 )
                 r_flat = r_ans.strip().lower() == "unsupported"
                 r_missing, r_has_partial, r_sources = _comparison_incompleteness(
@@ -983,13 +1120,21 @@ def answer_one(
                 if r_ans and improved:
                     return r_ans, r_coll, r_tr
             return ans, coll, tr
-        if ans.lower() == "unsupported":
+        # An empty answer (e.g. the entire generation was a hidden reasoning
+        # channel that never reached "final" -- see _strip_channels in
+        # rag_agent.py) is strictly worse than a bare "Unsupported" and gets
+        # the same forced retry.
+        if not ans.strip() or ans.lower() == "unsupported":
             r_ans, r_coll, r_tr = run_once(
-                agent, q + _RETRY_INSTRUCTION, attempt="unsupported-retry", trace=trace
+                agent,
+                q + _RETRY_INSTRUCTION,
+                attempt="unsupported-retry",
+                trace=trace,
+                usage=usage,
             )
-            if r_ans.lower() != "unsupported" and r_ans:
+            if r_ans.strip() and r_ans.lower() != "unsupported":
                 return r_ans, r_coll, r_tr
-            return ans, coll, tr
+            return ans if ans.strip() else "Unsupported", coll, tr
     finally:
         if token is not None:
             FORCED_DOC_ID.reset(token)
@@ -1017,6 +1162,8 @@ def answer_query(
     forced_doc_id: the UI's source-scope control, when the user picked "one
     document" instead of "all sources" — see answer_one.
     """
+    _zero_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+
     shortcut = None if forced_doc_id else _title_shortcut_answer(question)
     if shortcut is not None:
         title, collected = shortcut
@@ -1029,6 +1176,7 @@ def answer_query(
             "tools": ["search_knowledge_base"],
             "rejected_sources": [],
             "collected": collected,
+            "usage": dict(_zero_usage),
         }
 
     # Try the deterministic comparison path first: only engages when at least
@@ -1041,7 +1189,10 @@ def answer_query(
             agent, question, forced_doc_id=forced_doc_id, trace=trace
         )
         if det is not None:
+            det.setdefault("usage", dict(_zero_usage))
             return det
+
+    usage = dict(_zero_usage)
 
     # Comparison questions are kept whole: splitting strips the "Comparing X
     # and Y" clause that binds each fragment to a specific document, so a
@@ -1061,10 +1212,10 @@ def answer_query(
     is_single_part = len(parts) == 1
     if is_single_part:
         answer, collected, excel_trace = answer_one(
-            agent, question, trace=trace, forced_doc_id=forced_doc_id
+            agent, question, trace=trace, forced_doc_id=forced_doc_id, usage=usage
         )
     else:
-        sub_answers: list[str] = []
+        sub_parts: list[tuple[str, list[str]]] = []
         collected = []
         sql_all: list[str] = []
         tools_all: list[str] = []
@@ -1072,20 +1223,14 @@ def answer_query(
         excel_citations_all: list[dict] = []
         for part in parts:
             p_ans, p_coll, p_trace = answer_one(
-                agent, part, trace=trace, forced_doc_id=forced_doc_id
+                agent, part, trace=trace, forced_doc_id=forced_doc_id, usage=usage
             )
-            sub_answers.append(p_ans.strip())
+            sub_parts.append((p_ans.strip(), p_coll))
             collected += p_coll
             sql_all += p_trace.get("sql") or []
             tools_all += p_trace.get("tools") or []
             rejected_all += p_trace.get("rejected") or []
             excel_citations_all += p_trace.get("excel_citations") or []
-        # Blank line between parts (a single \n is only a soft break in
-        # markdown); number them so a terse part still reads as its own answer.
-        kept = [a for a in sub_answers if a]
-        answer = (
-            "\n\n".join(f"{i}. {a}" for i, a in enumerate(kept, 1)) or "Unsupported"
-        )
         excel_trace = {
             "sql": sql_all,
             "tools": tools_all,
@@ -1097,12 +1242,48 @@ def answer_query(
     sources += _excel_citations_to_sources(
         excel_trace.get("excel_citations") or [], existing=sources
     )
-    # Renumbering the model's own [N] markers to the final sources list only
-    # makes sense when the whole answer came from one agent run — a merged
-    # multi-part answer mixes markers from several independent runs, each
-    # with its own unrelated numbering, so those fall back to strip-on-sight.
-    citation_map = build_citation_map(collected, sources) if is_single_part else None
-    answer = strip_leaked_headers(answer, citation_map=citation_map)
+    if is_single_part:
+        citation_map = build_citation_map(collected, sources)
+        answer = strip_leaked_headers(answer, citation_map=citation_map)
+        if _is_malformed_generation(answer) or not answer.strip():
+            answer = "Unsupported"
+    else:
+        # Each part ran as its own agent call with its own [N] numbering, so a
+        # single citation_map built from the merged `collected` can't resolve
+        # any of them (build_citation_map only looks at the LAST call's
+        # numbering) -- every part's markers used to be dropped entirely here,
+        # which is why a multi-part answer never carried real citations and
+        # the UI's "no markers -> show every retrieved candidate" fallback
+        # kicked in, showing all 8 raw candidates as if all were "used".
+        # Building one map per part (matched against the final merged
+        # `sources` list by chunk identity, not position) restores real,
+        # per-part citations instead.
+        cleaned_parts = []
+        for p_ans, p_coll in sub_parts:
+            part_map = build_citation_map(p_coll, sources)
+            cleaned = strip_leaked_headers(p_ans, citation_map=part_map)
+            if _is_malformed_generation(cleaned):
+                cleaned = "Unsupported"
+            cleaned_parts.append(cleaned)
+        # Blank line between parts (a single \n is only a soft break in
+        # markdown); number them so a terse part still reads as its own answer.
+        kept = [a for a in cleaned_parts if a]
+        answer = (
+            "\n\n".join(f"{i}. {a}" for i, a in enumerate(kept, 1)) or "Unsupported"
+        )
+    # No real evidence at all (no parsed sources, no SQL) -- reproduced live
+    # 2026-07-21: with zero chunks retrieved, the agent can still answer from
+    # its own tool-call arguments (e.g. a doc_id string containing a year).
+    # Checked against `sources` (post parse_sources), not raw `collected` --
+    # `collected` can hold a tool's own plain error/no-results text (now
+    # skipped by parse_sources instead of becoming a fake "unknown" source,
+    # see its own comment), so `collected` alone isn't a reliable "real
+    # evidence" signal. A "verify every answer" product must never show a
+    # confident answer with nothing behind it -- force an honest refusal
+    # instead.
+    if not sources and not (excel_trace.get("sql") or []) and answer.strip().lower() != "unsupported":
+        answer = "Unsupported"
+        sources = []
     answer, sources = _renumber_citations_sequentially(answer, sources)
     _narrow_quotes_to_answer(sources, answer)
     sql_list = [s for s in (excel_trace.get("sql") or []) if s]
@@ -1123,6 +1304,7 @@ def answer_query(
         "tools": excel_trace.get("tools") or [],
         "rejected_sources": rejected_sources,
         "collected": collected,
+        "usage": usage,
     }
 
 
@@ -1191,6 +1373,7 @@ def stream_answer(
     excel_citations: list[dict] = []
     raw_tokens: list[str] = []
     correction: str | None = None
+    usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
     try:
         for tok in stream_agent(
             agent,
@@ -1201,6 +1384,7 @@ def stream_answer(
             rejected_chunks=rejected,
             excel_citations=excel_citations,
             live_tokens=True,
+            usage=usage,
         ):
             if isinstance(tok, FinalCorrection):
                 # The repair pass / grounding check changed the text after
@@ -1221,7 +1405,7 @@ def stream_answer(
     raw_answer = correction if correction is not None else "".join(raw_tokens).strip()
     if raw_answer.lower() == "unsupported":
         r_ans, r_coll, r_tr = run_once(
-            agent, q + _RETRY_INSTRUCTION, attempt="unsupported-retry"
+            agent, q + _RETRY_INSTRUCTION, attempt="unsupported-retry", usage=usage
         )
         if r_ans and r_ans.lower() != "unsupported":
             raw_answer = r_ans
@@ -1255,4 +1439,5 @@ def stream_answer(
         "sql": sql_list,
         "tools": tool_calls,
         "rejected_sources": rejected_sources,
+        "usage": usage,
     }

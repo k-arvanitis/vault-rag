@@ -1,5 +1,48 @@
 # vault-rag — TODO to portfolio-ready
 
+## Eval harness's blind reflection override may be corrupting refusal metrics (found 2026-07-21, NOT fixed)
+
+`eval/run_eval.py` (~line 968-974): after `answer_query()` returns, if the answer is
+`Unsupported` the harness unconditionally re-runs the question through a *separate* pipeline
+(`ask_with_reflection` -> `ask_agent` in `src/pipeline.py`/`src/rag_agent.py`) and blindly
+accepts its output if non-`Unsupported` — no correctness check at all. This path shares NONE
+of `answer_query`'s guards: no harmony-channel stream parser, no malformed-generation check,
+no `strip_leaked_headers` dagger/bare-file cleanup (all added 2026-07-21, see
+`eval/results/investigation_20260721.md`). It's also redundant with `answer_query`/`answer_one`'s
+own internal guarded retry-on-`Unsupported`, which already fires before this ever runs.
+
+**Evidence (scoped 53-question eval run, 2026-07-21, `eval/results/run_scoped_refusal_20260721_111349.log`):**
+3 questions where `answer_query` almost certainly returned a *correct* `Unsupported` (no `[WARN]`/
+exception logged, so this wasn't the exception-fallback branch) got overwritten by this override
+into wrong answers — `doc_007_published_spend_report_april_25_qa__qa_9` (hallucinated "Fedwire
+Funds transfers" sourced from the wrong document, doc_003 instead of doc_007), `unanswerable_qa__qa_5`
+(fabricated GPS-coordinates claim), `doc_006_purchase_card_transactions_q1_2025_26_qa__qa_9`
+(leaked raw tool-call bracket syntax `[search_knowledge_base query="..."]` — a third leak-syntax
+variant, not caught by today's `_is_malformed_generation`, since it never reaches that guard).
+
+Confirmed via a direct live trace (`RETRIEVAL_DEBUG=1`, 2 targeted calls, no full eval) that
+`answer_query` alone correctly refuses `doc_007_qa_9` and `doc_014_qa_3` when called directly —
+this override is the mechanism actively making refusal look worse than the real production path.
+
+**Not fixed — do NOT remove/disable blind.** No controlled on/off ablation has been run (same
+kind of test that proved the decomposition pipeline net-harmful, 2026-07-08 session). This
+touches every one of the 109 eval questions' correctness measurement, not just refusal — a wrong
+move here corrupts every future eval reading. Advisor was unavailable (overloaded) when this was
+found; consult before acting.
+
+- [ ] Run a controlled ablation: same eval slice, override on vs. off, compare correctness AND
+      refusal — not just refusal, since the override's stated purpose ("give reflection a chance
+      regardless of question type") is presumably to catch real false-negative Unsupported on
+      otherwise-answerable questions, which needs verifying it actually does that anywhere before
+      removing it.
+- [ ] If the override is kept in some form, route it through `answer_query` (or `answer_one`'s
+      own retry mechanism) instead of the separate unguarded `ask_agent`/reflection pipeline, so
+      it inherits all the leak/gate fixes instead of bypassing them.
+- [ ] Also extend `_is_malformed_generation` (`src/answer_pipeline.py`) to catch the bracket
+      tool-call leak syntax (`[search_knowledge_base query="..."]`), a third variant alongside the
+      already-caught harmony-channel and bare-JSON forms — but only on the `answer_query` path;
+      irrelevant if the reflection override is removed/rerouted per above.
+
 ## UI product refinement (2026-07-14 spec) — full requirements + phased execution plan
 
 Full spec given verbatim by the user; condensed here into a checklist so it survives

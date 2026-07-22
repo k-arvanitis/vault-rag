@@ -510,6 +510,69 @@ class TestStreamAgent:
         assert result == "Unsupported"
 
 
+class TestStreamAgentHarmonyChannels:
+    """gpt-oss's "harmony" response format wraps hidden chain-of-thought in an
+    "analysis"/"commentary" channel and the real answer in a "final" channel
+    (<|channel|>NAME<|message|>content). Reproduced live 2026-07-21: the
+    provider doesn't always cleanly separate this boundary before content
+    reaches us, so raw reasoning (once, the *entire* message) leaked through
+    as the answer. stream_agent now parses the channel markers itself,
+    swallowing non-"final" channels, same technique as the <think> filter."""
+
+    def test_strips_hidden_analysis_channel_keeps_final(self):
+        agent = MagicMock()
+        agent.stream.return_value = _make_stream_chunks(
+            [
+                "<|channel|>analysis<|message|>hidden reasoning"
+                "<|channel|>final<|message|>visible answer"
+            ]
+        )
+        full = "".join(stream_agent(agent, "q"))
+        assert "hidden reasoning" not in full
+        assert "visible answer" in full
+
+    def test_channel_markers_split_across_tokens(self):
+        """Markers/content arrive piecemeal, same shape as the real streaming API."""
+        agent = MagicMock()
+        agent.stream.return_value = _make_stream_chunks(
+            [
+                "<|channel|>",
+                "analysis",
+                "<|message|>",
+                "We need to query ",
+                "the sheet",
+                "<|channel|>",
+                "final",
+                "<|message|>",
+                "42",
+            ]
+        )
+        full = "".join(stream_agent(agent, "q"))
+        assert "query" not in full
+        assert full == "42"
+
+    def test_reproduced_full_harmony_leak_becomes_unsupported(self):
+        """The real n=1 failure from the 2026-07-21 eval run: the whole
+        message stayed in the "analysis"/"commentary" channel, no "final"
+        channel ever arrived -- must degrade to Unsupported, not empty."""
+        agent = MagicMock()
+        agent.stream.return_value = _make_stream_chunks(
+            [
+                "<|channel|>commentary<|message|>We need to query the sheet "
+                "that contains ranking. Possibly a sheet named score includes "
+                "total scores but not rank."
+            ]
+        )
+        result = "".join(stream_agent(agent, "q"))
+        assert result == "Unsupported"
+
+    def test_plain_content_with_no_channel_markers_unaffected(self):
+        agent = MagicMock()
+        agent.stream.return_value = _make_stream_chunks(["The total is $297 billion."])
+        result = "".join(stream_agent(agent, "q"))
+        assert result == "The total is $297 billion."
+
+
 class TestStreamAgentLiveTokens:
     """live_tokens=True is meant to fix a real UX bug: the tool-use path used
     to buffer the whole answer (generation + repair pass + grounding check,

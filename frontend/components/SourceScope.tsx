@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ChevronDown, Search, X } from "lucide-react";
 import { type Document } from "@/lib/api";
+import { resolveDisplayTitle } from "@/lib/product";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -25,9 +26,13 @@ interface Props {
  * (src/retriever.py's _metadata_filter). */
 export default function SourceScope({ documents, scopedDocIds, onChange }: Props) {
   const [query, setQuery] = useState("");
-  const filtered = documents.filter((d) =>
-    (d.filename.split("/").pop() ?? d.filename).toLowerCase().includes(query.toLowerCase())
-  );
+  const filtered = documents.filter((d) => {
+    const q = query.toLowerCase();
+    return (
+      (d.filename.split("/").pop() ?? d.filename).toLowerCase().includes(q) ||
+      resolveDisplayTitle(d).toLowerCase().includes(q)
+    );
+  });
 
   const toggle = (filename: string) => {
     onChange(
@@ -37,12 +42,17 @@ export default function SourceScope({ documents, scopedDocIds, onChange }: Props
     );
   };
 
+  const scopedName = (filename: string) => {
+    const doc = documents.find((d) => d.filename === filename);
+    return doc ? resolveDisplayTitle(doc) : filename.split("/").pop();
+  };
+
   const label =
     scopedDocIds.length === 0
-      ? "All sources"
+      ? `All ${documents.length} sources`
       : scopedDocIds.length === 1
-        ? scopedDocIds[0].split("/").pop()
-        : `${scopedDocIds.length} sources`;
+        ? scopedName(scopedDocIds[0])
+        : `${scopedDocIds.length} selected sources`;
 
   return (
     <div className="flex min-w-0 items-center gap-1">
@@ -71,7 +81,7 @@ export default function SourceScope({ documents, scopedDocIds, onChange }: Props
               <p className="px-2 py-1.5 text-xs text-muted-foreground">No matching documents.</p>
             )}
             {filtered.map((d) => {
-              const name = d.filename.split("/").pop();
+              const name = resolveDisplayTitle(d);
               const checked = scopedDocIds.includes(d.filename);
               return (
                 <label

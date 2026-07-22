@@ -366,6 +366,7 @@ def build_rag_agent(
         max_retries=3,
         timeout=LLM_REQUEST_TIMEOUT_S,
         extra_body=_openrouter_provider_extra_body(generation_api_base),
+        stream_usage=True,
     )
 
     # Filename -> doc_id lookup used to resolve titles the LLM passes instead of ids.
@@ -585,7 +586,11 @@ def _retrieval_only_answer(
             print(
                 f"[WARN] Direct retrieval answer fallback failed ({type(exc).__name__}): {exc}"
             )
-    return "Unsupported" if "search_knowledge_base" in answer else answer
+    return (
+        "Unsupported"
+        if not answer or "search_knowledge_base" in answer
+        else answer
+    )
 
 
 def ask_agent(
@@ -810,6 +815,7 @@ def stream_agent(
     trace: Any = None,
     skip_grounding_check: bool = False,
     live_tokens: bool = False,
+    usage: dict | None = None,
 ) -> Generator[str | FinalCorrection, None, None]:
     """Stream the agent's final answer token-by-token.
 
@@ -829,6 +835,11 @@ def stream_agent(
             citation query_excel attributes its answer to (single-table calls
             only) is appended to this list (UI-only, see EvidencePanel).
         trace: Optional Langfuse trace/span to record the grounding-check verdict on.
+        usage: If provided, {input_tokens, output_tokens, total_tokens} are summed
+            into it in place from the main streaming call (needs stream_usage=True
+            on the ChatOpenAI client, set at build time). Doesn't cover the repair/
+            grounding-check/overflow-fallback helper calls below -- those use raw
+            HTTP, not this streamed client -- so this is an undercount, not exact.
         skip_grounding_check: Comparison questions already get a dedicated
             doc-coverage retry in answer_pipeline.py -- the grounding check is
             redundant safety there, and was reproduced live flagging correct
@@ -895,6 +906,55 @@ def stream_agent(
                 _think_buf = _think_buf[start + len("<think>") :]
                 _in_think = True
 
+    # State machine for stripping gpt-oss "harmony" reasoning channels
+    # (<|channel|>analysis<|message|>...) mid-stream, same technique as the
+    # <think> filter above. Reproduced live 2026-07-21: the provider doesn't
+    # always cleanly separate the hidden "analysis"/"commentary" channel from
+    # the real "final" channel before content reaches us, so raw reasoning
+    # (sometimes the *entire* message, with no final channel ever emitted)
+    # leaked through as the answer. Parsing it ourselves, rather than trusting
+    # the provider, only passes through "final"-channel content -- or
+    # everything, unchanged, when no channel marker ever appears (the normal,
+    # working case for every other model/provider combination this app uses).
+    _CHANNEL_OPEN = "<|channel|>"
+    _CHANNEL_MSG = "<|message|>"
+    _channel_buf = ""
+    _in_hidden_channel = False
+
+    def _strip_channels(token: str) -> str:
+        """Buffer tokens; swallow any non-"final" harmony channel's content."""
+        nonlocal _channel_buf, _in_hidden_channel
+        _channel_buf += token
+        out = ""
+        while True:
+            if _in_hidden_channel:
+                end = _channel_buf.find(_CHANNEL_OPEN)
+                if end == -1:
+                    # Still inside a hidden channel -- discard what's buffered,
+                    # keep only a marker-length tail in case the next
+                    # <|channel|> marker is split across this token boundary.
+                    _channel_buf = _channel_buf[-len(_CHANNEL_OPEN) :]
+                    return out
+                _channel_buf = _channel_buf[end:]
+                _in_hidden_channel = False
+                continue
+            start = _channel_buf.find(_CHANNEL_OPEN)
+            if start == -1:
+                out += _channel_buf
+                _channel_buf = ""
+                return out
+            msg = _channel_buf.find(_CHANNEL_MSG, start)
+            if msg == -1:
+                # Marker opened but the channel name hasn't fully arrived yet --
+                # flush text before it, wait for more tokens for the rest.
+                out += _channel_buf[:start]
+                _channel_buf = _channel_buf[start:]
+                return out
+            out += _channel_buf[:start]
+            name = _channel_buf[start + len(_CHANNEL_OPEN) : msg].strip().lower()
+            _channel_buf = _channel_buf[msg + len(_CHANNEL_MSG) :]
+            _in_hidden_channel = name != "final"
+
     from openai import APIError, BadRequestError
 
     # Buffer text tokens until the first tool call completes so we don't yield
@@ -905,6 +965,7 @@ def stream_agent(
     _tool_contexts: list[str] = []
     _tool_names_used: set[str] = set()
     _limits: dict = getattr(agent, "_rag_limits", {})
+    _usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
     # Stream messages from the agent. Text chunks go to the pre-tool buffer until
     # the first tool result arrives, then to the final buffer; tool-call argument
@@ -914,10 +975,13 @@ def stream_agent(
             _invoke_input, config=_invoke_config, stream_mode="messages"
         ):
             if isinstance(chunk, AIMessageChunk):
+                if chunk.usage_metadata:
+                    for k in _usage:
+                        _usage[k] += chunk.usage_metadata.get(k, 0)
                 if chunk.tool_call_chunks:
                     continue
                 if chunk.content:
-                    filtered = _filter(str(chunk.content))
+                    filtered = _filter(_strip_channels(str(chunk.content)))
                     if filtered:
                         if _tool_used:
                             _final_buf.append(filtered)
@@ -1018,6 +1082,10 @@ def stream_agent(
             yield FinalCorrection(fallback) if live_tokens else fallback
             return
         raise
+
+    if usage is not None:
+        for k in _usage:
+            usage[k] += _usage[k]
 
     # If the model answered without calling any tool, flush the pre-tool buffer.
     if not _tool_used:

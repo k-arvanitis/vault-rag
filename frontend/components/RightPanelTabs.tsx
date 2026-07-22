@@ -10,7 +10,8 @@ import type { InspectTarget, Source } from "@/lib/api";
 
 const WIDTH_STORAGE_KEY = "vault-rag:evidence-panel-width";
 const DEFAULT_WIDTH = 420;
-const MIN_WIDTH = 360;
+const MIN_WIDTH = 320;
+const MAX_WIDTH = 540;
 const MAX_WIDTH_RATIO = 0.5;
 const EXPANDED_WIDTH_RATIO = 0.45;
 
@@ -62,7 +63,7 @@ export default function RightPanelTabs({
 
   const onPointerMove = useCallback((e: PointerEvent) => {
     if (!dragging.current) return;
-    const maxWidth = window.innerWidth * MAX_WIDTH_RATIO;
+    const maxWidth = Math.min(MAX_WIDTH, window.innerWidth * MAX_WIDTH_RATIO);
     const next = Math.min(maxWidth, Math.max(MIN_WIDTH, window.innerWidth - e.clientX));
     setWidth(next);
   }, []);

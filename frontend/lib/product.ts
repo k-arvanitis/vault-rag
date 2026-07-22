@@ -8,7 +8,60 @@
 import type { Document, Source as ApiSource, QueryResponse, RejectedSource } from "./api";
 import type { TrackedJob } from "./jobTracker";
 
+// Demo-only display names for sources whose backend display_title is null —
+// either no extractable cover-page title (PDF) or no title concept at all
+// (spreadsheets). Keyed by basename; purely cosmetic for the portfolio demo,
+// not derived from document content the way display_title is.
+const DEMO_TITLE_OVERRIDES: Record<string, string> = {
+  "doc_002_services_contract_terms.pdf": "Services Contract Terms",
+  "doc_003_fed_annual_report_2024.pdf": "Federal Reserve Annual Report 2024",
+  "doc_004_foia_invoices_packet.pdf": "FOIA Invoices Packet",
+  "doc_006_purchase_card_transactions_q1_2025_26.xlsx": "Purchase Card Transactions Q1 2025/26",
+  "doc_007_published_spend_report_april_25.csv": "Published Spend Report — April 2025",
+  "doc_011_spain_open_data_maturity_questionnaire_2025.xlsx": "Spain Open Data Maturity Questionnaire 2025",
+  "doc_012_osse_afe_reporting_workbook_fy2025.xlsx": "OSSE AFE Reporting Workbook FY2025",
+  "doc_013_osse_afe_grant_budget_finance_tracker_fy2026.xlsx": "OSSE AFE Grant Budget Finance Tracker FY2026",
+  "doc_014_bristol_supplier_spend_april_2024.csv": "Bristol Supplier Spend — April 2024",
+};
+
+/** Single place every screen resolves a document's display name: real
+ * extracted display_title (title-cased) > demo override > raw filename. */
+export function resolveDisplayTitle(d: Pick<Document, "filename" | "display_title">): string {
+  if (d.display_title) return toDisplayTitle(d.display_title);
+  const basename = d.filename.split("/").pop() ?? d.filename;
+  return DEMO_TITLE_OVERRIDES[basename] ?? basename;
+}
+
 export type SourceType = "pdf" | "spreadsheet" | "image" | "document";
+
+// Words that stay lowercase in title case (unless first/last) — small,
+// deliberately incomplete list covering common English function words in
+// this corpus's document titles; good enough for a display heuristic, not a
+// grammar engine.
+const TITLE_CASE_MINOR_WORDS = new Set([
+  "a", "an", "and", "as", "at", "but", "by", "for", "in", "nor", "of", "on",
+  "or", "so", "the", "to", "up", "yet",
+]);
+
+/** Extracted document titles are often verbatim cover-page text, which is
+ * frequently ALL CAPS (e.g. "POLICY FOR THE PROCUREMENT OF GOODS AND
+ * SERVICES (PGS)") — display that in normal title case instead. Left
+ * untouched when the title isn't all-uppercase (mixed case is assumed
+ * already well-formed, e.g. "iPhone" or an acronym-heavy title). */
+export function toDisplayTitle(title: string): string {
+  if (title !== title.toUpperCase() || title === title.toLowerCase()) return title;
+  const words = title.toLowerCase().split(" ");
+  return words
+    .map((w, i) => {
+      if (i > 0 && i < words.length - 1 && TITLE_CASE_MINOR_WORDS.has(w)) return w;
+      // Preserve parenthesised acronyms like "(PGS)" as-is rather than
+      // title-casing to "(Pgs)".
+      const paren = w.match(/^\((\w+)\)$/);
+      if (paren && paren[1].length <= 5) return `(${paren[1].toUpperCase()})`;
+      return w.charAt(0).toUpperCase() + w.slice(1);
+    })
+    .join(" ");
+}
 
 export function inferSourceType(filename: string): SourceType {
   const ext = filename.split("/").pop()?.split(".").pop()?.toLowerCase() ?? "";
@@ -112,6 +165,10 @@ export type SourceStatus = "ready" | "processing" | "updating" | "attention" | "
 export interface SourceLibraryItem {
   id: string;
   name: string;
+  /** Filename, always present — secondary/tooltip text when `name` is a
+   * real display_title, primary text when there isn't one (see
+   * toSourceLibraryItem). */
+  filename: string;
   type: SourceType;
   status: SourceStatus;
   createdAt: string | null;
@@ -153,9 +210,11 @@ export function toSourceLibraryItem(d: Document, job?: TrackedJob): SourceLibrar
   } else {
     status = STATUS_MAP[d.status] ?? "processing";
   }
+  const basename = d.filename.split("/").pop() ?? d.filename;
   return {
     id: d.filename,
-    name: d.filename.split("/").pop() ?? d.filename,
+    name: resolveDisplayTitle(d),
+    filename: basename,
     type: inferSourceType(d.filename),
     status,
     createdAt: d.last_indexed_at,

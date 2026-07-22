@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, usePathname } from "next/navigation";
-import { MessageSquare, Library, FlaskConical, Plug, MessageSquareWarning, LogOut } from "lucide-react";
+import { MessageSquare, Library, FlaskConical, Plug, MessageSquareWarning, LogOut, Gauge } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -13,6 +13,7 @@ const ITEMS = [
   { href: "/admin/quality", label: "Quality", icon: FlaskConical },
   { href: "/admin/integrations/google-drive", label: "Integrations", icon: Plug },
   { href: "/admin/feedback", label: "Feedback", icon: MessageSquareWarning },
+  { href: "/admin/usage", label: "Usage", icon: Gauge },
 ] as const;
 
 export default function AdminNav() {

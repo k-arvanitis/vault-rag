@@ -2,6 +2,10 @@ const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
 
 export interface Document {
   filename: string;
+  /** Human-readable business title from the document's own cover page/title
+   * line, when the ingest pipeline found one — null for sources with no
+   * detectable title (falls back to the filename everywhere this is shown). */
+  display_title: string | null;
   file_type: string;
   chunk_count: number;
   status: "indexed" | "processing" | "failed";
@@ -100,6 +104,33 @@ export interface Stats {
   total_chunks: number;
 }
 
+export interface UsageEntry {
+  timestamp: string;
+  question: string;
+  model: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+  latency_ms: number | null;
+}
+
+export interface UsageDaily {
+  date: string;
+  questions: number;
+  total_tokens: number;
+  cost_usd: number;
+  avg_latency_ms: number | null;
+}
+
+export interface UsageStats {
+  recent: UsageEntry[];
+  daily: UsageDaily[];
+  total_questions: number;
+  total_tokens: number;
+  total_cost_usd: number;
+}
+
 export interface ChunkMeta {
   chunk_type?: string;
   chunk_index?: number;
@@ -175,6 +206,10 @@ export async function getDocuments(): Promise<Document[]> {
 
 export async function getStats(): Promise<Stats> {
   return request<Stats>("/stats");
+}
+
+export async function getUsage(): Promise<UsageStats> {
+  return request<UsageStats>("/usage");
 }
 
 /** Non-admin-safe corpus check -- whether there's anything to ask about, with
@@ -291,6 +326,17 @@ export async function reindexDocument(
   return request<IngestResponse>(`/documents/${encodeURIComponent(filename)}/reindex`, {
     method: "POST",
     body: form,
+  });
+}
+
+/** Set (title truthy) or clear (title null/blank) a source's admin display
+ * title — see api.py's PATCH /documents/{filename}/title. Clearing reverts
+ * to the extracted title or filename. */
+export async function setDocumentTitle(filename: string, title: string | null): Promise<void> {
+  await request(`/documents/${encodeURIComponent(filename)}/title`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
   });
 }
 

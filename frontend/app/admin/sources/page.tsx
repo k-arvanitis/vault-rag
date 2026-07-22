@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { MoreVertical, ScanSearch, MessageCircle, RefreshCw, Trash2, ArrowLeft } from "lucide-react";
+import { MoreVertical, ScanSearch, MessageCircle, RefreshCw, Pencil, Trash2, ArrowLeft } from "lucide-react";
 import { getDocuments, deleteDocument, clearCollection, type Document } from "@/lib/api";
-import { toSourceLibraryItem, SOURCE_STATUS_LABEL, SOURCE_STATUS_BADGE_VARIANT } from "@/lib/product";
+import { toSourceLibraryItem, resolveDisplayTitle, SOURCE_STATUS_LABEL, SOURCE_STATUS_BADGE_VARIANT } from "@/lib/product";
 import { useJobTracker } from "@/lib/jobTracker";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +21,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import ReprocessDialog from "@/components/ReprocessDialog";
+import RenameDialog from "@/components/RenameDialog";
 import { toast } from "sonner";
 
 const INSPECTABLE = new Set(["pdf", "xlsx", "xls", "csv"]);
@@ -41,6 +42,7 @@ export default function SourcesPage() {
   const [loading, setLoading] = useState(true);
   const [pendingDelete, setPendingDelete] = useState<Document | null>(null);
   const [reprocessTarget, setReprocessTarget] = useState<Document | null>(null);
+  const [renameTarget, setRenameTarget] = useState<Document | null>(null);
   const [confirmClearAll, setConfirmClearAll] = useState(false);
   const jobs = useJobTracker();
 
@@ -109,7 +111,16 @@ export default function SourcesPage() {
                   const canInspect = INSPECTABLE.has(ext);
                   return (
                     <TableRow key={doc.filename}>
-                      <TableCell className="max-w-[280px] truncate font-medium">{item.name}</TableCell>
+                      <TableCell className="max-w-[280px]">
+                        <p className="truncate font-medium" title={item.name}>
+                          {item.name}
+                        </p>
+                        {item.name !== item.filename && (
+                          <p className="truncate text-xs text-muted-foreground" title={item.filename}>
+                            {item.filename}
+                          </p>
+                        )}
+                      </TableCell>
                       <TableCell>
                         <Badge variant="outline" className="uppercase">
                           {doc.file_type || ext.toUpperCase()}
@@ -141,6 +152,10 @@ export default function SourcesPage() {
                               <MessageCircle data-icon="inline-start" />
                               Ask about this source
                             </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => setRenameTarget(doc)}>
+                              <Pencil data-icon="inline-start" />
+                              Rename
+                            </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => setReprocessTarget(doc)}>
                               <RefreshCw data-icon="inline-start" />
                               Reprocess
@@ -167,6 +182,17 @@ export default function SourcesPage() {
           open={!!reprocessTarget}
           onOpenChange={(open) => !open && setReprocessTarget(null)}
           onReprocessed={refresh}
+          onToast={(msg, variant) => (variant === "error" ? toast.error(msg) : toast(msg))}
+        />
+      )}
+
+      {renameTarget && (
+        <RenameDialog
+          filename={renameTarget.filename}
+          currentName={resolveDisplayTitle(renameTarget)}
+          open={!!renameTarget}
+          onOpenChange={(open) => !open && setRenameTarget(null)}
+          onRenamed={refresh}
           onToast={(msg, variant) => (variant === "error" ? toast.error(msg) : toast(msg))}
         />
       )}

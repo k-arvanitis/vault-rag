@@ -325,9 +325,9 @@ export default function EvidencePanel({ sources, onInspect, selectedTarget }: Pr
     return (
       <aside className="h-full w-full overflow-y-auto bg-background p-3">
         <div className="rounded-lg border border-dashed border-border bg-card px-3 py-6 text-center">
-          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Evidence</p>
+          <p className="text-xs font-medium text-foreground">Verify every answer</p>
           <p className="mt-1.5 text-xs text-muted-foreground">
-            Ask a question — cited passages for the latest answer appear here.
+            Click a citation to inspect the exact supporting page, sheet or row.
           </p>
         </div>
       </aside>

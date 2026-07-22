@@ -8,6 +8,7 @@ from unittest.mock import patch
 from src.answer_pipeline import (
     _TITLE_QUESTION_RE,
     _excel_citations_to_sources,
+    _is_malformed_generation,
     _resolve_comparison_doc_ids,
     _title_shortcut_answer,
     answer_comparison_deterministic,
@@ -123,6 +124,125 @@ class TestLeakedReasoningChannelMarker:
         ) == "Further analysis shows the lease expired in 2024."
 
 
+class TestMalformedGeneration:
+    """gpt-oss occasionally never separates hidden reasoning / a raw tool-call
+    payload from the real answer at all, returning it whole as the "answer" --
+    reproduced live in the 2026-07-21 eval run (n=2/109): a full raw harmony
+    reasoning dump, and a bare tool-call JSON object. Both were gold=Unsupported
+    refusal questions that scored 0.0 because the leaked garbage wasn't
+    recognized as a failed generation."""
+
+    def test_detects_raw_harmony_channel_dump(self):
+        # Reproduced live: maturity_dataset_2025_qa__qa_2
+        assert _is_malformed_generation(
+            "<|channel|>commentary<|message|>We need to query the sheet that "
+            "contains ranking. Possibly a sheet named score includes total scores"
+        )
+
+    def test_detects_bare_tool_call_json(self):
+        # Reproduced live: transactions_q1_2025_26_qa__qa_9
+        assert _is_malformed_generation(
+            '{\n  "action": "search_knowledge_base",\n  "arguments": {\n'
+            '    "query": "fueling receipts"\n  }\n}'
+        )
+
+    def test_detects_bracket_tool_call_leak(self):
+        # Reproduced live 2026-07-21, doc_011 spain maturity question
+        assert _is_malformed_generation(
+            '[search_knowledge_base: topic="Spain open data maturity questionnaire"]'
+        )
+        assert _is_malformed_generation(
+            '[search_knowledge_base query="fueling records invoice"]'
+        )
+        assert _is_malformed_generation('[query_excel query="SELECT * FROM t"]')
+
+    def test_does_not_flag_a_real_answer(self):
+        assert not _is_malformed_generation("The total is $297 billion.")
+
+    def test_does_not_flag_prose_mentioning_action_word(self):
+        assert not _is_malformed_generation(
+            "The board approved the action plan on March 1."
+        )
+
+
+class TestStripsInlineLeakedSourceHeader:
+    """The model sometimes echoes a raw chunk header fragment mid-sentence
+    instead of on its own line ("$297 billion. Source: file=doc_003.pdf") --
+    the whole-line-anchored _LEAKED_HEADER_RE never matches that."""
+
+    def test_strips_inline_source_file_leak(self):
+        assert strip_leaked_headers(
+            "$297 billion. Source: file=doc_003_fed_annual_report_2024.pdf"
+        ) == "$297 billion."
+
+    def test_strips_inline_source_file_leak_with_chunk_and_page(self):
+        assert strip_leaked_headers(
+            "The answer is 42. Sources: file=doc_008.pdf chunk=1 page=1"
+        ) == "The answer is 42."
+
+    def test_strips_dangling_source_label_with_no_file(self):
+        """Model trails off before ever writing "file=..." -- a bare label
+        glued mid-sentence at end of line, reproduced live."""
+        assert (
+            strip_leaked_headers("1. $297 billion. Source:\n\n2. 29 [1]")
+            == "1. $297 billion.\n\n2. 29"
+        )
+
+    def test_does_not_strip_prose_source_with_content_on_same_line(self):
+        assert strip_leaked_headers(
+            "See the primary source: the annual report."
+        ) == "See the primary source: the annual report."
+
+    def test_strips_dagger_glued_file_citation(self):
+        """gpt-oss emits [N†file=doc_X.pdf] citations; _INLINE_CITATION_RE's
+        \\[(\\d+)\\] never matches (a dagger follows the digit), so the raw
+        filename leaked into answers -- reproduced live 2026-07-21."""
+        assert strip_leaked_headers(
+            "The agreement is governed by English law"
+            "[22†file=doc_002_services_contract_terms.pdf]."
+        ) == "The agreement is governed by English law."
+
+    def test_resolves_dagger_citation_to_real_source_position(self):
+        """A dagger citation whose N is a real, resolvable citation index
+        (per citation_map) must renumber to that position, not get stripped
+        -- reproduced live 2026-07-21: gpt-oss's ONLY citation in the answer
+        was this dagger form, so blind stripping left zero [N] markers and
+        the UI fell back to showing every retrieved candidate as cited."""
+        assert strip_leaked_headers(
+            "Sole Source Procurements must be approved by the "
+            "CEO【1†file=doc_001_procurement_policy.pdf】",
+            citation_map={1: 1},
+        ) == "Sole Source Procurements must be approved by the CEO[1]"
+
+    def test_strips_parenthetical_bare_file_leak(self):
+        assert strip_leaked_headers(
+            "Vacation policy (file=doc_010_rosemont_employee_handbook_2024.pdf) applies."
+        ) == "Vacation policy applies."
+
+    def test_strips_bare_file_after_stripped_marker(self):
+        assert strip_leaked_headers(
+            "30 days to complete a harassment investigation. "
+            "[6] file=doc_010_rosemont_employee_handbook_2024.pdf"
+        ) == "30 days to complete a harassment investigation."
+
+    def test_strips_dangling_source_label_glued_to_unresolved_citation(self):
+        """"Source: [1]" where [1] doesn't resolve to a real source (no
+        citation_map) is stripped as a whole -- reproduced live in a
+        multi-part answer's second part."""
+        assert (
+            strip_leaked_headers("1. $297 billion. Source:\n\n2. 29. Source: [1]")
+            == "1. $297 billion.\n\n2. 29."
+        )
+
+    def test_keeps_source_label_when_citation_resolves(self):
+        """"Source: [N]" is the model's own legitimate citation style when
+        [N] resolves via citation_map -- must not be treated as a leak."""
+        assert (
+            strip_leaked_headers("The value is 42. Source: [1].", citation_map={1: 2})
+            == "The value is 42. Source: [2]."
+        )
+
+
 class TestParseSourcesContract:
     def test_source_dict_carries_page_and_doc_fields(self):
         header = (
@@ -148,6 +268,27 @@ class TestParseSourcesContract:
         source = sources[0]
         assert source["page"] is None
         assert source["sheet"] == "Sheet1"
+
+    def test_unformatted_tool_text_is_skipped_not_fabricated_as_unknown(self):
+        """Reproduced live 2026-07-21: when a tool call returns plain text
+        with no real "[N] file=..." header (e.g. a "No relevant results
+        found" message), it used to become a source with filename="unknown"
+        -- a fake citation for content that was never actually retrieved.
+        Must be skipped entirely instead."""
+        assert parse_sources(["No relevant results found for this query."]) == []
+
+    def test_excerpt_strips_page_boundary_marker(self):
+        """<!-- PAGE N pymupdf4llm --> is pipeline bookkeeping, not text on the
+        page -- it must not leak into the Evidence panel's quote."""
+        header = "[1] file=doc_008.pdf chunk=1 page=1 score=3.38"
+        body = (
+            "<!-- PAGE 1 pymupdf4llm --> UNITED STATES GOVERNMENT ACCOUNTABILITY "
+            "OFFICE <!-- PAGE 2 pymupdf4llm --> Highlights of the report."
+        )
+        sources = parse_sources([f"{header}\n{body}"])
+        assert "PAGE" not in sources[0]["excerpt"]
+        assert "pymupdf4llm" not in sources[0]["excerpt"]
+        assert "UNITED STATES GOVERNMENT ACCOUNTABILITY OFFICE" in sources[0]["excerpt"]
 
     def test_quote_strips_prev_next_chunk_neighbor_wrapper(self):
         """[prev chunk]/[next chunk] context injected by _format_hits for the LLM's
@@ -836,6 +977,33 @@ class TestAnswerComparisonDeterministic:
         )
         assert result is None
 
+    def test_high_marker_beyond_max_tool_results_still_resolves_or_strips_cleanly(self):
+        """Reproduced live 2026-07-21 (b4): the two per-document retrieval
+        calls are renumbered into ONE combined marker sequence that can
+        legitimately exceed MAX_TOOL_RESULTS (12) -- e.g. 9 chunks from one
+        doc + 8 from the other = markers 1..17. _strip_inline_citation used to
+        assume any marker > MAX_TOOL_RESULTS was a literal number in prose
+        (like a year) and left it raw, so a genuine-but-uncited-in-the-final-
+        capped-list marker like [17] leaked visibly into the answer. Must
+        strip cleanly (empty), never survive as a bare "[17]"."""
+        doc_a_chunks = "\n\n".join(
+            _chunk(i, "doc_001_a.pdf", f"Doc A passage {i}.") for i in range(1, 10)
+        )
+        doc_b_chunks = "\n\n".join(
+            _chunk(i, "doc_002_b.pdf", f"Doc B passage {i}.") for i in range(1, 9)
+        )
+        tool = _FakeTool({"doc_001": doc_a_chunks, "doc_002": doc_b_chunks})
+        # Marker 17 is the LAST of the 17 combined chunks -- real, but capped
+        # out of the final 8-source list (parse_sources keeps the earliest
+        # per-file slots first), so it must resolve to nothing, not leak raw.
+        llm = _FakeLLM("Doc A says X [1]. Doc B says Y [17].")
+        agent = _fake_agent(tool, llm, {})
+        result = answer_comparison_deterministic(
+            agent, "Compare doc_001 and doc_002"
+        )
+        assert result is not None
+        assert "[17]" not in result["answer"]
+
 
 class TestAnswerQueryComparisonRouting:
     def test_non_comparison_multi_doc_question_skips_deterministic_path(self):
@@ -876,11 +1044,12 @@ class TestAnswerQueryComparisonRouting:
         assert result["answer"] == "det answer"
 
     def test_comparison_question_falls_back_when_deterministic_path_declines(self):
+        chunk = "[1] file=doc_001.pdf chunk=0 score=0.9\nSome content."
         with (
             patch("src.answer_pipeline.answer_comparison_deterministic", return_value=None),
             patch(
                 "src.answer_pipeline.answer_one",
-                return_value=("fallback answer", [], {}),
+                return_value=("fallback answer", [chunk], {}),
             ) as mock_answer_one,
         ):
             result = answer_query(
@@ -889,3 +1058,98 @@ class TestAnswerQueryComparisonRouting:
             )
         mock_answer_one.assert_called_once()
         assert result["answer"] == "fallback answer"
+
+
+class TestMultiPartAnswerCitations:
+    """A multi-part question runs each part as its own agent call, so a
+    citation_map built from the merged chunks (which only resolves the LAST
+    call's numbering, see build_citation_map) can't map either part's [N]
+    markers -- they used to be silently stripped, leaving the merged answer
+    with zero real citations and the UI falling back to "show every
+    retrieved candidate" for a multi-part cross-document answer. Each part's
+    own [N] is now resolved separately against the final merged sources."""
+
+    def test_each_parts_citation_survives_and_resolves_to_its_own_source(self):
+        part_a_chunk = "[1] file=doc_003_fed_annual_report_2024.pdf chunk=16 page=2\nThe Fed reduced holdings by $297 billion."
+        part_b_chunk = "[1] file=doc_008_gao_24_106915.pdf chunk=1 page=1\n42 new topic areas were identified."
+
+        def fake_answer_one(agent, part, trace=None, forced_doc_id=None, usage=None):
+            if "Federal Reserve" in part:
+                return "$297 billion [1]", [part_a_chunk], {}
+            return "42 [1]", [part_b_chunk], {}
+
+        with patch("src.answer_pipeline.answer_one", side_effect=fake_answer_one):
+            result = answer_query(
+                agent=object(),
+                question=(
+                    "According to the Federal Reserve report, how much did holdings "
+                    "drop? According to the GAO report, how many new topic areas?"
+                ),
+            )
+
+        assert "[1]" in result["answer"]
+        assert "[2]" in result["answer"]
+        assert [s["filename"] for s in result["sources"][:2]] == [
+            "doc_003_fed_annual_report_2024.pdf",
+            "doc_008_gao_24_106915.pdf",
+        ]
+
+
+class TestNoEvidenceForcesUnsupported:
+    """Reproduced live 2026-07-21: with zero chunks retrieved, the agent
+    answered from its own tool-call arguments (a doc_id string containing a
+    year) instead of real content, and the citation-renumbering fallback
+    invented a fake "unknown"-filename source card for it. A "verify every
+    answer" product must never show a source with nothing behind it."""
+
+    def test_ungrounded_answer_with_no_chunks_becomes_unsupported(self):
+        with patch(
+            "src.answer_pipeline.answer_one",
+            return_value=("2025", [], {}),
+        ):
+            result = answer_query(agent=object(), question="What year is it titled for?")
+        assert result["answer"] == "Unsupported"
+        assert result["sources"] == []
+
+    def test_ungrounded_answer_with_junk_collected_text_becomes_unsupported(self):
+        """Reproduced live 2026-07-21: `collected` held a tool's own plain
+        "no results" text (not a real [N] file=... chunk) -- non-empty
+        `collected`, but zero real sources once parsed. Must still refuse,
+        not just when `collected` is literally []."""
+        with patch(
+            "src.answer_pipeline.answer_one",
+            return_value=("2025", ["No relevant results found."], {}),
+        ):
+            result = answer_query(agent=object(), question="What year is it titled for?")
+        assert result["answer"] == "Unsupported"
+        assert result["sources"] == []
+
+    def test_grounded_answer_with_real_chunks_is_unaffected(self):
+        chunk = "[1] file=doc_011.xlsx chunk=0 score=0.9\nTitle: 2025 Questionnaire"
+        with patch(
+            "src.answer_pipeline.answer_one",
+            return_value=("2025 [1]", [chunk], {}),
+        ):
+            result = answer_query(agent=object(), question="What year is it titled for?")
+        assert result["answer"] != "Unsupported"
+        assert len(result["sources"]) == 1
+
+    def test_sql_only_answer_with_no_chunks_is_unaffected(self):
+        """query_excel answers via SQL, not retrieved chunks -- zero
+        `collected` chunks is the normal, expected shape for it, not a sign
+        of a groundless answer."""
+        with patch(
+            "src.answer_pipeline.answer_one",
+            return_value=("42", [], {"sql": ["SELECT 42"]}),
+        ):
+            result = answer_query(agent=object(), question="What is the total?")
+        assert result["answer"] == "42"
+
+    def test_already_unsupported_with_no_chunks_stays_unsupported(self):
+        with patch(
+            "src.answer_pipeline.answer_one",
+            return_value=("Unsupported", [], {}),
+        ):
+            result = answer_query(agent=object(), question="What year is it titled for?")
+        assert result["answer"] == "Unsupported"
+        assert result["sources"] == []

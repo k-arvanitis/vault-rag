@@ -27,9 +27,14 @@ export default function AppHeader(props: Props) {
           <Separator orientation="vertical" className="h-5" />
           <div className="flex items-baseline gap-2.5">
             <span className="text-base font-semibold tracking-tight text-foreground">Vault RAG</span>
-            <span className="hidden font-mono text-[10px] uppercase tracking-widest text-muted-foreground sm:inline">
-              document intelligence
+            <span className="hidden font-mono text-[10px] uppercase tracking-wide text-muted-foreground/90 sm:inline">
+              verified knowledge assistant
             </span>
+            {isAdmin && (
+              <span className="rounded-md border border-border px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                Admin
+              </span>
+            )}
           </div>
         </div>
         <nav className="flex items-center gap-1">
@@ -40,7 +45,7 @@ export default function AppHeader(props: Props) {
           {isAdmin && (
             <Button variant="ghost" size="sm" onClick={() => router.push("/admin/sources")}>
               <ShieldCheck data-icon="inline-start" />
-              <span className="hidden md:inline">Admin</span>
+              <span className="hidden md:inline">Admin workspace</span>
             </Button>
           )}
           <Separator orientation="vertical" className="mx-1 h-5" />

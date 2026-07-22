@@ -115,8 +115,16 @@ class Settings(BaseSettings):
     query_cache_enabled: bool = True
     query_cache_path: str = "data/query_cache.json"
 
+    # Usage log -- per-question token/cost tracking for the admin usage panel.
+    usage_log_path: str = "data/usage_log.json"
+
     # Conversation history
     conversation_path: str = "data/conversations.json"
+
+    # Admin-set display titles -- overrides the extracted/fallback title
+    # shown for a source without touching the underlying document or its
+    # embeddings (see src/title_overrides.py).
+    title_overrides_path: str = "data/title_overrides.json"
 
     # Google Drive folder sync connector
     input_dir: str = "data/input"
@@ -208,10 +216,22 @@ FEEDBACK_PATH: str = _s.feedback_path
 EVAL_REGRESSION_CANDIDATES_PATH: str = _s.eval_regression_candidates_path
 QUERY_CACHE_ENABLED: bool = _s.query_cache_enabled
 QUERY_CACHE_PATH: str = _s.query_cache_path
+USAGE_LOG_PATH: str = _s.usage_log_path
+
+# Approximate list prices, USD per 1M tokens, (input, output) -- for the admin
+# usage panel's cost estimate only, not a billing source of truth. Verify
+# against the provider's current pricing page before trusting these for real
+# budgeting. Unknown models (e.g. a local vLLM route) cost $0 here since
+# there's no API bill.
+USAGE_PRICE_PER_1M_TOKENS: dict[str, tuple[float, float]] = {
+    "qwen/qwen3-32b": (0.29, 0.59),
+    "openai/gpt-oss-120b": (0.15, 0.75),  # Groq pricing, see console.groq.com/pricing
+}
 INPUT_DIR: str = _s.input_dir
 GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE: str = _s.google_drive_service_account_file
 GOOGLE_DRIVE_SYNC_STATE_PATH: str = _s.google_drive_sync_state_path
 CONVERSATION_PATH: str = _s.conversation_path
+TITLE_OVERRIDES_PATH: str = _s.title_overrides_path
 EXCEL_AGENT_MODEL: str = _s.excel_agent_model
 EXCEL_AGENT_API_BASE: str = _s.excel_agent_api_base
 API_CORS_ORIGINS: str = _s.api_cors_origins

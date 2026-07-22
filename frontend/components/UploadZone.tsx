@@ -1,13 +1,15 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { Upload, CheckCircle2 } from "lucide-react";
+import { Plus, Upload, CheckCircle2 } from "lucide-react";
 import { ingestFile, getIngestStatus } from "@/lib/api";
 import { trackJob } from "@/lib/jobTracker";
 import { cn } from "@/lib/utils";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Button } from "@/components/ui/button";
 
 interface UploadingFile {
   id: string;
@@ -134,37 +136,54 @@ export default function UploadZone({ onUploaded, onToast, offline }: Props) {
         </Alert>
       )}
 
-      <div
-        className={cn(
-          "rounded-lg border-2 border-dashed p-3 text-center transition-colors",
-          offline
-            ? "cursor-not-allowed border-border opacity-50"
-            : dragging
-            ? "cursor-pointer border-ring bg-muted"
-            : "cursor-pointer border-border hover:border-foreground/20 hover:bg-muted"
-        )}
-        onDragOver={(e) => {
-          if (offline) return;
-          e.preventDefault();
-          setDragging(true);
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={onDrop}
-        onClick={() => !offline && inputRef.current?.click()}
-      >
-        <Upload className="mx-auto mb-1 size-4 text-muted-foreground" />
-        <p className="text-xs font-medium text-foreground">Upload documents</p>
-        <p className="mt-0.5 text-[10px] text-muted-foreground">PDF · Excel · CSV · DOCX · MD · Image</p>
-        <input
-          ref={inputRef}
-          type="file"
-          multiple
-          accept={ACCEPTED}
-          className="hidden"
-          disabled={offline}
-          onChange={(e) => handleFiles(e.target.files)}
-        />
-      </div>
+      <Popover>
+        <PopoverTrigger
+          render={
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 w-full justify-start text-xs font-medium"
+              disabled={offline}
+            />
+          }
+        >
+          <Plus className="size-3.5" />
+          Add sources
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-64 p-0">
+          <div
+            className={cn(
+              "rounded-lg border-2 border-dashed p-3 text-center transition-colors",
+              offline
+                ? "cursor-not-allowed border-border opacity-50"
+                : dragging
+                ? "cursor-pointer border-ring bg-muted"
+                : "cursor-pointer border-border hover:border-foreground/20 hover:bg-muted"
+            )}
+            onDragOver={(e) => {
+              if (offline) return;
+              e.preventDefault();
+              setDragging(true);
+            }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={onDrop}
+            onClick={() => !offline && inputRef.current?.click()}
+          >
+            <Upload className="mx-auto mb-1 size-4 text-muted-foreground" />
+            <p className="text-xs font-medium text-foreground">Upload documents</p>
+            <p className="mt-0.5 text-[10px] text-muted-foreground">PDF · Excel · CSV · DOCX · MD · Image</p>
+            <input
+              ref={inputRef}
+              type="file"
+              multiple
+              accept={ACCEPTED}
+              className="hidden"
+              disabled={offline}
+              onChange={(e) => handleFiles(e.target.files)}
+            />
+          </div>
+        </PopoverContent>
+      </Popover>
 
       {files.length > 0 && (
         <div className="space-y-2 pt-1">

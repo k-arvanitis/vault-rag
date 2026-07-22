@@ -78,6 +78,21 @@ class TestPayloadsToDocs:
         docs = _payloads_to_docs(payloads)
         assert docs[0]["sheet_count"] is None
 
+    def test_display_title_extracted_from_document_summary(self):
+        payloads = [
+            {
+                "metadata": {"source_file": "doc_001_procurement_policy.pdf", "chunk_type": "document_summary"},
+                "content": "Document ID: doc_001\nTitle: Procurement Approval Policy\n\nSummary text.",
+            },
+        ]
+        docs = _payloads_to_docs(payloads)
+        assert docs[0]["display_title"] == "Procurement Approval Policy"
+
+    def test_display_title_none_when_no_title_line(self):
+        payloads = [{"metadata": {"source_file": "d.pdf", "page": 1}}]
+        docs = _payloads_to_docs(payloads)
+        assert docs[0]["display_title"] is None
+
 
 class TestValidateStartupEnv:
     def test_logs_error_when_openrouter_base_missing_key(self, caplog):
