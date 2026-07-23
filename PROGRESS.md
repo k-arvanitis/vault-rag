@@ -5,7 +5,32 @@ Last updated: 2026-07-23
 
 ---
 
-## Session 2026-07-23 (part 2) — quote-narrowing fix, demo corpus scoping, doc_001 incident, bbox-for-OCR-pages shipped
+## Session 2026-07-23 (part 2) — quote-narrowing fix, demo corpus scoping, doc_001 incident, bbox-for-OCR-pages shipped, cross-doc citation fix
+
+**Shipped: cross-document answers now cite every part, not just the retrieval-backed one.**
+User tested a straightforward cross-doc question (lease rent + Excel max transaction) and got
+back two facts with zero citation markers, "Sources used · 8" dumping mostly-irrelevant doc_001
+noise. Instrumented live (`ANSWER_DEBUG` temp prints, removed after) instead of guessing —
+first theory (`build_citation_map` only scoping to the last of a part's tool calls) turned out
+to be a red herring: the retrieval-backed part's `【1】`-style marker (a full-width-bracket
+variant the model sometimes emits, already normalized to `[1]` upstream) resolved correctly.
+The real gap: `query_excel`'s result never enters the bracketed `[N]` chunk-marker stream that
+`search_knowledge_base` results do, so the model has nothing to cite for a SQL-derived fact —
+confirmed by dumping each part's raw pre-strip answer and per-call chunk headers. Fixed in
+`answer_query`'s multi-part branch: when a part's cleaned answer has no `[N]` marker, isn't
+"Unsupported", and produced an `excel_citations` entry, attach a marker deterministically
+pointing at that citation's real position in the merged `sources` list — not the part's top
+retrieved chunk (reproduced live: the agent's own `search_knowledge_base` call in that part
+searched the wrong document, doc_001, while still answering correctly via SQL; using "top
+chunk" as the fallback would have cited wrong-document noise as if it were real evidence).
+Browser-verified: "Sources used" collapsed from 8 to the 2 actually-cited sources, both chips
+resolve to the correct document. 2 new regression tests (existing `TestMultiPartAnswerCitations`
+class), 382 total tests pass, ruff clean.
+Known, logged separately, not fixed tonight: the Excel half of a cross-doc question is itself
+nondeterministic — same question returned a real answer on one run and "Unsupported" on
+another. Same class as the already-logged LACERA nondeterminism. For the demo: verify a chosen
+cross-doc question holds across a few repeated runs before featuring it, don't assume one good
+run means it's reliable.
 
 **Shipped:** `_narrow_quotes_to_answer` (`src/answer_pipeline.py`) sentence-keep filter was
 ratio-only (`overlap/len(words) >= 0.5`), which let a short heading-like sentence

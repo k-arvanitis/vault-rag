@@ -1332,7 +1332,7 @@ def answer_query(
             agent, question, trace=trace, forced_doc_id=forced_doc_id, usage=usage
         )
     else:
-        sub_parts: list[tuple[str, list[str]]] = []
+        sub_parts: list[tuple[str, list[str], list[dict]]] = []
         collected = []
         sql_all: list[str] = []
         tools_all: list[str] = []
@@ -1342,12 +1342,13 @@ def answer_query(
             p_ans, p_coll, p_trace = answer_one(
                 agent, part, trace=trace, forced_doc_id=forced_doc_id, usage=usage
             )
-            sub_parts.append((p_ans.strip(), p_coll))
+            p_excel_citations = p_trace.get("excel_citations") or []
+            sub_parts.append((p_ans.strip(), p_coll, p_excel_citations))
             collected += p_coll
             sql_all += p_trace.get("sql") or []
             tools_all += p_trace.get("tools") or []
             rejected_all += p_trace.get("rejected") or []
-            excel_citations_all += p_trace.get("excel_citations") or []
+            excel_citations_all += p_excel_citations
         excel_trace = {
             "sql": sql_all,
             "tools": tools_all,
@@ -1376,11 +1377,44 @@ def answer_query(
         # `sources` list by chunk identity, not position) restores real,
         # per-part citations instead.
         cleaned_parts = []
-        for p_ans, p_coll in sub_parts:
+        for p_ans, p_coll, p_excel_citations in sub_parts:
             part_map = build_citation_map(p_coll, sources)
             cleaned = strip_leaked_headers(p_ans, citation_map=part_map)
             if _is_malformed_generation(cleaned):
                 cleaned = "Unsupported"
+            # query_excel's result never enters the [N] chunk-marker stream
+            # search_knowledge_base's does (it's SQL output, not a numbered
+            # tool result) -- reproduced live: a part answered purely from
+            # Excel ("12892.0, the largest...") carried no marker at all, so
+            # it silently fell out of "Sources used" even though a real,
+            # known source backs it. Attach one deterministically instead of
+            # hoping the model invents a marker for text it was never shown
+            # bracketed. Don't fall back to the part's top retrieved chunk --
+            # reproduced live, the agent's own search_knowledge_base call in
+            # this part searched the wrong document (doc_001, not doc_006)
+            # while still getting the right answer from query_excel, so the
+            # top "retrieved" chunk is unrelated noise, not real evidence.
+            if (
+                cleaned
+                and cleaned.lower() != "unsupported"
+                and not _ANSWER_CITATION_RE.search(cleaned)
+                and p_excel_citations
+            ):
+                citation = p_excel_citations[0]
+                key = (
+                    _resolve_original_name(citation.get("source_file") or ""),
+                    citation.get("sheet_name"),
+                )
+                position = next(
+                    (
+                        i + 1
+                        for i, s in enumerate(sources)
+                        if (s["filename"], s.get("sheet")) == key
+                    ),
+                    None,
+                )
+                if position is not None:
+                    cleaned = f"{cleaned.rstrip()} [{position}]"
             cleaned_parts.append(cleaned)
         # Blank line between parts (a single \n is only a soft break in
         # markdown); number them so a terse part still reads as its own answer.

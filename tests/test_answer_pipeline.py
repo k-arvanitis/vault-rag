@@ -1172,6 +1172,62 @@ class TestMultiPartAnswerCitations:
             "doc_008_gao_24_106915.pdf",
         ]
 
+    def test_excel_part_gets_a_deterministic_marker_not_a_retrieval_chunk(self):
+        """Reproduced live: a part answered from query_excel ("12892.0, the
+        largest...") carried no [N] marker at all -- query_excel's result
+        never enters the bracketed chunk stream search_knowledge_base's does,
+        so the model has nothing to cite. Must attach a marker pointing at
+        the real excel_citations source, not the part's top retrieved chunk
+        -- reproduced live, that chunk can be unrelated noise from the agent
+        searching the wrong document while still answering correctly via SQL."""
+        part_a_chunk = "[1] file=doc_016a_original_lease.pdf chunk=1 page=2\nRent for the first year is $31,052.08."
+        # Wrong-document noise the agent's own search_knowledge_base call
+        # returned in the SQL-answered part -- must NOT be cited.
+        part_b_chunk = "[1] file=doc_001_procurement_policy.pdf chunk=9 page=3\nIV. Definitions."
+
+        def fake_answer_one(agent, part, trace=None, forced_doc_id=None, usage=None):
+            if "rent" in part.lower():
+                return (
+                    "$31,052.08, the annual rent for the first year [1]",
+                    [part_a_chunk],
+                    {},
+                )
+            return (
+                "12892.0, the largest single purchase card transaction amount.",
+                [part_b_chunk],
+                {
+                    "excel_citations": [
+                        {
+                            "source_file": "doc_006_purchase_card_transactions_q1_2025_26.xlsx",
+                            "sheet_name": "DataAnalysis",
+                            "quote": "12892.0",
+                        }
+                    ]
+                },
+            )
+
+        with patch("src.answer_pipeline.answer_one", side_effect=fake_answer_one):
+            result = answer_query(
+                agent=object(),
+                question=(
+                    "What is the annual rent for the first year of the lease, "
+                    "and what is the largest single purchase card transaction amount?"
+                ),
+            )
+
+        assert "[1]" in result["answer"]
+        assert "[2]" in result["answer"]
+        cited = result["sources"][:2]
+        assert {s["filename"] for s in cited} == {
+            "doc_016a_original_lease.pdf",
+            "doc_006_purchase_card_transactions_q1_2025_26.xlsx",
+        }
+        # The wrong-document noise chunk must not be cited as evidence.
+        excel_source = next(
+            s for s in cited if s["filename"].endswith(".xlsx")
+        )
+        assert excel_source["sheet"] == "DataAnalysis"
+
 
 class TestNoEvidenceForcesUnsupported:
     """Reproduced live 2026-07-21: with zero chunks retrieved, the agent
