@@ -34,6 +34,7 @@ from src.prompts import CHUNK_CONTEXT_PROMPT, DOCUMENT_SUMMARY_PROMPT
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 _FIGURE_BBOX_RE = re.compile(r"<!-- bbox:\[([\d.,\s]+)\] -->")
+_OCR_BBOX_RE = re.compile(r"<!-- ocr_bbox:\[([\d.,\s]+)\] -->")
 
 
 # ---------------------------------------------------------------------------
@@ -508,6 +509,16 @@ def chunk_markdown(
         bbox_match = _FIGURE_BBOX_RE.search(chunk.content)
         if bbox_match:
             metadata["figure_bbox"] = [float(v) for v in bbox_match.group(1).split(",")]
+
+        # Scanned-page (CPU/unstructured OCR) chunks carry the bbox of their
+        # first OCR'd element -- unlike figure_bbox this isn't gated on "is
+        # this most of the chunk", since the whole chunk IS OCR'd page text,
+        # not prose that might merely sit near an unrelated photo.
+        ocr_bbox_match = _OCR_BBOX_RE.search(chunk.content)
+        if ocr_bbox_match:
+            metadata["ocr_bbox"] = [
+                float(v) for v in ocr_bbox_match.group(1).split(",")
+            ]
 
         # Prepend the title/section/subsection headers if the chunk lacks them.
         title = metadata["title"]

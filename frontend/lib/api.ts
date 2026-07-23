@@ -39,6 +39,12 @@ export interface Source {
   chunk_id: number | null;
   score: number | null;
   figure_bbox: [number, number, number, number] | null;
+  /** Bbox (PDF points) of the first OCR'd element in this chunk, when the
+   * source page was scanned and parsed via the unstructured/CPU OCR path
+   * (which computes layout coordinates) rather than LightOn OCR (which
+   * doesn't). Used as a highlight/crop fallback for scanned pages, where
+   * `/pdf/{page}/highlight`'s real-text-layer search always comes up empty. */
+  ocr_bbox: [number, number, number, number] | null;
 }
 
 export interface InspectTarget {

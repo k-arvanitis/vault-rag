@@ -17,6 +17,7 @@ function makeSource(overrides: Partial<Source> = {}): Source {
     chunk_id: 123,
     score: 0.9,
     figure_bbox: null,
+    ocr_bbox: null,
     ...overrides,
   };
 }

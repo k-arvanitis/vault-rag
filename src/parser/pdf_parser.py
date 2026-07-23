@@ -56,6 +56,9 @@ def _nearby_figure_label(page_markdown: str, position: int, window: int = 800) -
     return f"Figure {matches[-1].group(1)}: " if matches else ""
 
 
+_OCR_DPI = 300
+
+
 def _ocr_page(pix) -> tuple[str, str]:
     """Run the configured OCR backend on a page pixmap.
 
@@ -66,7 +69,7 @@ def _ocr_page(pix) -> tuple[str, str]:
     if PDF_PARSER == "cpu":
         from src.ingestion.unstructured_ocr import call_unstructured_ocr
 
-        return call_unstructured_ocr(pix), _LABEL_OCR_CPU
+        return call_unstructured_ocr(pix, dpi=_OCR_DPI), _LABEL_OCR_CPU
     return call_lighton_ocr(pix), _LABEL_OCR
 
 
@@ -98,7 +101,7 @@ def parse_pdf(path: str, force_pipeline: str | None = None) -> list[tuple[str, s
             )
 
             if use_ocr:
-                pix = page.get_pixmap(dpi=300)
+                pix = page.get_pixmap(dpi=_OCR_DPI)
                 page_string, label = _ocr_page(pix)
                 print(
                     f"[INGEST] Page {page_number + 1}/{n_pages} → {label} ({'forced' if force_pipeline == 'ocr' else 'scanned'})"

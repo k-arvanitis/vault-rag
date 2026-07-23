@@ -1,7 +1,87 @@
 # vault-rag — Progress & Plan
 
 Single source of truth. Update this at the start of every session.
-Last updated: 2026-07-22
+Last updated: 2026-07-23
+
+---
+
+## Session 2026-07-23 (part 2) — quote-narrowing fix, demo corpus scoping, doc_001 incident, bbox-for-OCR-pages shipped
+
+**Shipped:** `_narrow_quotes_to_answer` (`src/answer_pipeline.py`) sentence-keep filter was
+ratio-only (`overlap/len(words) >= 0.5`), which let a short heading-like sentence
+(`"2. Term."`, ratio 1.0) beat the real multi-word answer sentence (ratio ~0.35, but overlap
+count 3+) for display as the citation quote. Fixed with an absolute-overlap OR-condition
+(`overlap/len(words) >= 0.5 or overlap >= 3`). Live-verified on the lease "Term" question —
+quote now shows the real sentence, not just "Term." Commit `db196de`.
+
+**Demo corpus scoped to 3 docs** (doc_001 PDF, doc_016a OCR lease, doc_006 Excel) for a
+client-facing recording, removing the other 15 from live Qdrant. README eval numbers are
+static and intentionally untouched — they describe the full 18-doc corpus, not live state.
+
+**doc_006 deliberately "dirtied"**: inserted a title row + a generated-date/confidentiality
+notes row before the real header row in both `data/input/` and `eval/data/raw/` copies of the
+xlsx, to simulate a messy SME export. Existing header-detection logic
+(`excel_cleaner.py`/`ingest_table_rows.py`) handled it with no code changes — re-ingested clean,
+7 columns / 6701 rows verified.
+
+**Incident: accidentally deleted the real doc_001 ingestion while cleaning up path-prefix
+metadata duplicates.** Corpus had coexisting `source_file` variants for the same logical docs
+(`eval/data/raw/doc_001_procurement_policy.pdf` vs bare filename) from different historical
+ingestion runs. Deleted the wrong one — the complete 69-point ingestion — leaving an 11-point
+remnant missing the "Authorizing Manager: Ricki Contreras" chunk. LACERA question went from
+occasionally-wrong (known nondeterminism) to wrong every time. User caught it live. Fixed by
+re-ingesting doc_001 fresh from `data/input/`, restored all 80 points, chunk verified present.
+**Lesson, now binding:** the project's data-safety rule (never delete large computed
+artifacts without confirming which copy is authoritative) applies to Qdrant point deletion by
+metadata match, not just files on disk — investigate path-prefix ambiguity before deleting,
+don't clean up reactively.
+
+**LACERA reliability measured honestly** (user pushed back on "known nondeterminism" being used
+as a hand-wave): unscoped/open-corpus = 13/20 correct (65%), scoped to doc_001 via the existing
+UI document-selector = 20/20 (100%). Root cause is LLM query-planning nondeterminism affecting
+which chunks make the reranked pool, not a retrieval architecture defect — no code fix applied;
+for the demo, use the existing doc-scope selector. Open-corpus 65%/confidently-wrong-when-wrong
+gap logged here as a real, separate, not-yet-scheduled investigation.
+
+**bbox-for-OCR-pages, shipped.** User asked why scanned-page citations only showed a full raw
+page image, no cropped highlight, unlike born-digital PDFs (which use `fitz.search_for` against
+the real text layer). Landed the full feature, browser-verified end to end:
+- `src/ingestion/unstructured_ocr.py`: `call_unstructured_ocr` now emits an
+  `<!-- ocr_bbox:[x0,y0,x1,y1] -->` comment before each OCR'd element, converted from
+  unstructured's `PixelSpace` (its own internal `hi_res` analysis resolution, read from
+  `coords.system.width/height` — not the caller's `dpi`, the two differ) into PDF points via
+  `pix.width/system.width * 72/dpi`. Both coordinate systems share a top-left origin, no y-flip
+  needed. Caught live: `coords.points` are numpy `float64`, whose `list.__repr__` renders
+  `np.float64(1.2)` — silently failed the plain-digit downstream regex with zero error, every
+  bbox dropped. Fixed by casting to `float()` before building the bbox list; added a regression
+  test using real `np.float64` inputs (the first version of the test used plain Python floats
+  and didn't catch it).
+- `src/chunker.py` / `src/answer_pipeline.py`: capture `ocr_bbox` per chunk, unconditioned by
+  the `figure_bbox` "is this 40% of the chunk" gate (an OCR chunk's whole content IS page text,
+  not prose incidentally near a photo). First version pointed the crop at the chunk's *first*
+  OCR element (often the page title, not the cited clause) — reproduced live on doc_016a's
+  "Term" question, crop showed the page header instead of the RECITALS clause a few lines down.
+  Fixed by keeping every `(bbox, text)` element in the chunk (`_ocr_segments`, a private key
+  matching the existing `_figure_text` pattern) and having `_narrow_quotes_to_answer` re-point
+  `ocr_bbox` at whichever element's own text has the highest word-overlap with the final answer,
+  once the real answer is known — the same word-overlap mechanism already used to null
+  `figure_bbox` out when a figure isn't the actual evidence.
+- `api.py`'s `/pdf/{page}/crop` endpoint needed no change — already generic (any bbox + page →
+  `fitz` crop from the original PDF), since our transform lands in the same PDF-point space it
+  already expects.
+- `frontend/lib/api.ts` / `EvidencePanel.tsx`: added `ocr_bbox` to the `Source` type;
+  `EvidencePage`'s highlight lookup falls back to `source.ocr_bbox` when `/pdf/{page}/highlight`
+  returns `bbox=null` (always true for scanned pages — no real text layer to search).
+- `doc_016a` re-ingested via `PDF_PARSER=cpu` (the `unstructured`+Tesseract path) to actually
+  populate `ocr_bbox`; LightOn OCR (the GPU default) still returns plain text with no layout
+  data — unchanged, not modified, per the standing restriction on `src/ingestion/ocr.py`.
+- Browser-verified on two independent lease questions ("term of the lease", "minimum general
+  liability coverage") — both crops center exactly on the cited clause, not the page top.
+- 381 backend tests pass (2 new: bbox-transform math incl. the numpy-float regression, and the
+  first-element-vs-cited-element retargeting), ruff clean, one new frontend test fixture updated
+  (`MessageList.test.tsx`).
+Known limitation: only pages actually routed through `PDF_PARSER=cpu` get `ocr_bbox` — a page
+OCR'd via the default LightOn path still falls back to the full-page view, same as before.
 
 ---
 

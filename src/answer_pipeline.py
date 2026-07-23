@@ -354,6 +354,7 @@ _TABLE_MARKER_RE = re.compile(r"\[TABLE_START\]|\[TABLE_END\]")
 # leaving it in a citation's quote would break fitz.search_for-based highlighting.
 _FIGURE_BLOCK_RE = re.compile(r"\[FIGURE_START\].*?\[FIGURE_END\]", re.DOTALL)
 _FIGURE_BBOX_RE = re.compile(r"<!-- bbox:\[([\d.,\s]+)\] -->")
+_OCR_BBOX_RE = re.compile(r"<!-- ocr_bbox:\[([\d.,\s]+)\] -->")
 # _format_hits (retrieval_tool.py) sometimes wraps a chunk's own content with
 # "[prev chunk]"/"[next chunk]" neighbor context for the LLM's benefit — that
 # wrapper isn't part of the chunk's real text, so it must not leak into the
@@ -729,7 +730,26 @@ def parse_sources(collected: list[str]) -> list[dict]:
                 else ""
             )
 
+            # Scanned-page (unstructured/CPU OCR) chunks carry a bbox comment
+            # before each OCR'd element -- a chunk usually spans several
+            # elements (a heading, several clauses), so the first one isn't
+            # necessarily anywhere near whichever sentence the answer
+            # actually cites. Keep every (bbox, text) segment here; once
+            # _narrow_quotes_to_answer knows the real cited sentence it picks
+            # the best-overlapping segment's bbox instead of just the first.
+            ocr_split = _OCR_BBOX_RE.split(body)
+            ocr_segments = (
+                [
+                    ([float(v) for v in ocr_split[i].split(",")], ocr_split[i + 1])
+                    for i in range(1, len(ocr_split), 2)
+                ]
+                if len(ocr_split) > 1
+                else []
+            )
+            ocr_bbox = ocr_segments[0][0] if ocr_segments else None
+
             plain = _FIGURE_BLOCK_RE.sub("", body)
+            plain = _OCR_BBOX_RE.sub("", plain)
             # A chunk boundary can split a figure block so only [FIGURE_END]
             # (no matching [FIGURE_START]) lands in this chunk's body -- the
             # paired regex above doesn't match an orphan, so it leaks through
@@ -808,6 +828,8 @@ def parse_sources(collected: list[str]) -> list[dict]:
                     "score": round(score, 4) if score else None,
                     "figure_bbox": figure_bbox,
                     "_figure_text": figure_text,
+                    "ocr_bbox": ocr_bbox,
+                    "_ocr_segments": ocr_segments,
                 }
             )
     # Cap at 8, but guarantee every distinct file that produced a chunk keeps at
@@ -949,6 +971,20 @@ def _narrow_quotes_to_answer(sources: list[dict], answer: str) -> None:
             figure_words = {w for w in _WORD_RE.findall(figure_text.lower()) if len(w) > 2}
             if not figure_words or len(figure_words & answer_words) / len(figure_words) < 0.3:
                 source["figure_bbox"] = None
+
+        # Re-point the OCR crop at whichever element's own text actually
+        # overlaps the answer, instead of leaving it on the chunk's first
+        # element (parse_sources' default) which is often just a heading.
+        ocr_segments = source.pop("_ocr_segments", None)
+        if ocr_segments and answer_words:
+            best_bbox, best_overlap = None, 0
+            for bbox, text in ocr_segments:
+                words = {w for w in _WORD_RE.findall(text.lower()) if len(w) > 2}
+                overlap = len(words & answer_words)
+                if overlap > best_overlap:
+                    best_overlap, best_bbox = overlap, bbox
+            if best_bbox is not None:
+                source["ocr_bbox"] = best_bbox
         source["quote"] = final
 
 
@@ -990,6 +1026,7 @@ def _excel_citations_to_sources(
                 "chunk_id": None,
                 "score": None,
                 "figure_bbox": None,
+                "ocr_bbox": None,
             }
         )
     return out

@@ -71,9 +71,14 @@ function EvidencePage({ source }: { source: Source }) {
     getPdfHighlight(source.filename, page, source.quote)
       .catch(() => ({ bbox: null }))
       .then((highlight) => {
-        setBbox(highlight.bbox);
-        if (highlight.bbox) {
-          return getPdfCrop(source.filename, page, focusedCropBbox(highlight.bbox)).then((res) =>
+        // Scanned pages have no real text layer, so fitz.search_for above
+        // always returns bbox=null -- fall back to the OCR-time bbox stored
+        // on the chunk (unstructured/CPU OCR path only; LightOn OCR pages
+        // still fall through to the full-page view below).
+        const box = highlight.bbox ?? source.ocr_bbox;
+        setBbox(box);
+        if (box) {
+          return getPdfCrop(source.filename, page, focusedCropBbox(box)).then((res) =>
             setCropSrc(`data:image/png;base64,${res.image_b64}`)
           );
         }
@@ -83,7 +88,7 @@ function EvidencePage({ source }: { source: Source }) {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [source.filename, source.page, source.quote]);
+  }, [source.filename, source.page, source.quote, source.ocr_bbox]);
 
   useEffect(() => {
     if (showFullPage && !pageSrc && source.page != null) {

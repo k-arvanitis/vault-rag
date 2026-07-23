@@ -330,6 +330,31 @@ class TestParseSourcesContract:
         )
         assert sources[0]["figure_bbox"] == [10.0, 20.0, 300.0, 150.0]
 
+    def test_ocr_bbox_retargeted_to_cited_element_not_chunk_first_element(self):
+        """Reproduced live: doc_016a page 2's chunk opens with the page title
+        and RECITALS heading, but the actual cited sentence ("four-year term
+        ... ended on June 30, 2019") is a later element -- parse_sources'
+        default (first bbox in the chunk) pointed the crop at the title, not
+        the cited text. _narrow_quotes_to_answer must re-point it once the
+        real answer is known."""
+        header = "[1] file=doc_016a_original_lease.pdf chunk=1 page=2 score=0.9"
+        body = (
+            "<!-- ocr_bbox:[100.0, 50.0, 300.0, 70.0] -->\n"
+            "LEASE AGREEMENT\n\n"
+            "<!-- ocr_bbox:[80.0, 90.0, 320.0, 105.0] -->\n"
+            "RECITALS\n\n"
+            "<!-- ocr_bbox:[70.0, 120.0, 530.0, 170.0] -->\n"
+            "The four-year term of the current lease agreement between Tenant "
+            "and Third-Party Beneficiary ended on June 30, 2019."
+        )
+        sources = parse_sources([f"{header}\n{body}"])
+        assert sources[0]["ocr_bbox"] == [100.0, 50.0, 300.0, 70.0]  # default: first
+        _narrow_quotes_to_answer(
+            sources, "The four-year term ended on June 30, 2019"
+        )
+        assert sources[0]["ocr_bbox"] == [70.0, 120.0, 530.0, 170.0]
+        assert "_ocr_segments" not in sources[0]
+
     def test_excerpt_strips_page_boundary_marker(self):
         """<!-- PAGE N pymupdf4llm --> is pipeline bookkeeping, not text on the
         page -- it must not leak into the Evidence panel's quote."""
