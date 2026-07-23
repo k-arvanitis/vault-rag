@@ -914,7 +914,22 @@ def _narrow_quotes_to_answer(sources: list[dict], answer: str) -> None:
             kept = []
             for sentence in sentences:
                 words = {w for w in _WORD_RE.findall(sentence.lower()) if len(w) > 2}
-                if words and len(words & answer_words) / len(words) >= 0.5:
+                if not words:
+                    continue
+                overlap = len(words & answer_words)
+                # Ratio alone punishes a long, correct sentence: reproduced live, a
+                # numbered clause's heading ("2. Term.") scored ratio=1.0 (its one
+                # real word, "term", is in the answer) and got kept, while the
+                # actual answer-bearing sentence right after it ("The term of this
+                # Lease shall commence on July 1, 2020... and end on June 30,
+                # 2024...") scored ~35% -- diluted by legitimate extra detail
+                # (dates, "commencement", "unless terminated earlier") -- and got
+                # dropped, leaving the citation quote as the single word "Term."
+                # A minimum absolute overlap count catches that case regardless of
+                # sentence length, without loosening the ratio gate for short
+                # sentences (which still need the ratio to avoid keeping every
+                # sentence that happens to share one generic word).
+                if overlap / len(words) >= 0.5 or overlap >= 3:
                     kept.append(sentence)
             if len(sentences) > 1 and kept:
                 final = " ".join(kept)
