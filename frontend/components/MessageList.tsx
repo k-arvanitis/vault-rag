@@ -293,18 +293,20 @@ function SourcesUsed({
   onOpenFullSource?: (target: InspectTarget) => void;
 }) {
   if (sources.length === 0) return null;
-  // "Unsupported" means nothing actually backed the answer -- falling back to
-  // "show every retrieved candidate" here (the no-inline-markers fallback
-  // below, meant for table/SQL answers) would misleadingly read as "8 sources
-  // used" for an answer that used none of them.
+  // "Unsupported" means nothing actually backed the answer -- and an answer
+  // that cites nothing inline isn't "backed by every retrieved candidate"
+  // either. Both used to fall through to the same "show every retrieved
+  // candidate" block, which read as "N sources used" for an answer that
+  // used zero of them -- reproduced live: a correct, single-fact answer
+  // with no [N] marker showed 8 unrelated retrieved pages as if all 8 were
+  // its evidence. Neither case fabricates a citation; both say plainly that
+  // nothing specific was pinned down, leaving the raw candidates in
+  // Technical details for inspection instead of asserting they were used.
   const isUnsupported = content.trim().toLowerCase() === "unsupported";
   const cited = citedIndices(content);
   const citations = sources.map((s, i) => toCitation(s, i + 1));
-  const shown = isUnsupported
-    ? []
-    : cited.size > 0
-      ? citations.filter((c) => cited.has(c.id))
-      : citations;
+  const noCitations = !isUnsupported && cited.size === 0;
+  const shown = isUnsupported || noCitations ? [] : citations.filter((c) => cited.has(c.id));
   const remaining = citations.length - shown.length;
   const shownSources = citedOnlySources(content, sources);
 
@@ -313,6 +315,15 @@ function SourcesUsed({
       <p className="mt-2 text-[10px] text-muted-foreground">
         {citations.length} retrieved candidate{citations.length > 1 ? "s" : ""} didn&apos;t support an
         answer — see Technical details.
+      </p>
+    );
+  }
+
+  if (noCitations) {
+    return (
+      <p className="mt-2 text-[10px] text-muted-foreground">
+        Answered without pinning a specific citation — {citations.length} retrieved candidate
+        {citations.length > 1 ? "s" : ""} in Technical details.
       </p>
     );
   }

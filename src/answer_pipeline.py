@@ -612,6 +612,40 @@ def strip_leaked_headers(
     return cleaned.strip()
 
 
+def _attach_excel_marker_if_missing(
+    text: str, excel_citations: list[dict], sources: list[dict]
+) -> str:
+    """Attach a deterministic [N] marker when `text` cites nothing but was
+    answered from Excel, so it isn't silently excluded from "Sources used".
+
+    query_excel's result never enters the [N] chunk-marker stream
+    search_knowledge_base's does (it's SQL output, not a numbered tool
+    result), so the model has nothing to cite for a SQL-derived fact.
+    excel_citations names the real source deterministically -- unlike a
+    retrieved chunk's rank, which reflects relevance to the query, not
+    what the answer was actually derived from, and is not a safe stand-in
+    (reproduced live: the answer's own top-ranked chunk and the chunk it
+    actually cited were different chunks; a comparison-question fix in
+    this same file was needed for the reranker parking the real evidence
+    at rank 3, not rank 1). Only ever attaches a marker backed by this
+    specific, causal signal -- never a guess.
+    """
+    if not text or text.lower() == "unsupported" or _ANSWER_CITATION_RE.search(text):
+        return text
+    if not excel_citations:
+        return text
+    citation = excel_citations[0]
+    key = (
+        _resolve_original_name(citation.get("source_file") or ""),
+        citation.get("sheet_name"),
+    )
+    position = next(
+        (i + 1 for i, s in enumerate(sources) if (s["filename"], s.get("sheet")) == key),
+        None,
+    )
+    return f"{text.rstrip()} [{position}]" if position is not None else text
+
+
 def parse_sources(collected: list[str]) -> list[dict]:
     """Parse collected tool chunks into source cards.
 
@@ -1365,6 +1399,10 @@ def answer_query(
         answer = strip_leaked_headers(answer, citation_map=citation_map)
         if _is_malformed_generation(answer) or not answer.strip():
             answer = "Unsupported"
+        else:
+            answer = _attach_excel_marker_if_missing(
+                answer, excel_trace.get("excel_citations") or [], sources
+            )
     else:
         # Each part ran as its own agent call with its own [N] numbering, so a
         # single citation_map built from the merged `collected` can't resolve
@@ -1382,39 +1420,7 @@ def answer_query(
             cleaned = strip_leaked_headers(p_ans, citation_map=part_map)
             if _is_malformed_generation(cleaned):
                 cleaned = "Unsupported"
-            # query_excel's result never enters the [N] chunk-marker stream
-            # search_knowledge_base's does (it's SQL output, not a numbered
-            # tool result) -- reproduced live: a part answered purely from
-            # Excel ("12892.0, the largest...") carried no marker at all, so
-            # it silently fell out of "Sources used" even though a real,
-            # known source backs it. Attach one deterministically instead of
-            # hoping the model invents a marker for text it was never shown
-            # bracketed. Don't fall back to the part's top retrieved chunk --
-            # reproduced live, the agent's own search_knowledge_base call in
-            # this part searched the wrong document (doc_001, not doc_006)
-            # while still getting the right answer from query_excel, so the
-            # top "retrieved" chunk is unrelated noise, not real evidence.
-            if (
-                cleaned
-                and cleaned.lower() != "unsupported"
-                and not _ANSWER_CITATION_RE.search(cleaned)
-                and p_excel_citations
-            ):
-                citation = p_excel_citations[0]
-                key = (
-                    _resolve_original_name(citation.get("source_file") or ""),
-                    citation.get("sheet_name"),
-                )
-                position = next(
-                    (
-                        i + 1
-                        for i, s in enumerate(sources)
-                        if (s["filename"], s.get("sheet")) == key
-                    ),
-                    None,
-                )
-                if position is not None:
-                    cleaned = f"{cleaned.rstrip()} [{position}]"
+            cleaned = _attach_excel_marker_if_missing(cleaned, p_excel_citations, sources)
             cleaned_parts.append(cleaned)
         # Blank line between parts (a single \n is only a soft break in
         # markdown); number them so a terse part still reads as its own answer.

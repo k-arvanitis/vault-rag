@@ -1138,6 +1138,42 @@ class TestAnswerQueryComparisonRouting:
         assert result["answer"] == "fallback answer"
 
 
+class TestSinglePartExcelAnswerGetsMarker:
+    """A single, non-split question answered purely by query_excel also never
+    gets an [N] marker (same root cause as the multi-part case: SQL output
+    never enters the bracketed chunk stream). Reproduced live: "Sources used
+    · 1" looked fine only by coincidence (a lone Excel citation is often the
+    only candidate at all) -- with any other retrieved candidate present it
+    would silently read as "used" without ever being individually cited."""
+
+    def test_single_part_excel_answer_gets_deterministic_marker(self):
+        def fake_answer_one(agent, part, trace=None, forced_doc_id=None, usage=None):
+            return (
+                "12976.92, the total NET Amount spent on MATERIALS.",
+                [],
+                {
+                    "excel_citations": [
+                        {
+                            "source_file": "doc_006_purchase_card_transactions_q1_2025_26.xlsx",
+                            "sheet_name": "DataAnalysis",
+                            "quote": "12976.92",
+                        }
+                    ]
+                },
+            )
+
+        with patch("src.answer_pipeline.answer_one", side_effect=fake_answer_one):
+            result = answer_query(
+                agent=object(),
+                question="What is the total NET Amount spent on MATERIALS?",
+            )
+
+        assert "[1]" in result["answer"]
+        assert result["sources"][0]["filename"] == (
+            "doc_006_purchase_card_transactions_q1_2025_26.xlsx"
+        )
+
+
 class TestMultiPartAnswerCitations:
     """A multi-part question runs each part as its own agent call, so a
     citation_map built from the merged chunks (which only resolves the LAST

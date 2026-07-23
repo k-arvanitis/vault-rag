@@ -5,7 +5,53 @@ Last updated: 2026-07-23
 
 ---
 
-## Session 2026-07-23 (part 2) — quote-narrowing fix, demo corpus scoping, doc_001 incident, bbox-for-OCR-pages shipped, cross-doc citation fix
+## Session 2026-07-23 (part 2) — quote-narrowing fix, demo corpus scoping, doc_001 incident, bbox-for-OCR-pages shipped, citation-marker fixes (multi-part + single-part Excel, honest "no citation" framing)
+
+**Shipped: ran a full "check every doc type live" pass (PDF, OCR, Excel, cross-doc) and fixed
+what it found.** After the cross-doc fix above, user asked for an end-to-end UI check of all 4
+demo doc types. Found a broader version of the same root cause: any single-part answer with no
+resolvable `[N]` marker showed "Sources used · N" for every retrieved candidate as if all N
+backed the answer — a plain born-digital PDF question ("Who must approve a Sole Source
+Procurement...") got a correct answer with zero citation and 8 unrelated pages shown as "used."
+Consulted advisor before fixing: the tempting fix (attach a marker to the top-ranked retrieved
+chunk when none resolves) was explicitly rejected — reranker rank reflects query relevance, not
+what the answer was actually derived from, and this session's own evidence proved they diverge
+(the LACERA fix note above: "the reranker placed it #3," and this session's own cross-doc debug
+dump: the model cited a chunk different from the call's own rank-1 result). A synthesized,
+unverifiable citation chip pointing at the wrong evidence is worse than honest noise — it's
+exactly the "confident wrong citation" failure class this whole session was spent killing.
+Shipped two changes instead, both using only known-safe signals:
+1. **Backend** (`src/answer_pipeline.py`): extracted the Excel-marker-attach logic from the
+   multi-part branch into `_attach_excel_marker_if_missing()` and applied it to the single-part
+   path too — a single, non-split question answered purely by `query_excel` (e.g. "total NET
+   Amount spent on MATERIALS") now gets a real `[N]` marker from its `excel_citations`, the
+   same trustworthy signal as the multi-part fix, just not wired to that code path before.
+2. **Frontend** (`MessageList.tsx`): when an answer isn't "Unsupported" but resolves zero
+   citation markers, stop labeling the full retrieved-candidate list "Sources used · N" — show
+   "Answered without pinning a specific citation — N retrieved candidates in Technical details"
+   instead, mirroring the existing honest framing already used for genuine "Unsupported"
+   answers. No data is hidden (Technical details still lists everything); the UI just stops
+   asserting attribution it doesn't have.
+Both changes are safe/reversible (labeling and a deterministic marker from a name-checked
+citation) and were browser-verified live: the procurement-policy question now reads "Answered
+without pinning a specific citation — 8 retrieved candidates..." instead of a fake "Sources
+used · 8"; the single-part Excel question, force-scoped to bypass a separate pre-existing
+routing flakiness, correctly showed `[1]` with exactly one real source.
+Full check results across all 4 demo doc types after these fixes:
+- Born-digital PDF: correct, now honestly labeled when uncited (was the main gap found).
+- OCR (lease): already clean — citation, correct crop, verified earlier this session.
+- Excel: clarify-vs-answer behavior is correct (an ambiguous query properly asks for more
+  detail instead of guessing); a resolvable query now gets a real marker.
+- Cross-doc: confirmed the earlier fix survived a server restart, still cites both facts.
+383 backend tests pass (2 new, one for the previously-uncovered single-part Excel path), 20
+frontend tests pass, `tsc --noEmit` clean, ruff clean.
+**Known, not fixed, explicitly out of scope for tonight (per advisor):** *why* a born-digital
+single-part answer sometimes omits `[N]` even though the marker stream exists for it is a
+generation-side question, not a display one — a fresh investigation, not a wrap-up item. Also:
+tmux crashed a second time mid-session (killed both the API and the Next.js dev server this
+time) — restarted both; the underlying tmux instability itself is still unexplained.
+
+---
 
 **Shipped: cross-document answers now cite every part, not just the retrieval-backed one.**
 User tested a straightforward cross-doc question (lease rent + Excel max transaction) and got
