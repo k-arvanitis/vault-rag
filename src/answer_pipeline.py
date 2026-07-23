@@ -25,6 +25,7 @@ from src.rag_agent import (
     stream_agent,
 )
 from src.retriever import retrieve
+from src.tools.excel import ORIGINAL_QUESTION
 from src.tools.retrieval_tool import FORCED_DOC_ID
 from src.vector_store import _stable_id
 
@@ -1007,19 +1008,27 @@ def run_once(
     tool_calls: list[str] = []
     rejected: list[dict] = []
     excel_citations: list[dict] = []
-    for token in stream_agent(
-        agent,
-        question,
-        collected_chunks=collected,
-        sql_trace=sql_trace,
-        tool_calls=tool_calls,
-        rejected_chunks=rejected,
-        excel_citations=excel_citations,
-        trace=trace,
-        skip_grounding_check=skip_grounding_check,
-        usage=usage,
-    ):
-        tokens.append(token)
+    # query_excel's column-match gate reads this to check against what was
+    # actually asked, not whatever text the agent's own internal retry loop
+    # rewrites into a later query_excel call — see ORIGINAL_QUESTION's
+    # docstring (src/tools/excel.py) for the reproduced case.
+    question_token = ORIGINAL_QUESTION.set(question)
+    try:
+        for token in stream_agent(
+            agent,
+            question,
+            collected_chunks=collected,
+            sql_trace=sql_trace,
+            tool_calls=tool_calls,
+            rejected_chunks=rejected,
+            excel_citations=excel_citations,
+            trace=trace,
+            skip_grounding_check=skip_grounding_check,
+            usage=usage,
+        ):
+            tokens.append(token)
+    finally:
+        ORIGINAL_QUESTION.reset(question_token)
     answer = "".join(tokens).strip()
     trace_holder = {
         "sql": sql_trace,

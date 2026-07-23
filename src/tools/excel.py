@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import operator
 import re
+from contextvars import ContextVar
 from typing import Annotated, Any, TypedDict
 
 from langchain_core.tools import StructuredTool
@@ -65,6 +66,22 @@ from src.vector_store import get_source_by_duckdb_table
 
 _MAX_SQL_ATTEMPTS = 3
 _ROW_LIMIT = 50
+
+# Set once per top-level agent turn (src/answer_pipeline.py's run_once, around the
+# stream_agent/agent.invoke() call) to the question the agent was actually asked --
+# read by _column_matches_question's gate so a column-match check can't be fooled
+# by a self-rewritten retry. Reproduced live: on an internal SQL retry, the ReAct
+# agent rewrote its own query_excel(question=...) argument to directly ask for the
+# wrong column ("...what is the Merchant Category for the transaction...") instead
+# of the user's real question ("what payment method...") -- no text pattern on that
+# rewritten string can distinguish it from a genuine user question, since by that
+# point it genuinely does name the wrong field. The fix is not smarter text
+# matching, it's not trusting agent-mutable text for this check at all: this
+# ContextVar mirrors FORCED_DOC_ID's pattern (src/tools/retrieval_tool.py) to give
+# the gate access to the one piece of text the agent's own tool calls can't rewrite.
+ORIGINAL_QUESTION: ContextVar[str | None] = ContextVar(
+    "ORIGINAL_QUESTION", default=None
+)
 
 _DOC_TABLE_PREFIX_RE = re.compile(r"^doc_\d+_", re.IGNORECASE)
 
@@ -531,12 +548,23 @@ _TARGET_FIELD_PREFIX_RE = re.compile(
 def _target_field_phrase(question: str) -> str:
     """Return the leading phrase naming the field asked for, dropping any
     trailing row-qualifier clause. Falls back to the full question if no
-    clause boundary is found."""
-    q = question.strip().rstrip("?")
+    clause boundary is found.
+
+    Parenthetical asides are stripped first -- reproduced live: on a retry,
+    the outer ReAct agent rewrote its own query_excel call to "...what
+    payment method (Merchant Category) was used..." -- self-injecting its
+    wrong-column guess as parenthetical text in the SAME question string this
+    gate compares against, so "Merchant Category" trivially vocabulary-matched
+    a question that now, by the agent's own doing, contained the words
+    "Merchant Category". The gate exists specifically to not trust that guess
+    (see _column_matches_question's docstring); a caller-injected aside must
+    not be able to satisfy the check it's supposed to fail.
+    """
+    q = re.sub(r"\([^)]*\)", " ", question).strip().rstrip("?")
     m = _ROW_QUALIFIER_RE.search(q)
     head = q[: m.start()] if m else q
     head = _TARGET_FIELD_PREFIX_RE.sub("", head).strip()
-    return head or question
+    return head or q
 
 
 def _column_matches_question(column_name: str, question: str) -> bool:
@@ -634,10 +662,23 @@ def _build_inner_graph(store: DuckDBStore) -> Any:
         # selected columns share real vocabulary with the question, discard the SQL
         # exactly as if the model had refused, so it flows through the same
         # retry/next-table/Unsupported path as a genuine no-match.
+        #
+        # Gate against ORIGINAL_QUESTION (the real top-level ask), not
+        # state["question"] -- state["question"] is whatever text the outer
+        # ReAct agent's own retry loop chose to pass to this tool call, and
+        # it's allowed to rewrite that freely between calls. Reproduced live:
+        # after a rejected "Merchant Category" attempt, the agent's own next
+        # retry rewrote its query_excel call to ask "...what is the Merchant
+        # Category for the transaction..." outright -- at that point the text
+        # genuinely does name the wrong field, so no pattern match on it can
+        # catch the substitution; only a source of truth the agent can't
+        # rewrite can. Falls back to state["question"] when unset (e.g. tests
+        # that build the graph without going through run_once).
+        gate_question = ORIGINAL_QUESTION.get() or state["question"]
         if sql:
             selected_columns = _extract_selected_columns(sql)
             if selected_columns and not any(
-                _column_matches_question(col, state["question"])
+                _column_matches_question(col, gate_question)
                 for col in selected_columns
             ):
                 sql = ""

@@ -1,5 +1,5 @@
 {
-  "benchmark_date": "2026-07-22",
+  "benchmark_date": "2026-07-23",
   "answer_model": "openai/gpt-oss-120b",
   "judge_model": "gpt-4o-mini",
   "document_count": 18,
@@ -23,9 +23,9 @@
     "correct_refusal_rate": 0.8571428571428571
   },
   "agent_answer_metrics": {
-    "correctness": 0.9220183486238532,
+    "correctness": 0.8990825688073395,
     "faithfulness": 0.8910256410256411,
-    "answer_relevancy": 0.9339449541284404
+    "answer_relevancy": 0.9110091743119266
   },
   "judge_breakdown": {
     "custom_llm_judge": 94,
@@ -46,11 +46,11 @@
   "correctness_by_question_type": {
     "cross_document_compare": {
       "count": 20,
-      "correctness": 0.9
+      "correctness": 0.85
     },
     "figure_grounding": {
       "count": 3,
-      "correctness": 1.0
+      "correctness": 0.6666666666666666
     },
     "negation_check": {
       "count": 5,
@@ -58,15 +58,15 @@
     },
     "numeric_lookup": {
       "count": 6,
-      "correctness": 0.9166666666666666
+      "correctness": 1.0
     },
     "numeric_reasoning": {
       "count": 4,
-      "correctness": 0.5
+      "correctness": 0.75
     },
     "ocr_extraction": {
       "count": 25,
-      "correctness": 0.92
+      "correctness": 0.88
     },
     "single_doc_factoid": {
       "count": 17,
@@ -82,7 +82,7 @@
     },
     "unanswerable": {
       "count": 10,
-      "correctness": 1.0
+      "correctness": 0.9
     }
   },
   "answer_result_file": "/home/karvanitis/vault-rag/eval/results/answer_results.jsonl",

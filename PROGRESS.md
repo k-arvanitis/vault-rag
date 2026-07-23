@@ -179,6 +179,74 @@ Not chased further today — flagged for a dedicated session; likely needs a dif
 replay — this repo has a documented 12-point regression from exactly this class of retrieval
 change (see below); ship gate, not optional, "for a client" raises the stakes not lowers them.
 
+Fix #3 shipped after the replay confirmed it (`4a698f2`): correctness 90.6% → 92.2%,
+`single_doc_factoid` 94.1%, hit@5 unchanged. The two buckets that dipped that run (refusal,
+structured) both traced to Excel `numeric_reasoning` — untouched by the retrieval change, and a
+tiny (n=4) pre-existing weak bucket, not a regression.
+
+---
+
+## Session 2026-07-22, part 3 — Excel field-hallucination fabrication (user: "push further the
+regressing metrics, investigate in depth")
+
+User asked to chase part 2's dipped buckets. Both failing rows (`doc_007_qa_9`: "what payment
+method... " gold `Unsupported`; `doc_014_qa_2`: "what is the VAT registration number...", gold
+`Unsupported`) turned out to share one real mechanism: the requested field genuinely doesn't
+exist as a column in either table, but `query_excel`'s SQL-writing LLM would select a real,
+wrong column (`Merchant Category`, a supplier `Name`) and `FORMAT_PROMPT`'s "always output a
+value, never abstain" rule then forced a confident label onto it — the exact "correct-looking
+citation, wrong fact" failure class this whole investigation started from, just on the Excel
+side.
+
+**Three attempts, in order, each verified live before moving to the next (root-cause discipline,
+not guessing):**
+
+1. **`SELECT *` bypass — confirmed NOT the cause, reverted.** `_extract_selected_columns`
+   deliberately excludes `*` from its output, so a `SELECT *` query would skip the existing
+   `_column_matches_question` vocabulary gate entirely. Real gap, but not what these two rows hit
+   (their SQL always named columns explicitly) — expanding `*` to the full schema had zero effect
+   on either repro case live, so reverted rather than shipping an unproven change carrying its own
+   inverse risk (rejecting a legitimate `SELECT *` answer).
+2. **Parenthetical self-injection — real, partial.** Deep live trace caught the actual leak: on a
+   SQL retry, the outer ReAct agent rewrote its own `query_excel(question=...)` call to
+   `"...what payment method (Merchant Category) was used..."` — injecting its own wrong-column
+   guess as parenthetical text into the SAME string the gate compares against, so "Merchant
+   Category" trivially vocabulary-matched a question that, by the agent's own doing, now
+   contained those words. Fixed by stripping parentheticals in `_target_field_phrase` before
+   comparing. Shipped-then-caught-broken: the fix's own fallback line returned the *original*
+   unstripped param on the common case (a leading row-qualifier makes `head` empty, forcing the
+   `or` fallback) — `head or question` instead of `head or q`. Fixed; verified the corrected
+   version actually removes the parenthetical from what gets compared.
+3. **Full agent-rewritten retry — the real root cause.** Even fixed, still leaked ~50%: the agent
+   doesn't need parentheses at all — on a later retry it rewrote the question outright to
+   `"...what is the Merchant Category for the transaction..."`, no hint syntax, just directly
+   asking for the wrong field. No text pattern can distinguish that from a genuine user question,
+   because at that point it genuinely does name the wrong column. The fix isn't smarter text
+   matching, it's not trusting agent-mutable text for this check at all: added `ORIGINAL_QUESTION`
+   (`src/tools/excel.py`), a `ContextVar` mirroring `FORCED_DOC_ID`'s exact existing pattern, set
+   once in `answer_pipeline.py`'s `run_once` to the question the agent was actually invoked with
+   before any internal retry loop can rewrite it, read by the gate instead of `state["question"]`.
+
+**Live verification:** fabrication rate on the two repro questions dropped from ~50%+ (both
+narrow patches) to 1/8 across 8 repeated live runs each — a small residual remains (a
+self-hallucinated column literally named after the requested field, e.g. `"Payment Method"`,
+still occasionally slips the vocabulary gate since it trivially matches by construction; the
+`last_single_col_value` fallback — advisor-flagged, never fully confirmed — is the leading
+suspect). Logged as a known minor residual, not chased further.
+
+**Full eval replay (ship gate, per this repo's own rule for any Excel FORMAT-path change):**
+correctness 89.9%, faithfulness 89.1%, relevancy 91.1%, refusal 85.7%, structured 90.5%,
+`table_lookup` 93.75% (unchanged from the pre-this-fix replay — same 15/16, just a different
+single question flipped each way, net zero, consistent with the ambient run-to-run
+nondeterminism characterized all session, not a directional regression from the gate change).
+Both originally-targeted rows now score 1.0. Row-level diff against the previous committed run
+found 6 regressed / 4 improved — none outside `numeric_reasoning`/`table_lookup`'s already-known
+noise band, and the retrieval-fix's own already-disclosed residual (`doc_001_qa_3`, the LACERA
+question — right most runs, wrong this one, exactly the "not 10/10, the replay number" ceiling
+flagged when that fix shipped).
+
+Committed and pushed (`src/tools/excel.py`, `src/answer_pipeline.py`).
+
 ---
 
 ## Session 2026-07-09, part 10 — eval/live-app divergence closed; found and fixed a real client-caching bug
