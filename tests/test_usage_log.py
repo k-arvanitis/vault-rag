@@ -1,5 +1,8 @@
 """Tests for src/usage_log.py."""
 
+from datetime import datetime, timezone
+from unittest.mock import patch
+
 import pytest
 
 import src.usage_log as usage_log
@@ -37,6 +40,28 @@ def test_stats_handles_missing_latency():
     result = usage_log.stats()
     assert result["daily"][0]["avg_latency_ms"] is None
     assert result["recent"][0]["latency_ms"] is None
+
+
+def test_daily_includes_today_zeroed_when_last_activity_was_a_prior_day():
+    """Reproduced live: the admin panel's "Today" card reads daily[0], which
+    used to be whichever date last had a logged question -- with zero
+    questions asked today, that silently showed yesterday's numbers
+    mislabeled as "Today." daily[0] must be today's real date even with
+    nothing logged for it yet."""
+    usage = {"input_tokens": 10, "output_tokens": 10, "total_tokens": 20}
+    with patch("src.usage_log.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 23, 18, 0, tzinfo=timezone.utc)
+        mock_dt.now.side_effect = None
+        usage_log.log("q1", "model-a", usage)
+
+    with patch("src.usage_log.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 24, 9, 0, tzinfo=timezone.utc)
+        result = usage_log.stats()
+
+    assert result["daily"][0]["date"] == "2026-07-24"
+    assert result["daily"][0]["questions"] == 0
+    assert result["daily"][1]["date"] == "2026-07-23"
+    assert result["daily"][1]["questions"] == 1
 
 
 def test_estimate_cost_unknown_model_is_free():

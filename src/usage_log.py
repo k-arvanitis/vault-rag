@@ -99,6 +99,22 @@ def stats() -> dict:
         del d["_latency_sum"]
         del d["_latency_count"]
 
+    # The admin panel's "Today" card reads daily[0], relying on it being
+    # the current date -- but `daily` only contains dates that actually
+    # logged a question, so daily[0] silently became "yesterday" (or
+    # whenever the log was last written) on any day with zero questions
+    # so far, mislabeled as "Today." Force today's real date to exist,
+    # zeroed if nothing has been logged for it yet.
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if today not in daily:
+        daily[today] = {
+            "date": today,
+            "questions": 0,
+            "total_tokens": 0,
+            "cost_usd": 0.0,
+            "avg_latency_ms": None,
+        }
+
     return {
         "recent": list(reversed(entries[-50:])),
         "daily": sorted(daily.values(), key=lambda d: d["date"], reverse=True),
