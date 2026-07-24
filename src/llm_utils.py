@@ -10,13 +10,10 @@ from src.config import (
     EXCEL_AGENT_API_BASE,
     EXCEL_AGENT_API_KEY,
     EXCEL_AGENT_MODEL,
-    FREE_LLM_API_KEY,
-    GROQ_API_KEY,
-    LITELLM_MASTER_KEY,
     LLM_REQUEST_TIMEOUT_S,
-    OPENROUTER_API_KEY,
     OPENROUTER_PROVIDER_PIN,
 )
+from src.llm_credentials import key_for_base
 
 
 def _openrouter_provider_extra_body(api_base: str) -> dict | None:
@@ -106,21 +103,11 @@ def _llm_call(
     temperature: float = 0.0,
 ) -> str:
     """Send one prompt to an OpenAI-compatible endpoint; return the reply with <think> blocks stripped."""
-    # Resolve key: explicit arg wins; otherwise pick by the actual host being
-    # called — LITELLM_MASTER_KEY only authenticates the LiteLLM proxy itself,
-    # so it must not be sent to a real provider being hit directly.
-    _base = api_base.lower()
-    if "localhost:4000" in _base or "127.0.0.1:4000" in _base:
-        _fallback_key = LITELLM_MASTER_KEY
-    elif "localhost:3011" in _base or "127.0.0.1:3011" in _base:
-        _fallback_key = FREE_LLM_API_KEY
-    elif "openrouter.ai" in _base:
-        _fallback_key = OPENROUTER_API_KEY
-    elif "groq.com" in _base:
-        _fallback_key = GROQ_API_KEY
-    else:
-        _fallback_key = GROQ_API_KEY or LITELLM_MASTER_KEY
-    key = api_key or _fallback_key or "EMPTY"
+    # Resolve key: explicit arg wins; otherwise the shared resolver (BYOK
+    # store override, then env-key-by-host) -- see key_for_base's docstring
+    # for why this must be the same function build_rag_agent uses, not its
+    # own copy of the matching.
+    key = api_key or key_for_base(api_base)
     client = _get_openai_client(api_base, key)
     resp = client.chat.completions.create(
         model=model_name,

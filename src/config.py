@@ -110,6 +110,12 @@ class Settings(BaseSettings):
     feedback_path: str = "data/feedback.json"
     eval_regression_candidates_path: str = "eval/regression_candidates.jsonl"
 
+    # Admin-set LLM credentials (bring-your-own-key) -- overrides the env-configured
+    # provider/key/model for generation when set. Plaintext on disk, same trust
+    # model as .env (which already holds these keys in the clear) -- gitignored,
+    # not encrypted at rest.
+    llm_credentials_path: str = "data/llm_credentials.json"
+
     # Query cache -- avoids rerunning retrieval + generation for a question
     # already answered since the corpus was last changed.
     query_cache_enabled: bool = True
@@ -214,6 +220,7 @@ VLM_MODEL: str = _s.vlm_model
 DUCKDB_PATH: str = _s.duckdb_path
 FEEDBACK_PATH: str = _s.feedback_path
 EVAL_REGRESSION_CANDIDATES_PATH: str = _s.eval_regression_candidates_path
+LLM_CREDENTIALS_PATH: str = _s.llm_credentials_path
 QUERY_CACHE_ENABLED: bool = _s.query_cache_enabled
 QUERY_CACHE_PATH: str = _s.query_cache_path
 USAGE_LOG_PATH: str = _s.usage_log_path

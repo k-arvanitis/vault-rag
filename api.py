@@ -283,7 +283,11 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 @lru_cache(maxsize=1)
 def _get_agent() -> Any:
     """Build (and cache) the RAG agent — one instance reused across requests."""
+    from src.llm_credentials import resolve_generation_override
     from src.rag_agent import build_rag_agent
+
+    override = resolve_generation_override()
+    api_base, model_name = override or (GENERATION_API_BASE, GENERATION_MODEL)
 
     return build_rag_agent(
         qdrant_url=QDRANT_URL,
@@ -291,8 +295,8 @@ def _get_agent() -> Any:
         retrieval_top_k=RETRIEVAL_TOP_K,
         rerank_top_n=RERANK_TOP_N,
         reranker_model_name=RERANKER_MODEL or None,
-        model_name=GENERATION_MODEL,
-        generation_api_base=GENERATION_API_BASE,
+        model_name=model_name,
+        generation_api_base=api_base,
     )
 
 
@@ -666,6 +670,47 @@ async def usage():
     from src.usage_log import stats as usage_stats
 
     return usage_stats()
+
+
+class LLMCredentialsRequest(BaseModel):
+    provider: str
+    api_key: str | None = None
+    model: str | None = None
+
+
+@app.get("/admin/llm-credentials", dependencies=[Depends(require_admin)])
+async def get_llm_credentials():
+    """GET /admin/llm-credentials — the stored BYOK provider/model and whether
+    a key is set, masked to its last 4 characters. Never returns the full key."""
+    from src.llm_credentials import PROVIDERS, get_masked
+
+    return {**get_masked(), "providers": list(PROVIDERS.keys())}
+
+
+@app.post("/admin/llm-credentials", dependencies=[Depends(require_admin)])
+async def set_llm_credentials(req: LLMCredentialsRequest):
+    """POST /admin/llm-credentials — save the admin's chosen provider/key/model
+    and rebuild the agent on the next request. A blank api_key keeps the
+    existing stored key (see set_credentials's docstring)."""
+    from src.llm_credentials import set_credentials
+
+    try:
+        set_credentials(req.provider, req.api_key, req.model)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    _get_agent.cache_clear()
+    return {"status": "ok"}
+
+
+@app.delete("/admin/llm-credentials", dependencies=[Depends(require_admin)])
+async def delete_llm_credentials():
+    """DELETE /admin/llm-credentials — clear the stored override, reverting to
+    env-configured generation, and rebuild the agent on the next request."""
+    from src.llm_credentials import clear_credentials
+
+    clear_credentials()
+    _get_agent.cache_clear()
+    return {"status": "ok"}
 
 
 class FeedbackRequest(BaseModel):

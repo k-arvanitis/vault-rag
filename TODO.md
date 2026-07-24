@@ -1231,15 +1231,20 @@ own "Known gaps" section for the current list):
   `route_question`'s own hit rate is a separate, not-yet-scoped follow-up.
   Workaround for precision-critical questions: still scope to the Excel doc
   via the UI selector.
-- [ ] **LLM provider portability — bring-your-own key (OpenAI, or any
-  OpenAI-compatible endpoint, including local).** Client-facing gap: right
-  now the LLM side is a patchwork of separate provider configs per
-  subsystem (`GROQ_API_KEY`, `NVIDIA_API_KEY`, `OPENROUTER_API_KEY`,
-  `FREE_LLM_API_KEY`, `CHUNK_LLM_API_KEY`, `EXCEL_AGENT_API_KEY`, each with
-  its own base URL/model — see `src/config.py`), not a single swappable
-  provider setting. A client who wants to run this against their own
-  OpenAI key, a different vendor, or a fully local model (e.g. the
-  existing local vLLM setup, per the global CLAUDE.md GPU cheatsheet) can't
-  just drop in one key today — needs a real audit of which subsystem talks
-  to which provider and a unified, OpenAI-compatible-by-default
-  configuration surface. Scope not yet sized.
+- [x] **LLM provider portability — bring-your-own key, main generation path
+  shipped 2026-07-24.** Admin → Model tab lets an admin pick Groq/OpenRouter/
+  OpenAI and paste a key (masked on read, never round-tripped in full —
+  `src/llm_credentials.py`, `POST/GET/DELETE /admin/llm-credentials`).
+  `key_for_base()` is now the single key-resolution function used by both
+  `build_rag_agent` (main generation) and `llm_utils._llm_call` (multi-turn
+  condense, repair, grounding check, coverage retries) — store override wins
+  when its base_url matches, else falls back to the pre-existing env-key-by-
+  host logic unchanged. Empty store = today's env behavior exactly (no-op
+  verified). Live-verified against the real Groq API with the operator's own
+  key (got a genuine provider error back — org billing hold — not a
+  config/key-resolution bug, proving the plumbing is correct end-to-end).
+  Still separately unscoped: `NVIDIA_API_KEY`/`CHUNK_LLM_API_KEY`/
+  `EXCEL_AGENT_API_KEY` (ingestion-time enrichment, Excel-agent path) aren't
+  wired to this store — only the main generation path is. A fully local
+  vLLM endpoint isn't one of the three provider presets either (would need a
+  fourth "custom base URL" option).

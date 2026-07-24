@@ -40,14 +40,10 @@ from src.answer_quality import (
     _verify_grounded,
 )
 from src.config import (
-    FREE_LLM_API_KEY,
     GENERATION_API_BASE,
     GENERATION_MODEL,
-    GROQ_API_KEY,
-    LITELLM_MASTER_KEY,
     LLM_REQUEST_TIMEOUT_S,
     MAX_TOOL_RESULTS,
-    OPENROUTER_API_KEY,
     POST_GENERATION_VERIFY_ENABLED,
     QDRANT_COLLECTION,
     QDRANT_URL,
@@ -58,6 +54,7 @@ from src.config import (
     RETRIEVAL_TOP_K,
 )
 from src.duckdb_store import DuckDBStore
+from src.llm_credentials import key_for_base
 from src.llm_utils import (
     _is_thinking_model,
     _openrouter_provider_extra_body,
@@ -348,27 +345,14 @@ def build_rag_agent(
             )
             ranker = None
 
-    # API key resolution keyed on the actual base URL — LITELLM_MASTER_KEY only
-    # authenticates the LiteLLM proxy itself, so it must not be picked when
-    # generation_api_base points directly at a provider (e.g. temporarily
-    # bypassing the proxy, see .env). Bug found 2026-07-03: this used to pick
-    # LITELLM_MASTER_KEY unconditionally whenever it was set, regardless of
-    # which base URL was actually configured, silently sending the wrong key
-    # to the real provider API. Uses src/config.py's parsed constants, not
-    # os.getenv() — pydantic-settings reads .env directly and does not
-    # populate os.environ, so os.getenv() silently returns None unless
-    # something else already called load_dotenv() in this process.
-    _base_for_key = generation_api_base.lower()
-    if "localhost:4000" in _base_for_key or "127.0.0.1:4000" in _base_for_key:
-        _api_key = LITELLM_MASTER_KEY or "EMPTY"
-    elif "localhost:3011" in _base_for_key or "127.0.0.1:3011" in _base_for_key:
-        _api_key = FREE_LLM_API_KEY or "EMPTY"
-    elif "openrouter.ai" in _base_for_key:
-        _api_key = OPENROUTER_API_KEY or "EMPTY"
-    elif "groq.com" in _base_for_key:
-        _api_key = GROQ_API_KEY or "EMPTY"
-    else:
-        _api_key = GROQ_API_KEY or LITELLM_MASTER_KEY or "EMPTY"
+    # API key resolution keyed on the actual base URL — see key_for_base's
+    # docstring (src/llm_credentials.py) for why this one call is shared with
+    # llm_utils._llm_call instead of each keeping its own copy of this
+    # matching, and for the BYOK-store-override precedence. Bug found
+    # 2026-07-03: this used to pick LITELLM_MASTER_KEY unconditionally
+    # whenever it was set, regardless of which base URL was actually
+    # configured, silently sending the wrong key to the real provider API.
+    _api_key = key_for_base(generation_api_base)
     # Generation LLM, deterministic (temperature 0) and capped at 2048 output tokens.
     logger.info("Building agent prompt_version=%s model=%s", PROMPT_VERSION, model_name)
     # max_retries is a native ChatOpenAI/OpenAI-client param — retries happen at the

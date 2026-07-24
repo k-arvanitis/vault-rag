@@ -571,6 +571,36 @@ export async function syncDrive(removeDeleted = false): Promise<DriveSyncResult>
   });
 }
 
+export interface LLMCredentialsStatus {
+  provider: string | null;
+  model: string | null;
+  key_set: boolean;
+  key_last4: string | null;
+  providers: string[];
+}
+
+export async function getLLMCredentials(): Promise<LLMCredentialsStatus> {
+  return request<LLMCredentialsStatus>("/admin/llm-credentials");
+}
+
+/** apiKey omitted or blank keeps the existing stored key -- the GET endpoint
+ * only ever returns a mask, so the form can't round-trip the real value. */
+export async function setLLMCredentials(
+  provider: string,
+  apiKey: string | null,
+  model: string | null
+): Promise<{ status: string }> {
+  return request<{ status: string }>("/admin/llm-credentials", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider, api_key: apiKey || null, model: model || null }),
+  });
+}
+
+export async function deleteLLMCredentials(): Promise<{ status: string }> {
+  return request<{ status: string }>("/admin/llm-credentials", { method: "DELETE" });
+}
+
 export interface AdminSession {
   access_mode: "open" | "admin_viewer";
   is_admin: boolean;

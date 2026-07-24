@@ -45,6 +45,7 @@ data/output/*
 data/feedback.json
 data/conversations.json
 data/query_cache.json
+data/llm_credentials.json
 !data/input/.gitkeep
 !data/output/.gitkeep
 
