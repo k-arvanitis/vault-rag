@@ -32,7 +32,7 @@ _PICTURE_TEXT_RE = re.compile(
 
 _LABEL_TEXT = "pymupdf4llm"
 _LABEL_OCR = "LightOn OCR"
-_LABEL_OCR_CPU = "unstructured (CPU)"
+_LABEL_OCR_CPU = "unstructured OCR"
 
 # Matches the bold "**Figure 3: ...**" caption heading pymupdf4llm extracts as real
 # page text next to a figure — deliberately requires the leading "**" so it doesn't
