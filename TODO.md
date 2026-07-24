@@ -1198,3 +1198,28 @@ own "Known gaps" section for the current list):
   end-to-end from a clean clone this session (time).
 - No CI-runnable (non-live-credential) test lane for the deterministic
   comparison path — only unit tests (mocked) and the live spot-check exist.
+
+## Open, not fixed — 2026-07-23 demo-prep session (both real, both scoped, neither started)
+
+- [ ] **Unscoped/open-corpus retrieval reliability.** LACERA-style question
+  measured at 13/20 (65%) correct when searching the full open corpus vs.
+  20/20 (100%) when scoped to the source doc via the UI's document
+  selector. Root cause: LLM query-planning nondeterminism changes which
+  chunks land in the reranked pool run to run — not a filter/architecture
+  defect (see the `filter_token` fix in the 2026-07-22 session above).
+  Candidate fix: multi-query fan-out (issue a few query phrasings per
+  retrieval call, merge results) to reduce dependence on any single
+  LLM-generated query — a real architecture change, not a quick patch.
+  Workaround for now: always scope to a document via the UI selector for
+  anything that needs to be reliably right.
+- [ ] **Excel routing flakiness.** The agent sometimes calls
+  `search_knowledge_base` instead of `query_excel` for a table-value
+  question (wrong tool choice), gets no evidence, returns "Unsupported."
+  `route_question`'s classification isn't reliable enough on its own —
+  same class of gap as the already-fixed "document modality" case, which
+  is hard-enforced at the tool layer via `FORCED_DOC_ID` instead of
+  trusting the prompt directive alone. `query_excel` has no equivalent
+  per-source hard-enforcement today (see the older TODO note referenced at
+  the "hard-enforce it at the tool layer" comment in
+  `src/answer_pipeline.py::answer_one`). Workaround for now: scope to the
+  Excel doc via the UI selector when precision matters.
