@@ -167,6 +167,30 @@ class TestMalformedGeneration:
             '    "doc_id": "doc_015"\n  }\n}'
         )
 
+    def test_detects_json_leak_after_narrated_prose(self):
+        # Reproduced live tonight forcing the excel-modality hard block
+        # (FORCED_MODALITY): the model narrated its next move in prose
+        # before the leaked JSON, so an anchored "^" pattern (which only
+        # caught a leak that WAS the whole generation) missed it.
+        assert _is_malformed_generation(
+            'We must call search_knowledge_base with topic words alone to find '
+            'relevant doc summary chunk and get doc_id. Topic: "total NET Amount '
+            'spent on MATERIALS".Let\'s call.{\n  "action": "search_knowledge_base",'
+            '\n  "arguments": {\n    "query": "total NET Amount spent on MATERIALS"'
+            '\n  }\n}'
+        )
+
+    def test_detects_narrated_reasoning_with_no_structured_artifact(self):
+        # Reproduced live tonight forcing the excel-modality hard block: the
+        # model narrates its own next tool call in plain prose with no
+        # JSON/bracket leftover at all -- none of the structured-shape
+        # patterns above catch this, only the bare tool-name mention does.
+        assert _is_malformed_generation(
+            "We must call search_knowledge_base with topic words alone to "
+            'identify relevant doc summary chunk. The topic maybe "materials '
+            'net amount spent".'
+        )
+
     def test_does_not_flag_a_real_answer(self):
         assert not _is_malformed_generation("The total is $297 billion.")
 
@@ -728,6 +752,30 @@ class TestForcedDocScope:
         mock_route.assert_not_called()
         directed_question = mock_run_once.call_args[0][1]
         assert "query_excel" in directed_question
+
+    def test_auto_routed_excel_modality_hard_blocks_search_knowledge_base(self):
+        """route_question's own auto-detection (not the UI's forced_doc_id) can
+        also resolve excel modality -- verified live: the routing directive
+        alone didn't stop the agent from calling search_knowledge_base anyway.
+        FORCED_MODALITY must be set for the run_once call in this case too."""
+        from src.tools.retrieval_tool import FORCED_MODALITY
+
+        seen_modality = {}
+
+        def fake_run_once(agent, q, **kwargs):
+            seen_modality["value"] = FORCED_MODALITY.get()
+            return "An answer.", [], {}
+
+        with (
+            patch(
+                "src.answer_pipeline.route_question",
+                return_value={"modality": "excel", "source_file": "doc_006.xlsx"},
+            ),
+            patch("src.answer_pipeline.run_once", side_effect=fake_run_once),
+        ):
+            answer_one(agent=object(), question="What's the total spend?")
+        assert seen_modality["value"] == "excel"
+        assert FORCED_MODALITY.get() is None  # reset after the call
 
     def test_answer_query_skips_title_shortcut_when_doc_forced(self):
         """The title shortcut's own retrieve() call isn't scoped to a document,

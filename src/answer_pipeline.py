@@ -26,7 +26,7 @@ from src.rag_agent import (
 )
 from src.retriever import retrieve
 from src.tools.excel import ORIGINAL_QUESTION
-from src.tools.retrieval_tool import FORCED_DOC_ID
+from src.tools.retrieval_tool import FORCED_DOC_ID, FORCED_MODALITY
 from src.vector_store import _stable_id
 
 _CALL_BOUNDARY = "---CALL_BOUNDARY---"
@@ -433,9 +433,17 @@ _INLINE_CITATION_RE = re.compile(r"([ \t]*)\[(\d+)\]")
 # be legitimate answer content, so detecting either and forcing Unsupported is
 # content-safe -- unlike _LEAKED_CHANNEL_MARKER_RE (which strips a stray glued
 # marker from an otherwise-real answer), this is a full-generation failure.
+# The two JSON-shape patterns below are intentionally NOT anchored to the
+# start of the string -- reproduced live forcing the excel-modality hard
+# block (FORCED_MODALITY): the model narrated its own next move in plain
+# prose first ("We must call search_knowledge_base ... Let's call.") before
+# the leaked JSON blob, so a "^" anchor that only caught a leak that WAS the
+# entire generation missed it. No legitimate answer ever contains a raw
+# {"action": ...}/{"tool": ...} tool-call object as a substring, wherever it
+# sits in the text, so matching anywhere is still content-safe.
 _MALFORMED_GENERATION_RE = re.compile(
     r"<\|(?:channel|message|start|end|constrain)\|>"
-    r'|^\s*\{\s*"action"\s*:'
+    r'|\{\s*"action"\s*:'
     # A third leaked-tool-call syntax, reproduced live 2026-07-21:
     # "[search_knowledge_base: topic=\"...\"]" / "[search_knowledge_base
     # query=\"...\"]" -- the model emitting its own tool invocation as visible
@@ -446,7 +454,17 @@ _MALFORMED_GENERATION_RE = re.compile(
     # '{"tool": "search_knowledge_base", "parameters": {...}}' -- a different
     # key name than the already-caught "action" shape, same failure class (a
     # raw tool-call object emitted as visible text instead of a real call).
-    r'|^\s*\{\s*"tool"\s*:',
+    r'|\{\s*"tool"\s*:'
+    # A sixth variant, reproduced live forcing the excel-modality hard block:
+    # narrated reasoning with no JSON/bracket artifact at all -- "We must
+    # call search_knowledge_base with topic words alone to identify relevant
+    # doc summary chunk." The JSON/bracket patterns above all assume some
+    # structured leftover; this has none, so match the bare tool name
+    # itself. A real user-facing answer never mentions these internal
+    # function names -- no legitimate content about a lease, a policy, or a
+    # spreadsheet total needs the words "search_knowledge_base" or
+    # "query_excel" at all, so this is safe wherever it appears.
+    r"|\bsearch_knowledge_base\b|\bquery_excel\b",
     re.IGNORECASE,
 )
 
@@ -1197,13 +1215,18 @@ def answer_one(
 
     # The routing directive above is only a prompt nudge -- verified unreliable
     # on its own (the model sometimes calls search_knowledge_base on a
-    # different document despite being told which one to use). For the
-    # document modality, hard-enforce it at the tool layer instead; query_excel
-    # has no per-source scoping param to override, so excel-forced questions
-    # still rely on the directive alone (see TODO.md).
+    # different document despite being told which one to use, or on an excel
+    # question, calls search_knowledge_base at all instead of query_excel).
+    # Hard-enforce it at the tool layer instead: for document modality,
+    # search_knowledge_base gets redirected to the right doc_id; for excel
+    # modality it has no such redirect target (different tool entirely), so
+    # it refuses outright and names query_excel (see FORCED_MODALITY).
     token = None
+    modality_token = None
     if is_forced_doc_modality == "document":
         token = FORCED_DOC_ID.set(forced_doc_id)
+    if route.get("modality") == "excel":
+        modality_token = FORCED_MODALITY.set("excel")
     try:
         ans, coll, tr = run_once(
             agent,
@@ -1289,6 +1312,8 @@ def answer_one(
     finally:
         if token is not None:
             FORCED_DOC_ID.reset(token)
+        if modality_token is not None:
+            FORCED_MODALITY.reset(modality_token)
     return ans, coll, tr
 
 

@@ -55,6 +55,19 @@ FORCED_DOC_ID: ContextVar[str | list[str] | None] = ContextVar(
     "FORCED_DOC_ID", default=None
 )
 
+# Same ContextVar-per-request rationale as FORCED_DOC_ID above. route_question
+# (rag_agent.py) already detects, with a confidence gate, when a question's
+# top retrieved hits are majority-Excel/CSV and prepends a routing directive
+# telling the agent to use query_excel instead -- but that's a prompt nudge
+# only, verified unreliable on its own: the agent sometimes calls
+# search_knowledge_base anyway, gets text-chunk evidence for a question that
+# needed an aggregate/SQL answer, and returns Unsupported. Unlike FORCED_DOC_ID
+# (which redirects search_knowledge_base to a different doc_id), there's no
+# equivalent redirect into query_excel -- it's a different tool entirely -- so
+# this makes search_knowledge_base refuse outright and name the right tool,
+# forcing the agent's next step to actually call query_excel.
+FORCED_MODALITY: ContextVar[str | None] = ContextVar("FORCED_MODALITY", default=None)
+
 # ---------------------------------------------------------------------------
 # Scope plan — the routing decision passed from _resolve_scope to _fetch_docs
 # ---------------------------------------------------------------------------
@@ -1286,6 +1299,13 @@ def _make_unified_tool(
         selected candidates for the UI's "retrieved but rejected" trust panel; it
         rides on the ToolMessage and is not shown to the LLM.
         """
+        if FORCED_MODALITY.get() == "excel":
+            return (
+                "This question needs structured/aggregate data (a sum, count, "
+                "maximum, or specific row lookup over spreadsheet data) — use the "
+                "query_excel tool instead of search_knowledge_base.",
+                {"rejected": []},
+            )
         # Run the full retrieve/rerank/format pipeline; map None → not-found text.
         forced = FORCED_DOC_ID.get()
         result = _fetch_docs(query, doc_id=forced if forced else doc_id)

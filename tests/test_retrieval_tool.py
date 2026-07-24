@@ -9,7 +9,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from src.tools import retrieval_tool
-from src.tools.retrieval_tool import FORCED_DOC_ID, _make_unified_tool
+from src.tools.retrieval_tool import FORCED_DOC_ID, FORCED_MODALITY, _make_unified_tool
 
 
 class FakeRanker:
@@ -145,6 +145,23 @@ class TestRetrievalToolBehavior:
         finally:
             FORCED_DOC_ID.reset(token)
         assert ["doc_001", "doc_002"] in scopes
+
+    def test_forced_modality_excel_refuses_instead_of_searching(self):
+        """route_question's routing directive is only a prompt nudge -- the
+        agent sometimes calls search_knowledge_base anyway on a question that
+        needs query_excel. FORCED_MODALITY hard-blocks that: no retrieve()
+        call happens at all, the tool just names the right one."""
+        retrieve_fn = _make_retrieve(content=[_hit("content")])
+        token = FORCED_MODALITY.set("excel")
+        try:
+            with patch.object(
+                retrieval_tool, "retrieve", side_effect=retrieve_fn
+            ) as mock_retrieve:
+                content, _artifact = _build_tool().func("what's the total spend?")
+        finally:
+            FORCED_MODALITY.reset(token)
+        mock_retrieve.assert_not_called()
+        assert "query_excel" in content
 
     def test_hyde_expansion_issues_extra_retrieval(self):
         queries: list = []
