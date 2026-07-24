@@ -261,3 +261,79 @@ class TestQueryExcelCitations:
         assert len(artifact.get("citations") or []) == 2
         cited_files = {c["source_file"] for c in artifact["citations"]}
         assert cited_files == {"doc_006.xlsx", "doc_007.csv"}
+
+    def test_aggregate_citation_quotes_where_literal_not_the_computed_result(
+        self, monkeypatch
+    ):
+        """Reproduced live 2026-07-25: "total NET Amount spent on MATERIALS"
+        quoted the SQL result ("12976.92") -- a number that never appears in
+        any single row's cells, since it's a sum -- so the row-highlight
+        heuristic found nothing and the UI fell back to unrelated rows. The
+        WHERE clause's own filter literal ("MATERIALS") DOES appear verbatim
+        in every real matching row, so quoting that instead gives the
+        highlighter something genuine to find."""
+        monkeypatch.setattr("src.tools.excel.EXCEL_AGENT_API_KEY", "fake-key")
+        monkeypatch.setattr(
+            "src.tools.excel._doc_tables",
+            lambda store: {"doc_006_t1": ["NET Amount", "Purchase of Expenditure"]},
+        )
+        monkeypatch.setattr(
+            "src.tools.excel.get_source_by_duckdb_table",
+            lambda url, collection, table: {
+                "source_file": "doc_006_transactions.xlsx",
+                "sheet_name": "DataAnalysis",
+            },
+        )
+
+        def fake_llm_chat(messages, temperature=0.0, max_tokens=700):
+            system = messages[0]["content"] if messages else ""
+            if "question-decomposition planner" in system:
+                return '["What is the total NET Amount spent on MATERIALS?"]'
+            if "DuckDB SQL expert" in system:
+                return (
+                    '```sql\nSELECT SUM("NET Amount") FROM t1 '
+                    "WHERE \"Purchase of Expenditure\" ILIKE 'MATERIALS';\n```"
+                )
+            return "12976.92"
+
+        monkeypatch.setattr("src.tools.excel._llm_chat", fake_llm_chat)
+        tool = build_excel_agent_tools(self._FakeStore())[0]
+        answer, artifact = tool.func(
+            "What is the total NET Amount spent on MATERIALS across all transactions?"
+        )
+        assert len(artifact.get("citations") or []) == 1
+        citation = artifact["citations"][0]
+        assert citation.get("is_aggregate") is True
+        assert citation["quote"] == "MATERIALS"
+
+    def test_non_aggregate_citation_keeps_quoting_the_result(self, monkeypatch):
+        """A point lookup (no SUM/COUNT/...) must keep the existing
+        behavior -- the result text IS a real row's value there, so
+        rewriting the quote would only make things worse."""
+        monkeypatch.setattr("src.tools.excel.EXCEL_AGENT_API_KEY", "fake-key")
+        monkeypatch.setattr(
+            "src.tools.excel._doc_tables",
+            lambda store: {"doc_006_t1": ["Amount"]},
+        )
+        monkeypatch.setattr(
+            "src.tools.excel.get_source_by_duckdb_table",
+            lambda url, collection, table: {
+                "source_file": "doc_006_transactions.xlsx",
+                "sheet_name": "DataAnalysis",
+            },
+        )
+
+        def fake_llm_chat(messages, temperature=0.0, max_tokens=700):
+            system = messages[0]["content"] if messages else ""
+            if "question-decomposition planner" in system:
+                return '["What is the Amount?"]'
+            if "DuckDB SQL expert" in system:
+                return '```sql\nSELECT "Amount" FROM t1;\n```'
+            return "VALUE1"
+
+        monkeypatch.setattr("src.tools.excel._llm_chat", fake_llm_chat)
+        tool = build_excel_agent_tools(self._FakeStore())[0]
+        answer, artifact = tool.func("What is the Amount?")
+        citation = artifact["citations"][0]
+        assert not citation.get("is_aggregate")
+        assert "VALUE1" in citation["quote"]

@@ -170,6 +170,7 @@ export default function Home() {
               page={inspecting.page}
               sheet={inspecting.sheet}
               quote={inspecting.quote}
+              isAggregate={inspecting.isAggregate}
               onClose={() => setInspecting(null)}
             />
           ) : (

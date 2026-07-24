@@ -85,6 +85,13 @@ ORIGINAL_QUESTION: ContextVar[str | None] = ContextVar(
 
 _DOC_TABLE_PREFIX_RE = re.compile(r"^doc_\d+_", re.IGNORECASE)
 
+# Detects an aggregate SELECT (SUM/COUNT/AVG/MIN/MAX) -- see query_excel's
+# citation-building for why this changes what gets used as the row-match quote.
+_AGGREGATE_SQL_RE = re.compile(r"\b(?:SUM|COUNT|AVG|MIN|MAX)\s*\(", re.IGNORECASE)
+# First quoted string literal after an ILIKE/= comparison in a WHERE clause
+# (e.g. WHERE "Purchase of Expenditure" ILIKE 'MATERIALS' -> "MATERIALS").
+_WHERE_LITERAL_RE = re.compile(r"(?:ILIKE|=)\s*'([^']+)'", re.IGNORECASE)
+
 _TABLE_STOPWORDS = {
     # Generic English function words only — never strip column-name candidates
     # (amount, total, name, number, date, etc. are real columns in our schemas).
@@ -1054,13 +1061,21 @@ def build_excel_agent_tools(store: DuckDBStore) -> list[StructuredTool]:
         # got no citation at all despite a real evidence row existing).
         tables = result.get("table_trace") or []
         results = result.get("result_trace") or []
+        # Only trust index-alignment with sql_trace when all three lists are
+        # the same length -- sql_trace can get an entry with no matching
+        # table_trace/result_trace entry (a sub-question that produced SQL
+        # but no table, see sql_agent_node), which would desync a naive zip.
+        # Skipping the aggregate-quote improvement below rather than
+        # guessing wrong is the safe default.
+        sql_list = result.get("sql_trace") or []
+        aligned_sql = sql_list if len(sql_list) == len(tables) == len(results) else None
         final_answer = result.get("final_answer") or "Unsupported"
         if final_answer.strip().lower() != "unsupported" and not final_answer.startswith(
             "Clarify:"
         ):
             citations: list[dict[str, Any]] = []
             seen_tables: set[str] = set()
-            for table, table_result in zip(tables, results):
+            for idx, (table, table_result) in enumerate(zip(tables, results)):
                 if table in seen_tables:
                     continue
                 seen_tables.add(table)
@@ -1072,6 +1087,24 @@ def build_excel_agent_tools(store: DuckDBStore) -> list[StructuredTool]:
                 # something real to match against instead of nothing.
                 if table_result:
                     source["quote"] = table_result[:500]
+                # An aggregate result (SUM/COUNT/AVG/...) is never itself one
+                # row's value, so the quote above never matches any real row
+                # -- SpreadsheetEvidence then fell back to showing the
+                # sheet's first N rows, unrelated to the question. Reproduced
+                # live 2026-07-25: "total NET Amount spent on MATERIALS"
+                # showed unrelated transactions with no "MATERIALS" in
+                # sight. Swap the quote for the WHERE clause's own filter
+                # literal (e.g. "MATERIALS") instead -- that DOES appear
+                # verbatim in the real matching rows' cells, so the existing
+                # row-highlight heuristic finds a genuine example row. The
+                # frontend shows a note that this is a computed total, not
+                # the literal row value, when is_aggregate is set.
+                sql = aligned_sql[idx] if aligned_sql else None
+                if sql and _AGGREGATE_SQL_RE.search(sql):
+                    literal_m = _WHERE_LITERAL_RE.search(sql)
+                    if literal_m:
+                        source["quote"] = literal_m.group(1)
+                        source["is_aggregate"] = True
                 citations.append(source)
             if citations:
                 artifact["citations"] = citations

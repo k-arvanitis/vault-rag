@@ -264,6 +264,12 @@ function SpreadsheetEvidence({
 
   return (
     <div className="mt-2">
+      {source.is_aggregate && (
+        <p className="mb-1.5 text-[10px] text-muted-foreground">
+          This answer is a computed total across every matching row — the highlighted row below is
+          one real example, not the row containing the number itself.
+        </p>
+      )}
       <div className="max-h-64 overflow-auto rounded border border-border">
         <Table>
           <TableHeader>

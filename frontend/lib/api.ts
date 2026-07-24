@@ -46,6 +46,13 @@ export interface Source {
    * doesn't). Used as a highlight/crop fallback for scanned pages, where
    * `/pdf/{page}/highlight`'s real-text-layer search always comes up empty. */
   ocr_bbox: [number, number, number, number] | null;
+  /** True when this is a SQL aggregate answer (SUM/COUNT/AVG/...) -- the
+   * quote is the WHERE clause's filter literal (e.g. "MATERIALS"), not the
+   * computed result, so the highlighted row is one real matching example,
+   * not the row containing the answer's number (no single row has it --
+   * that's the point of an aggregate). See query_excel's citation-building
+   * (src/tools/excel.py) for where this is set. */
+  is_aggregate?: boolean;
 }
 
 export interface InspectTarget {
@@ -56,6 +63,9 @@ export interface InspectTarget {
    * best-effort "quote contains this row's cell value" match SpreadsheetEvidence
    * uses, to highlight the same row there. */
   quote?: string;
+  /** See Source.is_aggregate -- carried through so the full inspector shows
+   * the same "computed total, not a single row's value" note. */
+  isAggregate?: boolean;
 }
 
 /** Derives an inspector jump target from a citation. */
@@ -65,6 +75,7 @@ export function sourceInspectTarget(s: Source): InspectTarget {
     page: s.page ?? undefined,
     sheet: s.sheet ?? undefined,
     quote: s.quote || undefined,
+    isAggregate: s.is_aggregate,
   };
 }
 

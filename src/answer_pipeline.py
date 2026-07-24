@@ -1131,6 +1131,7 @@ def _excel_citations_to_sources(
                 "score": None,
                 "figure_bbox": None,
                 "ocr_bbox": None,
+                "is_aggregate": bool(c.get("is_aggregate")),
             }
         )
     return out

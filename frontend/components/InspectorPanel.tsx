@@ -35,6 +35,8 @@ interface Props {
    * SpreadsheetEvidence uses highlights that row here too (see
    * lib/tableMatch.ts). */
   quote?: string;
+  /** See Source.is_aggregate -- shows the same "computed total" note here. */
+  isAggregate?: boolean;
 }
 
 // remark-gfm renders markdown pipe-tables; rehype-raw renders embedded HTML
@@ -296,10 +298,12 @@ function SheetCompare({
   filename,
   sheet,
   quote,
+  isAggregate,
 }: {
   filename: string;
   sheet: string;
   quote?: string;
+  isAggregate?: boolean;
 }) {
   const [data, setData] = useState<TableSheetResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -342,6 +346,12 @@ function SheetCompare({
 
   return (
     <div className="mb-2">
+      {isAggregate && (
+        <p className="mb-1.5 text-[10px] text-muted-foreground">
+          This answer is a computed total across every matching row — the highlighted row below is
+          one real example, not the row containing the number itself.
+        </p>
+      )}
       <Button
         variant="link"
         size="xs"
@@ -464,10 +474,12 @@ function TableInspector({
   filename,
   initialSheet,
   quote,
+  isAggregate,
 }: {
   filename: string;
   initialSheet?: string;
   quote?: string;
+  isAggregate?: boolean;
 }) {
   const [loading, setLoading] = useState(true);
   const [chunks, setChunks] = useState<Chunk[]>([]);
@@ -510,7 +522,12 @@ function TableInspector({
           >
             <p className="mb-2 text-xs font-semibold text-foreground">Sheet: {sheet}</p>
 
-            <SheetCompare filename={filename} sheet={sheet} quote={sheet === initialSheet ? quote : undefined} />
+            <SheetCompare
+              filename={filename}
+              sheet={sheet}
+              quote={sheet === initialSheet ? quote : undefined}
+              isAggregate={sheet === initialSheet ? isAggregate : undefined}
+            />
           </div>
         ))}
       </div>
@@ -520,7 +537,7 @@ function TableInspector({
 
 // ── Panel shell ────────────────────────────────────────────────────────────────
 
-export default function InspectorPanel({ filename, onClose, page, sheet, quote }: Props) {
+export default function InspectorPanel({ filename, onClose, page, sheet, quote, isAggregate }: Props) {
   const basename = filename.split("/").pop() ?? filename;
   const isPdf = IS_PDF(filename);
   const isTable = IS_TABLE(filename);
@@ -549,7 +566,7 @@ export default function InspectorPanel({ filename, onClose, page, sheet, quote }
         {isPdf ? (
           <PdfInspector filename={filename} initialPage={page} />
         ) : isTable ? (
-          <TableInspector filename={filename} initialSheet={sheet} quote={quote} />
+          <TableInspector filename={filename} initialSheet={sheet} quote={quote} isAggregate={isAggregate} />
         ) : (
           <div className="flex flex-1 items-center justify-center px-8 text-center">
             <p className="text-xs text-muted-foreground">
