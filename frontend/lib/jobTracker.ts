@@ -17,8 +17,27 @@ export interface TrackedJob {
   status: JobStatus;
 }
 
-const jobs = new Map<string, TrackedJob>();
+// A mutable Map with a stable reference defeats useSyncExternalStore's
+// Object.is snapshot comparison -- React bails on re-rendering subscribers
+// when getSnapshot() returns the same reference it returned last time, so
+// mutating this Map in place (the original approach) meant job-state
+// changes could silently fail to trigger a re-render at all. Replacing the
+// reference on every mutation instead (a new Map each time, entries copied
+// over) makes each change a genuinely new snapshot.
+let jobs = new Map<string, TrackedJob>();
 const listeners = new Set<() => void>();
+
+function setJob(filename: string, job: TrackedJob) {
+  jobs = new Map(jobs);
+  jobs.set(filename, job);
+  notify();
+}
+
+function deleteJob(filename: string) {
+  jobs = new Map(jobs);
+  jobs.delete(filename);
+  notify();
+}
 
 function notify() {
   listeners.forEach((l) => l());
@@ -43,8 +62,7 @@ export function trackJob(
   poll: (jobId: string) => Promise<{ status: string }>,
   onSettled?: () => void
 ) {
-  jobs.set(filename, { kind, status: "processing" });
-  notify();
+  setJob(filename, { kind, status: "processing" });
 
   const interval = setInterval(async () => {
     try {
@@ -52,20 +70,15 @@ export function trackJob(
       if (result.status === "done") {
         clearInterval(interval);
         onSettled?.();
-        setTimeout(() => {
-          jobs.delete(filename);
-          notify();
-        }, 2500);
+        setTimeout(() => deleteJob(filename), 2500);
       } else if (result.status === "failed") {
         clearInterval(interval);
-        jobs.set(filename, { kind, status: "failed" });
-        notify();
+        setJob(filename, { kind, status: "failed" });
         onSettled?.();
       }
     } catch {
       clearInterval(interval);
-      jobs.set(filename, { kind, status: "failed" });
-      notify();
+      setJob(filename, { kind, status: "failed" });
       onSettled?.();
     }
   }, 2000);

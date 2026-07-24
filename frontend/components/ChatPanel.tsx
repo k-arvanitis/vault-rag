@@ -13,6 +13,7 @@ import {
   type QueryHistoryTurn,
 } from "@/lib/api";
 import { useAdminSession } from "@/lib/useAdminSession";
+import { useJobTracker } from "@/lib/jobTracker";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import MessageList, { type Message } from "./MessageList";
@@ -123,11 +124,22 @@ export default function ChatPanel({
     refetchDocuments();
   }, [resetSignal, refetchDocuments]);
 
-  // An upload/delete/reindex in the admin Sources page (a different route)
-  // doesn't touch this component's state -- without this, "Ask across: All
-  // N sources" stays stale until a full reload. Refetch when the tab
-  // regains focus, the same pattern browsers use for "did anything change
-  // while I was away".
+  // An upload/delete/reindex from the sidebar's own UploadZone (or the admin
+  // Sources page) doesn't touch this component's state directly -- without
+  // this, "Ask across: All N sources" stays stale until a full reload.
+  // lib/jobTracker.ts is the shared store Sidebar.tsx already refetches on
+  // (see its own `useJobTracker()` + refresh effect); subscribing here too
+  // means an upload anywhere updates this count the moment the job settles,
+  // same-tab, no focus/blur needed. `resetSignal` (page.tsx's `refreshKey`)
+  // looked like it should already cover this but `setRefreshKey` is never
+  // actually called anywhere, so it never fires in practice.
+  const jobs = useJobTracker();
+  useEffect(() => {
+    refetchDocuments();
+  }, [jobs, refetchDocuments]);
+
+  // Still refetch on window focus too, for changes made from a different
+  // browser tab entirely (e.g. a separate admin session).
   useEffect(() => {
     window.addEventListener("focus", refetchDocuments);
     return () => window.removeEventListener("focus", refetchDocuments);
