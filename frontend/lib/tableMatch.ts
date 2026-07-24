@@ -11,6 +11,28 @@ export function normalizeCell(v: string): string {
   return v.trim().toLowerCase();
 }
 
+/** Index of the real header row within raw sheet rows (fetched with
+ * header=None, so "row 0" is not reliably the header). Some sheets carry a
+ * report-title / confidential-notice preamble above the real column-header
+ * row -- a title row with only its first cell filled, then a blank row --
+ * so a hardcoded "skip row 0" undercounts how many rows to skip. Reproduced
+ * live 2026-07-25: doc_006's DataAnalysis sheet has title/notice/blank rows
+ * before "Transaction Date, ..., NET Amount, ...", so slicing off just row 0
+ * left the real header row inside the body searched by findMatchedRowIndex
+ * -- an aggregate SQL citation's quote ("sum(\"NET Amount\")...") then
+ * coincidentally matched the header row's own "NET Amount" cell, highlighting
+ * the header instead of any data row (or nothing, correctly, for an
+ * aggregate that has no single matching row).
+ *
+ * Heuristic: the first row with more than one non-empty cell -- a title or
+ * notice row only ever fills the first column, while a real header (or data)
+ * row has multiple populated columns. Falls back to 0 if every row is
+ * single-cell (nothing to skip). */
+export function findHeaderRowIndex(rows: string[][]): number {
+  const idx = rows.findIndex((r) => r.filter((c) => c.trim()).length > 1);
+  return idx === -1 ? 0 : idx;
+}
+
 /** Returns the index of the row (in `body`, header already excluded) with
  * the MOST cells (len > 2) that appear verbatim in `quote`, or -1 if none
  * match / quote is empty. Ties broken by earliest row index.

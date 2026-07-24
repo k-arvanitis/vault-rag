@@ -2,6 +2,7 @@ from unittest.mock import patch
 
 import api
 from api import (
+    _find_header_row_index,
     _find_matched_row_index,
     _payloads_to_docs,
     _truncate_markdown_table,
@@ -73,6 +74,37 @@ class TestFindMatchedRowIndex:
     def test_tie_breaks_to_earliest_row(self):
         rows = [["MATCH", "x"], ["MATCH", "y"]]
         assert _find_matched_row_index(rows, "MATCH") == 0
+
+
+class TestFindHeaderRowIndex:
+    """Mirrors frontend/lib/tableMatch.ts's findHeaderRowIndex -- reproduced
+    live 2026-07-25: doc_006's DataAnalysis sheet has a title row and a
+    confidential-notice row (each with only column A filled) and a blank row
+    before the real column-header row, so a hardcoded "row 0 is the header"
+    left the real header inside the searched body -- an aggregate SQL
+    citation's quote coincidentally matched the header's own column-name
+    cell, highlighting the header row instead of any data row."""
+
+    def test_skips_title_notice_and_blank_rows(self):
+        rows = [
+            ["Purchase Card Transactions Report", "", ""],
+            ["Generated: 01/07/2025 | Confidential", "", ""],
+            ["", "", ""],
+            ["Transaction Date", "Directorate", "NET Amount"],
+            ["2025-04-01", "CHIEF EXECUTIVE", "266.63"],
+        ]
+        assert _find_header_row_index(rows) == 3
+
+    def test_row_0_already_the_header_is_a_noop(self):
+        rows = [["A", "B"], ["1", "2"]]
+        assert _find_header_row_index(rows) == 0
+
+    def test_all_single_cell_rows_falls_back_to_zero(self):
+        rows = [["only one"], ["still one"]]
+        assert _find_header_row_index(rows) == 0
+
+    def test_empty_rows_falls_back_to_zero(self):
+        assert _find_header_row_index([]) == 0
 
 
 class TestWindowRowsAroundMatch:

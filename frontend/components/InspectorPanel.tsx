@@ -14,7 +14,7 @@ import {
   type MarkdownPage,
   type TableSheetResponse,
 } from "@/lib/api";
-import { findMatchedRowIndex } from "@/lib/tableMatch";
+import { findHeaderRowIndex, findMatchedRowIndex } from "@/lib/tableMatch";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -331,7 +331,9 @@ function SheetCompare({
     cleanedMatchedRowRef.current?.scrollIntoView({ block: "center" });
   }, [data, quote]);
 
-  const rawBody = (data?.raw_rows ?? []).slice(1);
+  const rawRows = data?.raw_rows ?? [];
+  const rawHeaderIdx = findHeaderRowIndex(rawRows);
+  const rawBody = rawRows.slice(rawHeaderIdx + 1);
   const matchedIdx = findMatchedRowIndex(rawBody, quote);
 
   const cleanedTable = data?.cleaned_md ? parseMarkdownTable(extractTableMarkdown(data.cleaned_md)) : null;
@@ -367,9 +369,11 @@ function SheetCompare({
               <table className="w-full font-mono text-[9px] text-foreground">
                 <tbody>
                   {data.raw_rows.map((row, ri) => {
-                    // Row 0 is the header (fetched with header=None) --
-                    // rawBody/matchedIdx are indexed from row 1.
-                    const isMatch = ri > 0 && ri - 1 === matchedIdx;
+                    // rawBody/matchedIdx are indexed from just after the
+                    // real header row (see findHeaderRowIndex) -- not
+                    // necessarily row 0, some sheets have a title/notice
+                    // preamble above the real header.
+                    const isMatch = ri > rawHeaderIdx && ri - rawHeaderIdx - 1 === matchedIdx;
                     return (
                     <tr
                       key={ri}

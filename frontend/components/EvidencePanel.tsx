@@ -11,7 +11,7 @@ import {
   type InspectTarget,
   type Source,
 } from "@/lib/api";
-import { findMatchedRowIndex } from "@/lib/tableMatch";
+import { findHeaderRowIndex, findMatchedRowIndex } from "@/lib/tableMatch";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -244,7 +244,15 @@ function SpreadsheetEvidence({
   }
   if (!rows || rows.length === 0) return null;
 
-  const [header, ...body] = rows;
+  // rows[0] isn't reliably the real column-header row -- some sheets carry
+  // a report-title/notice preamble above it (see findHeaderRowIndex).
+  // Without this, doc_006's DataAnalysis sheet showed its report title as
+  // the table header and included the real header row in the matched-
+  // against body, where an aggregate SQL citation's quote coincidentally
+  // matched the header's own column-name cell instead of any data row.
+  const headerIdx = findHeaderRowIndex(rows);
+  const header = rows[headerIdx] ?? [];
+  const body = rows.slice(headerIdx + 1);
   const matchedIdx = findMatchedRowIndex(body, source.quote);
 
   const start = matchedIdx >= 0 ? Math.max(0, matchedIdx - SHEET_CONTEXT_ROWS) : 0;

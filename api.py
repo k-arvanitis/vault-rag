@@ -1399,6 +1399,18 @@ def _normalize_cell(value: object) -> str:
     return str(value).strip().lower()
 
 
+def _find_header_row_index(rows: list[list[str]]) -> int:
+    """Mirror frontend/lib/tableMatch.ts's findHeaderRowIndex: the index of
+    the first row with more than one non-empty cell -- some sheets carry a
+    report-title/notice preamble (single populated cell) above the real
+    header row, so "row 0 is the header" isn't always true. See that
+    function's docstring for the live repro (doc_006's DataAnalysis sheet)."""
+    for i, row in enumerate(rows):
+        if sum(1 for cell in row if str(cell).strip()) > 1:
+            return i
+    return 0
+
+
 def _find_matched_row_index(rows: list[list[str]], quote: str | None) -> int:
     """Mirror frontend/lib/tableMatch.ts's findMatchedRowIndex: the index of
     the row with the MOST cells (len > 2) that appear verbatim in `quote`,
@@ -1499,7 +1511,8 @@ async def document_table_sheet(filename: str, sheet: str, quote: str | None = No
                         raw_path, sheet_name=sheet, header=None, dtype=str
                     ).fillna("")
                 full_rows = full_df.values.tolist()
-                header, body = full_rows[:1], full_rows[1:]
+                header_idx = _find_header_row_index(full_rows)
+                header, body = full_rows[: header_idx + 1], full_rows[header_idx + 1 :]
                 windowed = _window_rows_around_match(
                     header, body, quote, _TABLE_MD_MAX_ROWS
                 )
