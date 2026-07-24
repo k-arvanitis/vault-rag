@@ -57,7 +57,7 @@ function Panel({
 export default function TraceSidebar({ trace, onInspect }: Props) {
   if (!trace) {
     return (
-      <aside className="h-full w-full overflow-y-auto bg-background p-3 lg:w-[320px] lg:shrink-0 lg:border-l lg:border-border">
+      <aside className="h-full w-full overflow-y-auto bg-background p-3">
         <div className="rounded-lg border border-dashed border-border bg-card px-3 py-6 text-center">
           <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Trace</p>
           <p className="mt-1.5 text-xs text-muted-foreground">
@@ -71,7 +71,7 @@ export default function TraceSidebar({ trace, onInspect }: Props) {
   const { sources, sql, tools_used, rejected_sources = [] } = trace;
 
   return (
-    <aside className="h-full w-full overflow-y-auto bg-background p-3 lg:w-[320px] lg:shrink-0 lg:border-l lg:border-border">
+    <aside className="h-full w-full overflow-y-auto bg-background p-3">
       <div className="space-y-3">
         {tools_used.length > 0 && (
           <Panel title="Tools" count={tools_used.length}>
