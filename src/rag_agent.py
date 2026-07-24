@@ -144,6 +144,20 @@ _DOC_METADATA_QUESTION_RE = re.compile(
     re.IGNORECASE,
 )
 
+# A question explicitly about the whole corpus ("summarize across all
+# documents") must never be pinned to one document -- reproduced live
+# 2026-07-24: "Summarize the main policies across all documents" retrieved
+# doc_001's chunks as the top-3 majority (plausible: it's the longest, most
+# generic-language doc), so the confidence gate below passed and the
+# directive told the agent to use ONLY doc_001, producing an incomplete,
+# ungrounded answer that the repair/grounding check then downgraded to
+# "Unsupported" -- wrong failure mode for a question the corpus can answer.
+_CROSS_DOCUMENT_RE = re.compile(
+    r"\b(?:all|every|each|across)\b[^.?!]{0,25}\b(?:documents?|sources?|files?)\b"
+    r"|\bacross the (?:corpus|knowledge base)\b",
+    re.IGNORECASE,
+)
+
 
 def route_question(
     question: str,
@@ -160,6 +174,9 @@ def route_question(
     hits. Returns {modality, source_file}; modality is "" when nothing matched,
     so the caller falls back to the agent's own tool choice.
     """
+    if _CROSS_DOCUMENT_RE.search(question):
+        return {"modality": "", "source_file": ""}
+
     # Retrieve the question's nearest chunks; any failure or empty result yields
     # an empty modality so the caller leaves tool choice to the agent.
     try:

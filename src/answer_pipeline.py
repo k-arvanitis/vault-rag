@@ -1525,7 +1525,22 @@ def answer_query(
     # evidence" signal. A "verify every answer" product must never show a
     # confident answer with nothing behind it -- force an honest refusal
     # instead.
-    if not sources and not (excel_trace.get("sql") or []) and answer.strip().lower() != "unsupported":
+    #
+    # Exception: a genuine clarifying question ("Which policy area --
+    # procurement, travel, conduct?") is not a confident, ungrounded claim --
+    # it's the agent correctly declining to guess on an ambiguous broad
+    # question (see route_question's _CROSS_DOCUMENT_RE). Reproduced live
+    # 2026-07-24: "Summarize the main policies across all documents" made no
+    # tool call and got a real clarifying question back, which this guard
+    # used to silently discard and replace with a bare, unhelpful
+    # "Unsupported" -- worse than just showing the question.
+    is_clarifying_question = not sources and answer.strip().endswith("?")
+    if (
+        not sources
+        and not (excel_trace.get("sql") or [])
+        and answer.strip().lower() != "unsupported"
+        and not is_clarifying_question
+    ):
         answer = "Unsupported"
         sources = []
     answer, sources = _renumber_citations_sequentially(answer, sources)

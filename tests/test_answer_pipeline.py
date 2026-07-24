@@ -1328,6 +1328,25 @@ class TestNoEvidenceForcesUnsupported:
         ):
             result = answer_query(agent=object(), question="What year is it titled for?")
         assert result["answer"] == "Unsupported"
+
+    def test_clarifying_question_with_no_chunks_is_kept_not_replaced(self):
+        """Reproduced live 2026-07-24: a broad "summarize across all
+        documents" question made no tool call and got a real clarifying
+        question back -- this must survive, not be silently swapped for a
+        bare, unhelpful "Unsupported"."""
+        clarifying = (
+            "Clarify: which specific policy areas—procurement, data privacy, "
+            "employee conduct, travel—should be summarized?"
+        )
+        with patch(
+            "src.answer_pipeline.answer_one",
+            return_value=(clarifying, [], {}),
+        ):
+            result = answer_query(
+                agent=object(), question="Summarize the main policies across all documents."
+            )
+        assert result["answer"] == clarifying
+        assert result["sources"] == []
         assert result["sources"] == []
 
     def test_ungrounded_answer_with_junk_collected_text_becomes_unsupported(self):
