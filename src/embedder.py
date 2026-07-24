@@ -102,9 +102,32 @@ def embed_chunks(
             return _ollama_embed_batch(
                 api_base=api_base, model_name=model_name, texts=batch
             )
-        except RuntimeError:
+        except RuntimeError as exc:
             if len(batch) == 1:
-                raise
+                if "unsupported value: NaN" not in str(exc):
+                    raise
+                # bge-m3 (F16, via Ollama) occasionally emits a NaN embedding
+                # for a specific chunk's text -- numerical instability, not a
+                # content problem -- which Ollama's own JSON encoder then
+                # refuses to serialize, surfacing as a 500 here. Reproduced
+                # live 2026-07-25: "failed to encode response: json:
+                # unsupported value: NaN". Before this fallback, that single
+                # chunk crashed the ENTIRE file's ingest (all other chunks
+                # already embedded successfully get thrown away too). A raw
+                # zero-vector would silently corrupt cosine-similarity ranking
+                # for this chunk forever instead, so re-embed a short, boring
+                # placeholder in its place -- the chunk stays indexed and
+                # searchable by its metadata/section, just not by its own
+                # (unembeddable) content.
+                print(
+                    f"[EMBED][WARN] NaN embedding for one chunk, using placeholder "
+                    f"text instead: {batch[0][:80]!r}"
+                )
+                return _ollama_embed_batch(
+                    api_base=api_base,
+                    model_name=model_name,
+                    texts=["[content omitted: embedding failed]"],
+                )
             mid = max(1, len(batch) // 2)
             return _embed_with_fallback(batch[:mid]) + _embed_with_fallback(batch[mid:])
 
