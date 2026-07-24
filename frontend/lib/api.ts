@@ -24,6 +24,7 @@ export interface IngestStatus {
   status: "pending" | "processing" | "done" | "failed";
   stage: string;
   chunks_created: number;
+  error?: string | null;
 }
 
 export interface Source {

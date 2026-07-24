@@ -105,7 +105,7 @@ export default function ChatPanel({
   // routes) -- a non-admin instead gets only a has-anything-to-ask-about
   // boolean, and the per-document scope picker doesn't render at all (see
   // isAdmin check below).
-  useEffect(() => {
+  const refetchDocuments = useCallback(() => {
     if (isAdmin) {
       getDocuments()
         .then(setDocuments)
@@ -117,7 +117,21 @@ export default function ChatPanel({
         .then(setHasSourcesNonAdmin)
         .catch(() => setHasSourcesNonAdmin(false));
     }
-  }, [resetSignal, isAdmin]);
+  }, [isAdmin]);
+
+  useEffect(() => {
+    refetchDocuments();
+  }, [resetSignal, refetchDocuments]);
+
+  // An upload/delete/reindex in the admin Sources page (a different route)
+  // doesn't touch this component's state -- without this, "Ask across: All
+  // N sources" stays stale until a full reload. Refetch when the tab
+  // regains focus, the same pattern browsers use for "did anything change
+  // while I was away".
+  useEffect(() => {
+    window.addEventListener("focus", refetchDocuments);
+    return () => window.removeEventListener("focus", refetchDocuments);
+  }, [refetchDocuments]);
 
   const hasSources = isAdmin ? documents.length > 0 : hasSourcesNonAdmin;
 

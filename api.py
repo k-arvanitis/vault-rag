@@ -548,6 +548,7 @@ async def ingest_status(job_id: str):
         "status": job["status"],
         "stage": job["stage"],
         "chunks_created": job.get("chunks_created", 0),
+        "error": job.get("error"),
     }
 
 

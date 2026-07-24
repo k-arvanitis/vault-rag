@@ -98,7 +98,7 @@ export default function UploadZone({ onUploaded, onToast, offline }: Props) {
                 resolve();
               } else if (status.status === "failed") {
                 clearInterval(poll);
-                reject(new Error("Ingestion failed"));
+                reject(new Error(status.error || "Ingestion failed"));
               }
             } catch (e) {
               clearInterval(poll);
