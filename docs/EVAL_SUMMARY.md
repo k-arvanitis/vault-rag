@@ -3,7 +3,7 @@
 *Generated from `eval/results/summary.json` by `eval/generate_summary_doc.py` --
 do not hand-edit the numbers below; re-run the script after a new `make eval`.*
 
-**Benchmark date:** 2026-07-22
+**Benchmark date:** 2026-07-23
 **Answer model:** `openai/gpt-oss-120b`
 **Judge model:** `gpt-4o-mini`
 **Documents:** 18
@@ -13,12 +13,12 @@ do not hand-edit the numbers below; re-run the script after a new `make eval`.*
 
 | What it measures | Result |
 |---|---|
-| Overall answer correctness (10 question types) | **90.6%** |
-| Grounded answers (faithfulness) | **90.4%** |
-| Answers address the question (relevancy) | **94.0%** |
+| Overall answer correctness (10 question types) | **89.9%** |
+| Grounded answers (faithfulness) | **89.1%** |
+| Answers address the question (relevancy) | **91.1%** |
 | Finds the right source (retrieval Hit@5) | **98.6%** |
-| Refuses to invent answers (unanswerable questions) | **92.9%** |
-| Structured data (Excel/CSV) answer accuracy | **95.2%** |
+| Refuses to invent answers (unanswerable questions) | **85.7%** |
+| Structured data (Excel/CSV) answer accuracy | **90.5%** |
 
 ## Retrieval metrics (74 PDF/OCR questions, Qdrant dense search)
 
@@ -34,28 +34,28 @@ do not hand-edit the numbers below; re-run the script after a new `make eval`.*
 
 | Metric | Value |
 |---|---|
-| Answer accuracy | 95.2% |
+| Answer accuracy | 90.5% |
 
 ## Refusal / abstention (14 unanswerable questions)
 
 | Metric | Value |
 |---|---|
-| Correct refusal rate | 92.9% |
+| Correct refusal rate | 85.7% |
 
 ## Correctness by question type
 
 | Question type | Count | Correctness |
 |---|---|---|
-| figure_grounding | 3 | 100.0% |
 | negation_check | 5 | 100.0% |
-| numeric_reasoning | 4 | 100.0% |
+| numeric_lookup | 6 | 100.0% |
 | table_grounding | 3 | 100.0% |
-| table_lookup | 16 | 100.0% |
+| single_doc_factoid | 17 | 94.1% |
+| table_lookup | 16 | 93.8% |
 | unanswerable | 10 | 90.0% |
-| single_doc_factoid | 17 | 88.2% |
 | ocr_extraction | 25 | 88.0% |
-| cross_document_compare | 20 | 86.5% |
-| numeric_lookup | 6 | 75.0% |
+| cross_document_compare | 20 | 85.0% |
+| numeric_reasoning | 4 | 75.0% |
+| figure_grounding | 3 | 66.7% |
 
 ## Judge breakdown
 

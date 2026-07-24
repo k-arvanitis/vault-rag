@@ -41,16 +41,16 @@ Private document knowledge assistant for PDFs, scanned documents, spreadsheets, 
 - Refuse when evidence is missing
 - Log evaluation: Hit@K, faithfulness, refusal rate
 
-**Benchmark — 109 questions over 18 mixed-format public documents, graded by an independent `gpt-4o-mini` judge** (distinct from the `openai/gpt-oss-120b` answer model, so no self-grading bias). Full, current run (2026-07-22) — not a stale/partial snapshot:
+**Benchmark — 109 questions over 18 mixed-format public documents, graded by an independent `gpt-4o-mini` judge** (distinct from the `openai/gpt-oss-120b` answer model, so no self-grading bias). Full, current run (2026-07-23) — not a stale/partial snapshot:
 
 | Capability | Score | Reading |
 |---|---:|---|
-| Overall answer correctness — adversarial/stress-test mix (10 types) | **90.6%** | Pulled down mainly by numeric-lookup questions with multiple candidate values in one passage |
-| Grounded answers (faithfulness) | **90.4%** | Claims supported by / inferable from retrieved text |
-| On-topic answers (relevancy) | **94.0%** | Answers address the question asked |
+| Overall answer correctness — adversarial/stress-test mix (10 types) | **89.9%** | Pulled down mainly by numeric-lookup questions with multiple candidate values in one passage |
+| Grounded answers (faithfulness) | **89.1%** | Claims supported by / inferable from retrieved text |
+| On-topic answers (relevancy) | **91.1%** | Answers address the question asked |
 | Finds the right source (retrieval hit@5) | **98.6%** | Correct evidence in the top 5 for nearly every question |
-| Structured-data accuracy (Excel/CSV) | **95.2%** | Text-to-SQL over DuckDB returns the correct cell value |
-| Refuses unanswerable questions | **92.9%** | Returns `Unsupported` instead of fabricating — see Known limitations |
+| Structured-data accuracy (Excel/CSV) | **90.5%** | Text-to-SQL over DuckDB returns the correct cell value |
+| Refuses unanswerable questions | **85.7%** | Returns `Unsupported` instead of fabricating — see Known limitations |
 
 No eval-set-specific shortcuts — every answer comes from the model and tool outputs. Full methodology and detailed metric breakdowns in [Evaluation](#evaluation).
 
@@ -236,7 +236,7 @@ Four design choices that materially moved eval scores. The full writeup of these
 
 ### Retrieval-quality refinements
 
-A second wave of changes after manual UI testing closed specific failure modes — Unsupported-despite-present-data, irrelevant source chunks, file-list dumps for vague queries, and bare-filename "answers". All fixes are domain-agnostic (no question-specific shortcuts). On the earlier refusal subset, these changes improved the rate from 75% to 100%; the current full 109-question benchmark's refusal rate is **92.9%** (see [Evaluation](#evaluation) — a 2026-07-22 session found and fixed the two remaining sources of drag: a corpus-embedding bug and an eval-harness-only override, see [Recent fixes](#recent-fixes)). Highlights: stem-overlap doc-routing boost + force-inject, per-doc slot reservation in the reranker, neighbor-chunk expansion, prompt-driven `Clarify:` rule, content-based bare-filename answer guard, source-diversity acceptance check on the repair pass, and an API-level forced retry on bare-`Unsupported`. Full rationale + trade-offs: [docs/engineering.md](docs/engineering.md#retrieval-quality-refinements).
+A second wave of changes after manual UI testing closed specific failure modes — Unsupported-despite-present-data, irrelevant source chunks, file-list dumps for vague queries, and bare-filename "answers". All fixes are domain-agnostic (no question-specific shortcuts). On the earlier refusal subset, these changes improved the rate from 75% to 100%; the latest full 109-question benchmark run measured a refusal rate of **85.7%** (see [Evaluation](#evaluation) — a 2026-07-22 session found and fixed the two remaining sources of drag: a corpus-embedding bug and an eval-harness-only override, see [Recent fixes](#recent-fixes)). Highlights: stem-overlap doc-routing boost + force-inject, per-doc slot reservation in the reranker, neighbor-chunk expansion, prompt-driven `Clarify:` rule, content-based bare-filename answer guard, source-diversity acceptance check on the repair pass, and an API-level forced retry on bare-`Unsupported`. Full rationale + trade-offs: [docs/engineering.md](docs/engineering.md#retrieval-quality-refinements).
 
 ---
 
@@ -328,26 +328,26 @@ The high-level capability summary is at the top of the README; this section is t
 
 | Metric | Score | What it measures |
 |---|---:|---|
-| Correctness (adversarial/stress-test mix, 10 types) | **90.6%** | Whether the answer states the facts the question asks for, judged against the gold answer — paraphrases, formatting, currency symbols, and source labels are accepted; exact matches short-circuit the LLM judge. Pulled down mainly by numeric-lookup questions with multiple candidate values in one passage |
-| Faithfulness | **90.4%** | Whether every claim in the answer is supported by — or inferable from — the retrieved context. Cross-document conclusions count as supported when their component facts are present in the chunks; contradictions, invented facts, and wrong-source mixing are penalised (RAGAS-style, claim-level). Excludes unanswerable + structured questions |
-| Answer relevancy | **94.0%** | Whether the answer actually addresses the question asked — not off-topic, not padded with irrelevant context |
+| Correctness (adversarial/stress-test mix, 10 types) | **89.9%** | Whether the answer states the facts the question asks for, judged against the gold answer — paraphrases, formatting, currency symbols, and source labels are accepted; exact matches short-circuit the LLM judge. Pulled down mainly by figure-grounding and numeric-reasoning questions |
+| Faithfulness | **89.1%** | Whether every claim in the answer is supported by — or inferable from — the retrieved context. Cross-document conclusions count as supported when their component facts are present in the chunks; contradictions, invented facts, and wrong-source mixing are penalised (RAGAS-style, claim-level). Excludes unanswerable + structured questions |
+| Answer relevancy | **91.1%** | Whether the answer actually addresses the question asked — not off-topic, not padded with irrelevant context |
 
 Breakdown by question type (all 109 questions):
 
 | Question type | n | Correctness |
 |---|---:|---:|
-| Figure grounding | 3 | **100.0%** |
 | Negation check | 5 | **100.0%** |
-| Numeric reasoning | 4 | **100.0%** |
+| Numeric lookup | 6 | **100.0%** |
 | Table grounding | 3 | **100.0%** |
-| Table lookup | 16 | **100.0%** |
+| Single-doc factoid | 17 | **94.1%** |
+| Table lookup | 16 | **93.8%** |
 | Unanswerable | 10 | **90.0%** |
-| Single-doc factoid | 17 | **88.2%** |
 | OCR extraction | 25 | **88.0%** |
-| Cross-document compare | 20 | **86.5%** |
-| Numeric lookup | 6 | **75.0%** |
+| Cross-document compare | 20 | **85.0%** |
+| Numeric reasoning | 4 | **75.0%** |
+| Figure grounding | 3 | **66.7%** |
 
-Numeric lookup is now the lowest category (n=6) — the recurring failure shape is a passage with more than one candidate number and no field label distinguishing them (see [Methodology notes](#methodology-notes)). No question type regressed from the previous run; several jumped from the lowest-scoring bucket to 100% once the corpus/retrieval/judge fixes below landed.
+Figure grounding is now the lowest category (n=3, so a single wrong answer swings it by ~33 points) — the recurring failure shape is judging a VLM-generated figure description against a gold answer written from the original chart, where wording overlap is inherently looser than passage-quote questions (see [Methodology notes](#methodology-notes)). Several categories moved between runs in both directions (numeric lookup 75%→100%, numeric reasoning 100%→75%, figure grounding 100%→66.7%) — LLM-judged correctness has real run-to-run variance on a 109-question sample; the vector-retrieval metrics below (deterministic-ish, not LLM-judged) stayed identical between runs.
 
 **Vector retrieval metrics** (74 PDF/OCR questions, Qdrant)
 
@@ -365,15 +365,15 @@ The correct evidence chunk lands in the top 5 for ~99% of answerable PDF questio
 
 | Metric | Score | What it measures |
 |---|---:|---|
-| Answer accuracy | **95.2%** | Fraction of Excel/CSV questions where the text-to-SQL path over DuckDB returns the correct cell value |
+| Answer accuracy | **90.5%** | Fraction of Excel/CSV questions where the text-to-SQL path over DuckDB returns the correct cell value |
 
-Excel and CSV questions bypass Qdrant entirely. The Excel sub-graph decomposes cross-document questions per source, fans out one inner SQL ReAct loop per part via the LangGraph `Send` API, and synthesises the per-part answers. Each inner loop ranks candidate tables by column-name overlap with the question, then writes / runs / evaluates SQL with retries on column errors, deterministic predicate-relaxation on empty results (drops an over-constraining filter rather than guessing), and a next-table fallback. Tables embedded in PDFs are now loaded into DuckDB too, so `SUM`/`COUNT`-style aggregation questions are answered exactly by SQL rather than by the LLM. This number moved 76.2% → 95.2% in the most recent session, mostly from an eval-judge bug, not a pipeline change — see [Recent fixes](#recent-fixes).
+Excel and CSV questions bypass Qdrant entirely. The Excel sub-graph decomposes cross-document questions per source, fans out one inner SQL ReAct loop per part via the LangGraph `Send` API, and synthesises the per-part answers. Each inner loop ranks candidate tables by column-name overlap with the question, then writes / runs / evaluates SQL with retries on column errors, deterministic predicate-relaxation on empty results (drops an over-constraining filter rather than guessing), and a next-table fallback. Tables embedded in PDFs are now loaded into DuckDB too, so `SUM`/`COUNT`-style aggregation questions are answered exactly by SQL rather than by the LLM. This number moved 76.2% → 95.2% in an earlier session, mostly from an eval-judge bug, not a pipeline change (see [Recent fixes](#recent-fixes)) — the latest run measured 90.5%, within the run-to-run variance an LLM judge produces on a 21-question subset, not a known regression.
 
 **Unanswerable questions** (14 questions)
 
 | Metric | Score | What it measures |
 |---|---:|---|
-| Correct refusal rate | **92.9%** | Fraction of questions with no answer in the corpus where the agent correctly returns `Unsupported` instead of hallucinating |
+| Correct refusal rate | **85.7%** | Fraction of questions with no answer in the corpus where the agent correctly returns `Unsupported` instead of hallucinating |
 
 Questions that cannot be answered from the indexed corpus. The agent is instructed to return the single word `Unsupported` — no hedging, no hallucination. A runtime guard catches a specific failure mode the prompt alone could not: when the agent picks a topically-related document and returns essentially just its filename ("doc_007_published_spend_report.csv") without extracting any value matching the question's data type, the guard converts that to `Unsupported`. The check is content-based — strip filenames + question-echo + framing, and if no substantive token or new numeric value remains, the answer is treated as a refusal failure dressed up as an answer. General to any new document.
 
@@ -402,7 +402,7 @@ Full investigation notes, root-cause evidence, and considered-but-rejected fixes
 | + SQL refusal path & hard gate | 76.2% |
 | + 3 broken eval labels fixed (historical snapshot, smaller corpus) | 90.5% |
 
-Historical progression on an earlier, smaller version of the benchmark corpus — kept for the trail of real fixes it documents. The current, current-corpus number is **95.2%** (109-question benchmark, see [Structured retrieval](#evaluation) above) — most of the jump from 76.2% was an eval-judge scoring bug, not a pipeline change; see item 5 below.
+Historical progression on an earlier, smaller version of the benchmark corpus — kept for the trail of real fixes it documents (the final row's 90.5% is a coincidental match with the current full-corpus number below, not the same measurement). The latest full-corpus number is **90.5%** (109-question benchmark, see [Structured retrieval](#evaluation) above) — most of the earlier jump from 76.2% to 95.2% was an eval-judge scoring bug, not a pipeline change; see item 5 below.
 
 Verified via 3 new targeted refusal questions added to the benchmark (each asks for a field that provably doesn't exist in its table) plus repeated isolated re-tests of the original failing case — one case now refuses reliably (4/4), a second improved substantially (from failing every time to succeeding in most repeated trials) but isn't airtight, since it depends partly on the model still following instructions on top of the hard gate.
 
