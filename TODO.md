@@ -1290,3 +1290,22 @@ own "Known gaps" section for the current list):
   **Still separately true, not fixed:** `UploadZone.tsx` still runs two
   independent pollers for the same job (its own loop + `trackJob()`) --
   redundant, not wrong, but still worth collapsing to one.
+- [ ] **Filenames with a space break citations.** `_HEADER_RE`
+  (`src/answer_pipeline.py:347`) parses the internal chunk-header wire
+  format (`file=<name> chunk=<n> page=<n> score=<n>`) with
+  `file=(?P<file>[^\s]+)` -- a filename containing a space truncates at the
+  first word. Reproduced live 2026-07-25: uploaded as "Procurement
+  Policy.pdf" (a demo-friendly rename), every citation's `filename` field
+  came back as `"Procurement"`, which broke the PDF inspector's
+  `IS_PDF(filename)` check (`.pdf` no longer at the end) and showed "side-
+  by-side preview isn't available for this file type" on a real PDF. Same
+  underlying assumption likely affects the sibling regexes sharing this
+  wire format (`_LEAKED_HEADER_RE`, `_INLINE_LEAKED_SOURCE_RE`, both also
+  `\S+`-based) -- not independently confirmed broken, just built on the
+  same assumption. Worked around for the demo by re-ingesting under the
+  original underscore filename and using the existing admin
+  `PATCH /documents/{filename}/title` display-title override instead of
+  renaming the actual file. Real fix needs either: reject/sanitize spaces
+  in uploaded filenames at ingest time (simplest), or make the chunk-header
+  wire format spaceless-filename-safe (e.g. quote the filename field) --
+  the former is much less risk given how many places read this format.
