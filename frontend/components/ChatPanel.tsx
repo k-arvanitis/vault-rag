@@ -10,6 +10,7 @@ import {
   type Document,
   type InspectTarget,
   type Source,
+  type QueryHistoryTurn,
 } from "@/lib/api";
 import { useAdminSession } from "@/lib/useAdminSession";
 import { Button } from "@/components/ui/button";
@@ -20,6 +21,22 @@ import SourceScope from "./SourceScope";
 let msgCounter = 0;
 function nextId() {
   return `msg-${++msgCounter}`;
+}
+
+// Pairs consecutive user/assistant messages into the turns sent as `history`
+// so a follow-up like "who must that notice be given to?" can be resolved
+// against what was actually asked/answered before it.
+function toHistory(messages: Message[]): QueryHistoryTurn[] {
+  const turns: QueryHistoryTurn[] = [];
+  for (let i = 0; i < messages.length - 1; i++) {
+    const user = messages[i];
+    const assistant = messages[i + 1];
+    if (user.role === "user" && assistant.role === "assistant" && assistant.content) {
+      turns.push({ question: user.content, answer: assistant.content });
+      i++;
+    }
+  }
+  return turns;
 }
 
 import { type Trace } from "./TraceSidebar";
@@ -143,10 +160,9 @@ export default function ChatPanel({
   );
 
   // Shared by send() (new user turn) and retry() (re-ask an existing question
-  // in place) — /query/stream is stateless per-question (no history is
-  // threaded today), so a retry is just firing the same question again and
-  // writing the result into the given assistant message slot instead of
-  // appending. onToken fires as raw tokens stream in (perceived-latency
+  // in place) — a retry passes the same history as the original ask (turns
+  // before it), writing the result into the given assistant message slot
+  // instead of appending. onToken fires as raw tokens stream in (perceived-latency
   // UX — see streamQueryDocuments); onDone fires once with the final,
   // cleaned answer, which callers should use to replace the raw
   // concatenation, not append to it.
@@ -154,13 +170,20 @@ export default function ChatPanel({
     async (
       question: string,
       onToken: (token: string) => void,
-      onDone: (data: Awaited<ReturnType<typeof streamQueryDocuments>>) => void
+      onDone: (data: Awaited<ReturnType<typeof streamQueryDocuments>>) => void,
+      history?: QueryHistoryTurn[]
     ) => {
       setStreaming(true);
       const controller = new AbortController();
       abortRef.current = controller;
       try {
-        const data = await streamQueryDocuments(question, onToken, scopedDocIds, controller.signal);
+        const data = await streamQueryDocuments(
+          question,
+          onToken,
+          scopedDocIds,
+          controller.signal,
+          history
+        );
         onDone(data);
         onTrace?.({
           sources: data.sources ?? [],
@@ -190,6 +213,7 @@ export default function ChatPanel({
     setInput("");
     textareaRef.current?.focus();
 
+    const history = toHistory(messages);
     const userMsg: Message = { id: nextId(), role: "user", content: question };
     const assistantId = nextId();
     setMessages((prev) => [...prev, userMsg, { id: assistantId, role: "assistant", content: "" }]);
@@ -209,9 +233,10 @@ export default function ChatPanel({
           persist(next);
           return next;
         });
-      }
+      },
+      history
     );
-  }, [input, streaming, ask, persist]);
+  }, [input, streaming, ask, persist, messages]);
 
   const retry = useCallback(
     async (assistantMessageId: string) => {
@@ -219,6 +244,7 @@ export default function ChatPanel({
       const idx = messages.findIndex((m) => m.id === assistantMessageId);
       const userMsg = idx > 0 ? messages[idx - 1] : null;
       if (!userMsg || userMsg.role !== "user") return;
+      const history = toHistory(messages.slice(0, idx - 1));
 
       setMessages((prev) =>
         prev.map((m) => (m.id === assistantMessageId ? { ...m, content: "" } : m))
@@ -243,7 +269,8 @@ export default function ChatPanel({
             persist(next);
             return next;
           });
-        }
+        },
+        history
       );
     },
     [messages, streaming, ask, persist]

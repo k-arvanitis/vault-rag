@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from src.answer_pipeline import (
     _TITLE_QUESTION_RE,
+    _condense_followup_question,
     _excel_citations_to_sources,
     _is_malformed_generation,
     _narrow_quotes_to_answer,
@@ -1371,3 +1372,65 @@ class TestNoEvidenceForcesUnsupported:
             result = answer_query(agent=object(), question="What year is it titled for?")
         assert result["answer"] == "Unsupported"
         assert result["sources"] == []
+
+
+_FAKE_AGENT = SimpleNamespace(
+    _generation_api_base="http://fake-llm/v1", _generation_model="fake-model"
+)
+
+
+class TestCondenseFollowupQuestion:
+    def test_no_history_is_a_noop(self):
+        """eval/run_eval.py never passes history -- must not call the LLM at all."""
+        with patch("src.answer_pipeline._llm_call") as mock_call:
+            result = _condense_followup_question(
+                "Who must that notice be given to?", None, _FAKE_AGENT
+            )
+        mock_call.assert_not_called()
+        assert result == "Who must that notice be given to?"
+
+    def test_no_agent_generation_config_is_a_noop(self):
+        """No agent (or one missing _generation_api_base/_generation_model,
+        e.g. a bare `object()` used in other tests) must not call the LLM."""
+        history = [{"question": "q", "answer": "a"}]
+        with patch("src.answer_pipeline._llm_call") as mock_call:
+            result = _condense_followup_question(
+                "Who must that notice be given to?", history, object()
+            )
+        mock_call.assert_not_called()
+        assert result == "Who must that notice be given to?"
+
+    def test_rewrites_followup_using_history(self):
+        history = [
+            {
+                "question": "What is the notice period required to terminate the lease?",
+                "answer": "180 days [1]",
+            }
+        ]
+        with patch(
+            "src.answer_pipeline._llm_call",
+            return_value="Who must the 180-day lease termination notice be given to?",
+        ):
+            result = _condense_followup_question(
+                "Who must that notice be given to?", history, _FAKE_AGENT
+            )
+        assert result == "Who must the 180-day lease termination notice be given to?"
+
+    def test_falls_back_to_raw_question_on_llm_failure(self):
+        with patch(
+            "src.answer_pipeline._llm_call", side_effect=RuntimeError("connection refused")
+        ):
+            result = _condense_followup_question(
+                "Who must that notice be given to?", [{"question": "q", "answer": "a"}], _FAKE_AGENT
+            )
+        assert result == "Who must that notice be given to?"
+
+    def test_falls_back_to_raw_question_on_malformed_rewrite(self):
+        with patch(
+            "src.answer_pipeline._llm_call",
+            return_value='{"tool": "search_knowledge_base"}',
+        ):
+            result = _condense_followup_question(
+                "Who must that notice be given to?", [{"question": "q", "answer": "a"}], _FAKE_AGENT
+            )
+        assert result == "Who must that notice be given to?"

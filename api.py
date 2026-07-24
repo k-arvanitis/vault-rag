@@ -14,7 +14,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from functools import lru_cache
+from functools import lru_cache, partial
 from pathlib import Path
 from typing import Any
 
@@ -755,6 +755,7 @@ async def delete_conversation_endpoint(conversation_id: str):
 class QueryRequest(BaseModel):
     question: str
     doc_id: str | list[str] | None = None
+    history: list[dict] | None = None
 
 
 @app.post("/query")
@@ -801,8 +802,13 @@ async def query(
             "tools_used": [],
         }
 
+    # A history-carrying request's answer depends on prior turns, not just
+    # this question's text -- caching it under the raw-question key would
+    # serve a stale/wrong-context answer to a different conversation asking
+    # the same follow-up text, so those requests skip the cache entirely.
+    use_cache = QUERY_CACHE_ENABLED and not req.history
     key = query_cache.cache_key(req.question, req.doc_id)
-    if QUERY_CACHE_ENABLED and (cached := query_cache.get(key)) is not None:
+    if use_cache and (cached := query_cache.get(key)) is not None:
         return cached
 
     agent = _get_agent()
@@ -812,7 +818,15 @@ async def query(
 
     _start = time.monotonic()
     result = await loop.run_in_executor(
-        _executor, answer_query, agent, req.question, lf_trace, req.doc_id
+        _executor,
+        partial(
+            answer_query,
+            agent,
+            req.question,
+            trace=lf_trace,
+            forced_doc_id=req.doc_id,
+            history=req.history,
+        ),
     )
     _latency_ms = (time.monotonic() - _start) * 1000
 
@@ -850,7 +864,7 @@ async def query(
         "sql": result["sql"],
         "tools_used": _tools_used(result["tools"]),
     }
-    if QUERY_CACHE_ENABLED:
+    if use_cache:
         query_cache.set(key, response)
     return response
 
@@ -923,8 +937,9 @@ async def query_stream(
 
         return StreamingResponse(refused_stream(), media_type="text/event-stream")
 
+    use_cache = QUERY_CACHE_ENABLED and not req.history
     key = query_cache.cache_key(req.question, req.doc_id)
-    cached = query_cache.get(key) if QUERY_CACHE_ENABLED else None
+    cached = query_cache.get(key) if use_cache else None
     if cached is not None:
 
         async def cached_stream():
@@ -948,7 +963,7 @@ async def query_stream(
         # next identical ask always missed the cache too.
         _start = time.monotonic()
         try:
-            for event in stream_answer(agent, req.question, req.doc_id):
+            for event in stream_answer(agent, req.question, req.doc_id, req.history):
                 if event.get("done") and "tools" in event:
                     event["tools_used"] = _tools_used(event.pop("tools"))
                 if event.get("done"):
@@ -971,7 +986,7 @@ async def query_stream(
                         "sql": [],
                         "tools_used": [],
                     }
-                if event.get("done") and QUERY_CACHE_ENABLED and not event.get("error"):
+                if event.get("done") and use_cache and not event.get("error"):
                     query_cache.set(
                         key,
                         {

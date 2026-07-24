@@ -18,6 +18,7 @@ from urllib.parse import unquote
 from src.answer_quality import _is_multi_part_query, _split_multi_part_query
 from src.config import MAX_TOOL_RESULTS, QDRANT_COLLECTION, QDRANT_URL
 from src.file_resolver import resolve_original_name as _resolve_original_name
+from src.llm_utils import _llm_call
 from src.rag_agent import (
     FinalCorrection,
     route_question,
@@ -473,6 +474,57 @@ def _is_malformed_generation(text: str) -> bool:
     """True when `text` is raw leaked reasoning or a raw tool-call payload
     rather than a real answer (see _MALFORMED_GENERATION_RE)."""
     return bool(_MALFORMED_GENERATION_RE.search(text))
+
+
+# Only the last few turns are kept -- enough for a follow-up pronoun ("that
+# notice", "who else") to resolve, without growing the condense prompt or
+# risking an unrelated earlier turn's document bleeding into routing.
+_HISTORY_TURNS = 4
+
+_CONDENSE_PROMPT = (
+    "Rewrite the follow-up question as a standalone question, using the "
+    "conversation so far to resolve any pronouns or implicit references. "
+    "Keep it short and preserve its original meaning. If the follow-up is "
+    "already standalone, return it unchanged. Reply with ONLY the rewritten "
+    "question, no explanation.\n\n"
+    "Conversation:\n{history}\n\n"
+    "Follow-up: {question}\n"
+    "Standalone question:"
+)
+
+
+def _condense_followup_question(question: str, history: list[dict] | None, agent: Any = None) -> str:
+    """Rewrite `question` into a standalone question using prior turns.
+
+    No-op (returns `question` unchanged) when there's no history -- this
+    keeps eval/run_eval.py, which never passes history, byte-for-byte
+    unaffected. On any LLM failure or malformed/empty output, also falls
+    back to the raw question rather than risk a broken rewrite.
+
+    Uses the same generation model/endpoint the agent itself answers with
+    (agent._generation_api_base / _generation_model, set in build_rag_agent)
+    via the shared _llm_call helper, rather than a separately-configured
+    "cheap" model -- CHUNK_LLM_MODEL is tuned for ingestion-time enrichment
+    and isn't guaranteed to be a valid model on whatever endpoint is live.
+    """
+    if not history:
+        return question
+    api_base = getattr(agent, "_generation_api_base", None)
+    model_name = getattr(agent, "_generation_model", None)
+    if not api_base or not model_name:
+        return question
+    turns = history[-_HISTORY_TURNS:]
+    transcript = "\n".join(
+        f"Q: {t.get('question', '')}\nA: {t.get('answer', '')}" for t in turns
+    )
+    prompt = _CONDENSE_PROMPT.format(history=transcript, question=question)
+    try:
+        rewritten = _llm_call(prompt, api_base, model_name, max_tokens=200, temperature=0)
+    except Exception:
+        return question
+    if not rewritten or _is_malformed_generation(rewritten):
+        return question
+    return rewritten
 _BLANK_LINES_RE = re.compile(r"\n{3,}")
 
 
@@ -1322,6 +1374,7 @@ def answer_query(
     question: str,
     trace: Any = None,
     forced_doc_id: str | list[str] | None = None,
+    history: list[dict] | None = None,
 ) -> dict:
     """Full answer pipeline: split, answer each part, merge, and format sources.
 
@@ -1337,8 +1390,17 @@ def answer_query(
 
     forced_doc_id: the UI's source-scope control, when the user picked "one
     document" instead of "all sources" — see answer_one.
+
+    history: prior {"question", "answer"} turns from this chat, if any. When
+    given, a follow-up like "who must that notice be given to?" is rewritten
+    into a standalone question before routing/splitting/retrieval even see
+    it -- otherwise the dangling pronoun defeats route_question, comparison
+    detection, and the title shortcut alike, all of which run on the raw
+    string. eval/run_eval.py never passes history, so this is a no-op there.
     """
     _zero_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+
+    question = _condense_followup_question(question, history, agent)
 
     shortcut = None if forced_doc_id else _title_shortcut_answer(question)
     if shortcut is not None:
@@ -1494,6 +1556,7 @@ def stream_answer(
     agent: Any,
     question: str,
     forced_doc_id: str | list[str] | None = None,
+    history: list[dict] | None = None,
 ) -> Generator[dict, None, None]:
     """Stream an answer token-by-token; yields {"token": str} events, then one
     final {"done": True, **answer_query-shaped result}.
@@ -1521,7 +1584,12 @@ def stream_answer(
     tool results. The final "done" event's "answer" field is the clean,
     authoritative version; callers should replace the streamed text with it
     once the stream ends, not keep the raw concatenation.
+
+    history: same as answer_query's -- resolved into a standalone question
+    before any of the routing/split checks below run, since they all key off
+    the raw question string the same way answer_query's do.
     """
+    question = _condense_followup_question(question, history, agent)
     is_comparison = bool(_COMPARISON_RE.search(question))
     is_multi_part = _is_multi_part_query(question)
     if is_comparison or is_multi_part:

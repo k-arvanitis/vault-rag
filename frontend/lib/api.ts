@@ -238,16 +238,19 @@ export async function getIngestStatus(jobId: string): Promise<IngestStatus> {
   return request<IngestStatus>(`/ingest/status/${jobId}`);
 }
 
+export type QueryHistoryTurn = { question: string; answer: string };
+
 export async function queryDocuments(
   question: string,
   docId?: string | string[] | null,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  history?: QueryHistoryTurn[]
 ): Promise<QueryResponse> {
   const doc_id = Array.isArray(docId) ? (docId.length ? docId : null) : docId ?? null;
   return request<QueryResponse>("/query", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, doc_id }),
+    body: JSON.stringify({ question, doc_id, history: history?.length ? history : null }),
     signal,
   });
 }
@@ -264,13 +267,14 @@ export async function streamQueryDocuments(
   question: string,
   onToken: (token: string) => void,
   docId?: string | string[] | null,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  history?: QueryHistoryTurn[]
 ): Promise<QueryResponse> {
   const doc_id = Array.isArray(docId) ? (docId.length ? docId : null) : docId ?? null;
   const res = await fetch(`${BASE_URL}/query/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, doc_id }),
+    body: JSON.stringify({ question, doc_id, history: history?.length ? history : null }),
     credentials: "include",
     signal,
   });
