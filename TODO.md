@@ -1248,3 +1248,30 @@ own "Known gaps" section for the current list):
   wired to this store — only the main generation path is. A fully local
   vLLM endpoint isn't one of the three provider presets either (would need a
   fourth "custom base URL" option).
+- [ ] **Conflicting-evidence handling untested.** The corpus's only real
+  conflicting-evidence candidate is doc_016a (original lease) vs.
+  doc_016b/doc_016c (amendments) — a later amendment overriding an original
+  term is exactly the "which source wins" case a demo should show. Neither
+  amendment file is currently ingested (only doc_001 + doc_016a are live in
+  Qdrant, confirmed via `scroll_all_payloads` 2026-07-24), so this behavior
+  has never actually been exercised. Needs the amendments ingested (data/input/
+  doc_016b_first_amendment.pdf, doc_016c_second_amendment.pdf already exist on
+  disk) and a live test of a question the amendment actually changes, before
+  claiming this works.
+- [ ] **Groq account billing hold.** console.groq.com reports "Organization
+  has been restricted because of overdue payment(s)" (surfaced live
+  2026-07-24 while verifying the BYOK feature against the operator's own
+  GROQ_API_KEY — a real 400 from Groq's API, not a code bug). Update the
+  payment method at console.groq.com/settings/billing/manage before demoing
+  BYOK against Groq live, or use OpenRouter/OpenAI/the default env provider
+  instead in the meantime.
+- [ ] **Feedback loop is a triage inbox, not a self-correcting loop.** Of the
+  three admin resolution actions (`mark_correct_source`, `add_to_eval_set`,
+  `dismissed` — `frontend/components/FeedbackPanel.tsx`), only
+  `add_to_eval_set` has any real downstream effect (appends a candidate line
+  to `eval/regression_candidates.jsonl`), and even that lands with
+  `gold_answer`/`question_type` as `None` — needs a human to fill those in
+  before it counts in an eval run. `mark_correct_source` and `dismissed` are
+  pure status labels with no code applying them anywhere (no citation gets
+  corrected, no chunk metadata updated). Accurate framing for a demo:
+  "flags issues for human review," not "learns from feedback."
