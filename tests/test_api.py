@@ -250,3 +250,22 @@ class TestValidateStartupEnv:
                 _validate_startup_env()
         assert any(r.levelname == "WARNING" for r in caplog.records)
         assert not any(r.levelname == "ERROR" for r in caplog.records)
+
+
+class TestPdfRouteOrder:
+    """Starlette matches routes in registration order against the URL's raw
+    path template -- /pdf/{page}'s "int" typing lives in the function
+    signature, not the path pattern, so if it were registered before
+    /pdf/info, a request to /pdf/info would match {page}="info" first and
+    422 on int coercion, never reaching the real /pdf/info route.
+    Reproduced live 2026-07-25: exactly that, endpoint totally unreachable."""
+
+    def test_pdf_info_registered_before_pdf_page(self):
+        paths_in_order = [
+            r.path
+            for r in api.app.routes
+            if getattr(r, "path", "").startswith("/documents/{filename:path}/pdf")
+        ]
+        info_idx = paths_in_order.index("/documents/{filename:path}/pdf/info")
+        page_idx = paths_in_order.index("/documents/{filename:path}/pdf/{page}")
+        assert info_idx < page_idx

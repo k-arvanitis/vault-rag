@@ -1241,6 +1241,30 @@ async def document_markdown(filename: str):
     }
 
 
+@app.get("/documents/{filename:path}/pdf/info")
+async def document_pdf_info(filename: str):
+    """Return total page count for a PDF.
+
+    Registered ahead of /pdf/{page} deliberately -- Starlette matches routes
+    by trying them in registration order against the untyped path template
+    (page's "int" typing lives in the function signature, not the URL
+    pattern), so a /pdf/{page} declared first would greedily match
+    "/pdf/info" too (page="info") and 422 on int coercion instead of ever
+    reaching this route. Reproduced live 2026-07-25: this endpoint was
+    completely unreachable with the routes in the other order.
+    """
+    pdf_path = _resolve_source_file_path(filename)
+    if not pdf_path:
+        raise HTTPException(status_code=404, detail="PDF not found")
+    try:
+        import pypdfium2 as pdfium
+
+        doc = pdfium.PdfDocument(str(pdf_path))
+        return {"total_pages": len(doc)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @app.get("/documents/{filename:path}/pdf/{page}")
 async def document_pdf_page(filename: str, page: int):
     """Render a single PDF page (1-indexed) and return it as a base64 PNG."""
@@ -1552,18 +1576,3 @@ async def document_table_sheet(filename: str, sheet: str, quote: str | None = No
         raise HTTPException(status_code=404, detail="No data found for this sheet")
 
     return {"sheet": sheet, "raw_rows": raw_rows, "cleaned_md": cleaned_md}
-
-
-@app.get("/documents/{filename:path}/pdf/info")
-async def document_pdf_info(filename: str):
-    """Return total page count for a PDF."""
-    pdf_path = _resolve_source_file_path(filename)
-    if not pdf_path:
-        raise HTTPException(status_code=404, detail="PDF not found")
-    try:
-        import pypdfium2 as pdfium
-
-        doc = pdfium.PdfDocument(str(pdf_path))
-        return {"total_pages": len(doc)}
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
