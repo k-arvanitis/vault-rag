@@ -1223,3 +1223,15 @@ own "Known gaps" section for the current list):
   the "hard-enforce it at the tool layer" comment in
   `src/answer_pipeline.py::answer_one`). Workaround for now: scope to the
   Excel doc via the UI selector when precision matters.
+- [ ] **LLM provider portability — bring-your-own key (OpenAI, or any
+  OpenAI-compatible endpoint, including local).** Client-facing gap: right
+  now the LLM side is a patchwork of separate provider configs per
+  subsystem (`GROQ_API_KEY`, `NVIDIA_API_KEY`, `OPENROUTER_API_KEY`,
+  `FREE_LLM_API_KEY`, `CHUNK_LLM_API_KEY`, `EXCEL_AGENT_API_KEY`, each with
+  its own base URL/model — see `src/config.py`), not a single swappable
+  provider setting. A client who wants to run this against their own
+  OpenAI key, a different vendor, or a fully local model (e.g. the
+  existing local vLLM setup, per the global CLAUDE.md GPU cheatsheet) can't
+  just drop in one key today — needs a real audit of which subsystem talks
+  to which provider and a unified, OpenAI-compatible-by-default
+  configuration surface. Scope not yet sized.
