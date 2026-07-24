@@ -1275,3 +1275,18 @@ own "Known gaps" section for the current list):
   pure status labels with no code applying them anywhere (no citation gets
   corrected, no chunk metadata updated). Accurate framing for a demo:
   "flags issues for human review," not "learns from feedback."
+- [ ] **Upload status badge can get stuck on "Processing" after a real
+  success.** `frontend/components/UploadZone.tsx` runs two independent
+  pollers for the same ingest job -- its own `setInterval` loop AND
+  `lib/jobTracker.ts`'s `trackJob()` -- and the persistent Sources-list
+  status badge (`lib/product.ts`'s `toSourceLibraryItem`) reads only from
+  `jobTracker`'s store, not the one that actually resolves the upload
+  promise. Reproduced live 2026-07-24: backend confirmed `status: "indexed"`
+  via `/documents` while the Sources page kept showing "Processing" —
+  refreshing the page fixed it, so it's a stuck client-side badge, not a
+  real ingest failure. Most likely trigger: a backend restart mid-poll wipes
+  the in-memory `_jobs` dict (job ID no longer found), and one of the two
+  pollers doesn't handle that cleanly. Fix should collapse to one poller
+  (`jobTracker` already does what `UploadZone`'s manual loop does, minus
+  the progress percentage — could carry that into `TrackedJob` and delete
+  the second loop).
