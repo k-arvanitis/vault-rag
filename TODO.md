@@ -1212,17 +1212,25 @@ own "Known gaps" section for the current list):
   LLM-generated query — a real architecture change, not a quick patch.
   Workaround for now: always scope to a document via the UI selector for
   anything that needs to be reliably right.
-- [ ] **Excel routing flakiness.** The agent sometimes calls
-  `search_knowledge_base` instead of `query_excel` for a table-value
-  question (wrong tool choice), gets no evidence, returns "Unsupported."
-  `route_question`'s classification isn't reliable enough on its own —
-  same class of gap as the already-fixed "document modality" case, which
-  is hard-enforced at the tool layer via `FORCED_DOC_ID` instead of
-  trusting the prompt directive alone. `query_excel` has no equivalent
-  per-source hard-enforcement today (see the older TODO note referenced at
-  the "hard-enforce it at the tool layer" comment in
-  `src/answer_pipeline.py::answer_one`). Workaround for now: scope to the
-  Excel doc via the UI selector when precision matters.
+- [x] **Excel routing flakiness — partially fixed 2026-07-24.** The agent
+  sometimes calls `search_knowledge_base` instead of `query_excel` for a
+  table-value question (wrong tool choice). Added `FORCED_MODALITY`
+  (`src/tools/retrieval_tool.py`), mirroring `FORCED_DOC_ID`: when
+  `route_question` confidently resolves excel modality, `search_knowledge_base`
+  now refuses outright and names `query_excel` instead of returning
+  irrelevant text-chunk evidence — this closes the "wrong tool succeeds
+  quietly with bad evidence" failure mode, and along the way caught and
+  fixed three real malformed-generation leaks (`_MALFORMED_GENERATION_RE`
+  in `src/answer_pipeline.py`) that used to surface as raw garbage text in
+  the answer instead of an honest refusal. Verified live: 6/6 repeated runs
+  now return either a correctly cited answer or a clean "Unsupported" —
+  zero leaked text. **Not fully closed**: the underlying routing choice
+  (`route_question`) still sometimes picks the wrong tool in the first
+  place (~half of runs in the live 6x check) — it now just fails safely
+  (honest refusal) instead of unsafely (fabricated/leaked text). Improving
+  `route_question`'s own hit rate is a separate, not-yet-scoped follow-up.
+  Workaround for precision-critical questions: still scope to the Excel doc
+  via the UI selector.
 - [ ] **LLM provider portability — bring-your-own key (OpenAI, or any
   OpenAI-compatible endpoint, including local).** Client-facing gap: right
   now the LLM side is a patchwork of separate provider configs per
