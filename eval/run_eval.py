@@ -26,6 +26,7 @@ load_dotenv(override=True)
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
 
+from eval.gold_rank_at_1 import _contains  # noqa: E402
 from src.answer_pipeline import answer_query  # noqa: E402
 from src.config import (  # noqa: E402
     GENERATION_API_BASE,
@@ -379,6 +380,80 @@ def _accuracy_by_type(answer_rows: list[dict[str, Any]]) -> dict[str, dict[str, 
     return {
         qtype: {"count": len(scores), "correctness": sum(scores) / len(scores)}
         for qtype, scores in sorted(by_type.items())
+    }
+
+
+def _slim_sources(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Project a pipeline source card down to what the citation-evidence
+    metric needs (document_id, filename, excerpt), dropping bbox/figure
+    payloads before persisting to disk."""
+    return [
+        {
+            "document_id": s.get("document_id"),
+            "filename": s.get("filename"),
+            "excerpt": s.get("excerpt"),
+        }
+        for s in sources
+    ]
+
+
+_ANSWER_MARKER_RE = re.compile(r"\[(\d+)\]")
+
+
+def _citation_evidence_metrics(answer_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Offline citation-evidence metric (M-4, MITIGATION_PLAN.md FM-4).
+
+    The judge scores answer prose only -- it never checks whether a [N]
+    marker in the answer actually points at the document/quote it claims,
+    so a correct-prose-wrong-citation answer scores identically to a
+    correctly-cited one. Computed purely from data already persisted per
+    row (`sources`, written by generate_answers via _slim_sources; `[N]`
+    markers already appear in the final, renumbered predicted_answer) --
+    no regeneration, no LLM calls.
+
+    `sources` is only present on rows produced after this change (and on
+    the single-answer_query path, not the decomposition path) -- rows
+    without it are excluded from coverage/precision, not scored 0.0, so a
+    missing field doesn't masquerade as a citation failure.
+    """
+    coverages: list[float] = []
+    precisions: list[float] = []
+    answered = 0
+    uncited = 0
+    for row in answer_rows:
+        answer = row.get("predicted_answer") or ""
+        is_unsupported = answer.strip().lower() == "unsupported"
+        if not is_unsupported:
+            answered += 1
+            if not _ANSWER_MARKER_RE.search(answer):
+                uncited += 1
+
+        sources = row.get("sources")
+        gold_evidence = row.get("gold_evidence") or []
+        gold_docs = {ev.get("doc_id") for ev in gold_evidence if ev.get("doc_id")}
+        if sources is None or not gold_docs or is_unsupported:
+            continue
+        markers = sorted({int(n) for n in _ANSWER_MARKER_RE.findall(answer)})
+        cited = [sources[n - 1] for n in markers if 0 < n <= len(sources)]
+        if not cited:
+            continue
+
+        quotes = [ev.get("quote") or "" for ev in gold_evidence]
+        covered = sum(
+            1 for doc in gold_docs if any(s.get("document_id") == doc for s in cited)
+        )
+        coverages.append(covered / len(gold_docs))
+        precise = sum(
+            1 for s in cited if any(_contains(s.get("excerpt") or "", q) for q in quotes)
+        )
+        precisions.append(precise / len(cited))
+
+    return {
+        "question_count": len(coverages),
+        "citation_coverage": sum(coverages) / len(coverages) if coverages else None,
+        "citation_precision": sum(precisions) / len(precisions) if precisions else None,
+        "uncited_answer_question_count": answered,
+        "uncited_answer_rate": uncited / answered if answered else None,
     }
 
 
@@ -977,6 +1052,12 @@ def generate_answers(
         )
 
         retrieved_contexts: list[str] = []
+        # Citation-evidence sources (M-4, MITIGATION_PLAN.md): only the
+        # answer_query path returns a real `sources` list matching the
+        # final [N] markers in `answer` -- None (not []) everywhere else,
+        # so _citation_evidence_metrics can tell "not measured" from "no
+        # sources cited" instead of conflating them.
+        sources: list[dict[str, Any]] | None = None
         if is_multihop:
             try:
                 answer = ask_with_decomposition(
@@ -998,6 +1079,7 @@ def generate_answers(
                 result = answer_query(agent, query)
                 answer = result["answer"]
                 retrieved_contexts = result["collected"]
+                sources = _slim_sources(result.get("sources") or [])
             except Exception as exc:
                 print(
                     f"  [WARN] answer_query failed ({type(exc).__name__}): {exc}. Retrying with reflection pipeline."
@@ -1032,6 +1114,9 @@ def generate_answers(
                     pre_override_answer = answer
                     answer = reflected
                     retrieved_contexts = reflect_state.get("retrieved_contexts") or []
+                    # reflect_state has no `sources` of its own, so the sources
+                    # captured (if any) above no longer match `answer`/[N].
+                    sources = None
             except Exception as exc:
                 print(f"  [WARN] reflection retry failed: {exc}")
 
@@ -1043,6 +1128,7 @@ def generate_answers(
                 "gold_answer": question.get("gold_answer"),
                 "evidence": question.get("evidence") or [],
                 "predicted_answer": answer,
+                "sources": sources,
                 "retrieved_contexts": retrieved_contexts,
                 "override_fired": override_fired,
                 "pre_override_answer": pre_override_answer,
@@ -1101,6 +1187,7 @@ def judge_answers(raw_answers_path: Path = RAW_ANSWERS_PATH) -> dict[str, Any]:
                 "predicted_answer": answer_eval.pop(
                     "clean_answer", raw["predicted_answer"]
                 ),
+                "sources": raw.get("sources"),
                 **answer_eval,
             }
         )
@@ -1190,6 +1277,7 @@ def judge_answers(raw_answers_path: Path = RAW_ANSWERS_PATH) -> dict[str, Any]:
             if unanswerable_rows
             else None,
         },
+        "citation_evidence_metrics": _citation_evidence_metrics(answer_rows),
         "agent_answer_metrics": {
             "correctness": sum(correctness) / len(correctness) if correctness else None,
             "faithfulness": sum(faithfulness) / len(faithfulness)
