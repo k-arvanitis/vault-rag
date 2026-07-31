@@ -420,6 +420,63 @@ retry on a complete answer is a latency cost and a chance to make it worse). Uni
 resolved-but-unnamed doc pair asserting `_missing_mentioned_docs` now returns the uncovered id —
 fails today.
 
+### M-8 — decompose-then-retrieve, and delete the document resolver (supersedes M-6)
+**Scope: architecture change that is a net deletion.** Added 2026-07-31 after the M-6 work
+showed the problem was framed wrong.
+**Architectural direction: #1 (more agentic), in the form the current literature actually uses.**
+
+M-6 asks "which two documents is this question about?" *before* retrieving — route-then-retrieve.
+That forces an up-front classification, which is why it is irreducibly probabilistic (measured
+8/9/12/9 correct across four sweeps) no matter how the prompt or gate is tuned.
+
+The established pattern for multi-document comparison is the inverse: decompose into
+sub-questions, retrieve each **globally**, and let document identity fall out of the evidence.
+LlamaIndex's multi-document agents do exactly this ("compare documents without needing to know
+in advance which specific documents are relevant"), and 2026 agentic-RAG surveys list
+decomposition + adaptive routing as the recurring production pattern — not document
+pre-selection.
+
+**Measured on the live corpus before proposing it** (`test_unscoped_clauses.py`): split each
+comparison into its clauses, retrieve each clause unscoped over the whole collection, and read
+off which document the top evidence came from — **3/3 correct**, deterministic, zero LLM calls:
+
+```
+"requires legal review or approval before contracts proceed"  -> doc_001 (59, 30, 62)
+"customer-issued notices for varying the service scope"       -> doc_002 (23, ..., 11)
+```
+
+The same run exposes where the real gap is: **2 of 4 questions produced NO CLAUSE SPLIT**,
+because `_split_comparison_clauses` only matches the literal connector "while the other". The
+missing capability is decomposition coverage, not document resolution.
+
+Every piece already exists here: `_llm_split_subqueries` (`src/answer_quality.py`, used on other
+paths) for decomposition, `search_knowledge_base` for global retrieval,
+`_comparison_incompleteness` for the >=2-distinct-documents coverage check, and
+`answer_comparison_deterministic` for synthesis with globally-unique markers (post-M-5).
+
+**Proposed change:** in `answer_comparison_deterministic`, stop requiring resolved doc_ids to
+engage. Decompose the question, retrieve each sub-question unscoped, keep the union as evidence,
+and require >=2 distinct documents in it before synthesising. `_retrieve_for_doc`'s forced
+`FORCED_DOC_ID` scoping (the one line that creates the resolver requirement) goes away; so does
+`_resolve_comparison_doc_ids_llm`, `_build_doc_catalogue`, `_entry_matches_question`, the
+retry-on-abstain, and M-6's whole catalogue path. The precise `mentioned`/`forced_doc_id`
+branches stay — when the user *has* named documents or scoped them in the UI, honouring that is
+still correct and still deterministic.
+
+**Risk to check before shipping:** unscoped retrieval is what the reverted 2026-07-30
+content-based resolver got burned by (doc_001 dominates unrelated queries by chunk volume). The
+material difference here is that this never *ranks documents* — each clause keeps its own top
+evidence, and a clause is a specific topical query rather than a whole diluted question. The
+3/3 above includes the case where doc_001 has 79 chunks against doc_002's 29 and still did not
+crowd out clause B.
+
+**Measurement (M-8):** the existing `test_unscoped_clauses.py` extended to every gold
+cross-document question, reporting (a) how many decompose into >=2 sub-questions and (b) how
+many produce evidence spanning the correct document pair — replacing M-6's resolver accuracy
+entirely. Target: beat M-6's ceiling (12/17) with no nondeterminism, i.e. the same number twice
+in a row. Plus M-4's citation coverage on the same questions, which is the metric that actually
+expresses the product promise.
+
 ### Considered and rejected
 
 - **Bypass the reranker inside `_retrieve_for_doc`** (one of the two options logged on

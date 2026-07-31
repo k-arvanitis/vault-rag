@@ -1865,3 +1865,79 @@ the running dev server. Known gaps carried forward (not silently dropped):
 no Word/.docx demo sample, full 17-flow e2e suite not built, clean-clone
 `docker compose up --build` not run end-to-end, no CI-runnable lane for the
 comparison path without live model credentials.
+
+## Pre-demo bugfix pass, 2026-07-31 — `fix/cross-doc-evidence` branch
+
+Six fixes, all committed, 446 tests passing throughout. In commit order:
+
+1. **`route_question` top-3 vote fooled by a raw score margin** — reproduced
+   live on the Excel demo question: `doc_006` won the top-3 majority vote
+   with a lead of 0.014 over the actually-correct `doc_002`. Added
+   `ROUTE_CONFIDENCE_MARGIN` (0.05) — abstains instead of routing on a
+   lead that thin. `1591bdd`.
+2. **`delete_by_file` matched the wrong filename on PDF re-ingestion** —
+   `_run_ingest_pdf` was deleting by the intermediate `.md` filename, not
+   `metadata.source_file` (always the source PDF's name). This delete
+   matched zero points on every PDF re-ingestion ever run — re-ingesting a
+   previously-ingested PDF silently duplicated it instead of replacing it.
+   Root-caused via `doc_016a`'s OCR bbox re-ingest (see below), which
+   surfaced 7 points instead of the expected 5. Fixed and verified
+   idempotent (double re-ingest lands back at exactly 5). `3ae89be`.
+3. **Bare-filename tool query corrupted citation snippet/bbox selection** —
+   the agent sometimes calls `search_knowledge_base` with the document's
+   own filename as `query` instead of real content text; `_best_snippet`
+   and the OCR-bbox retargeting both key off that text, so a filename
+   query picked an arbitrary wrong slice (reproduced live: showed the
+   lease's opening parties paragraph instead of the rent clause, despite
+   the model's answer itself being correct). Fixed by reusing the
+   `ORIGINAL_QUESTION` ContextVar pattern (`src/tools/excel.py`) in
+   `_resolve_scope`, and threading `ORIGINAL_QUESTION.set()` into
+   `stream_answer` (which calls `stream_agent` directly and never went
+   through `run_once`, the only other place it was set). `0f3cf93`.
+4. **Comparison clause splitter only recognized "while the other"** —
+   `_COMPARISON_RE` (decides a question IS a comparison) already
+   recognizes "and which" / "or the" connectors too; the splitter that
+   feeds `_per_doc_retrieval_queries` didn't, so those questions retrieved
+   on the full undivided question and got diluted by both sides'
+   vocabulary at once. Extended to try all three connectors. Measured
+   against `eval/questions.jsonl`'s 15 cross_document questions: 3/15 →
+   9/15 split. Does not by itself fix M-6 resolver nondeterminism — see
+   below. `2246e7a`.
+
+Also live-fixed, outside the diff: `doc_016a`'s OCR bbox was missing
+because it was originally ingested through the no-bbox GPU/LightOn OCR
+path; re-ingested with `PDF_PARSER=cpu` (unstructured/Tesseract, produces
+per-element `ocr_bbox`) using the now-fixed `delete_by_file`, verified bbox
+coordinates correct on 3 fresh runs.
+
+**M-6 document-resolution nondeterminism — investigated, not solved.**
+`_resolve_comparison_doc_ids` has three deterministic tiers (literal
+`doc_XXX` ids, UI multi-select scope, fuzzy filename-stem overlap) before
+an LLM catalogue-resolution tier that's nondeterministic in practice
+despite temperature=0 (OpenRouter provider routing varies — documented
+`OPENROUTER_PROVIDER_PIN` ablations made it worse, not better: DeepInfra
+pin was 5/5 consistent but 5/5 wrong, Alibaba pin was *more* variable than
+unpinned). Confirmed clause-splitting is orthogonal to this — it only
+affects retrieval quality *after* a doc pair is already resolved; on the
+live demo corpus (`doc_001`/`002`/`006`/`016` — the only 4 documents
+currently in Qdrant), only the one gold cross-doc question that names its
+documents by title in the question text (`qa_050`) clears the
+deterministic tiers, the rest still fall through to the LLM tier
+regardless of split quality. A real fix requires a fourth deterministic
+tier — unscoped retrieval per clause, reading document identity off the
+top hit's metadata instead of asking an LLM to classify against a
+catalogue — but that needs new plumbing (`retrieve()` is private to
+`retrieval_tool.py`, not exposed with per-hit `source_file` through the
+public tool interface) and wasn't rushed in this close to a demo
+recording. Not needed for the recording itself: the actual demo question
+names `doc_001`/`doc_002` directly, which hits the free literal-id tier.
+Logged as a candidate follow-up, not implemented.
+
+**Corpus-wide `delete_by_file` staleness — scanned, nothing to repair.**
+Fix #2 above is forward-looking only; checked whether the existing corpus
+carried duplicate points from before the fix. Scanned every `source_file`
+currently in Qdrant (point count + max `chunk_index` per document) against
+its on-disk `data/output/chunks/*.json` chunk count. All 4 live documents
+came back clean — the historic bug only leaves duplicates on a *second*
+ingestion of the same file, and only `doc_016a` (repaired above) had ever
+been re-ingested before this fix landed.
