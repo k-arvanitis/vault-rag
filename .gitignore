@@ -71,3 +71,6 @@ eval/runs/
 
 .claude/
 Screenshot*.png
+
+# Root-level npm install artifacts (frontend has its own package tree)
+node_modules/

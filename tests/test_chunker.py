@@ -10,7 +10,12 @@ from unittest.mock import patch
 
 import tiktoken
 
-from src.chunker import chunk_markdown, contextualize_chunk, extract_literal_title
+from src.chunker import (
+    chunk_markdown,
+    contextualize_chunk,
+    extract_literal_title,
+    generate_document_summary,
+)
 from src.config import CHUNK_MAX_TOKENS, CHUNK_MIN_TOKENS
 
 
@@ -248,6 +253,41 @@ def test_enrichment_failure_stores_empty_context():
     result = contextualize_chunk(mock_client, "some-model", "doc context", "chunk text")
     assert result == ""
     assert not result.lower().startswith("error")
+
+
+def test_summary_generation_failure_stores_empty_summary():
+    """A raising enrichment client must return "" from generate_document_summary,
+    not a leaked "Summary unavailable: <exception text>" string that would get
+    embedded as the document_summary chunk's content and vector_text (the same
+    anti-pattern fixed for contextualize_chunk above)."""
+    mock_client = type(
+        "MockClient",
+        (),
+        {
+            "chat": type(
+                "Chat",
+                (),
+                {
+                    "completions": type(
+                        "Completions",
+                        (),
+                        {
+                            "create": staticmethod(
+                                lambda **kwargs: (_ for _ in ()).throw(
+                                    RuntimeError(
+                                        "400 - model not in catalog"
+                                    )
+                                )
+                            )
+                        },
+                    )()
+                },
+            )()
+        },
+    )()
+    result = generate_document_summary(mock_client, "some-model", "document text")
+    assert result == ""
+    assert "unavailable" not in result.lower()
 
 
 def test_error_context_never_reaches_vector_text():

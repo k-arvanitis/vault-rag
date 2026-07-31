@@ -300,3 +300,107 @@ class TestRetrieveFromQdrant:
         )
         assert len(results) == 2
         assert mock_search.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# M-3: term-count sort must only fire for genuine structured lookups
+# ---------------------------------------------------------------------------
+
+
+class TestTermCountSortGate:
+    """The final sort in retrieve() reorders hits by literal query-term count.
+    _extract_table_filter_terms fires on any prose query, so the sort must be
+    gated on an ID-shaped filter_token or sheet_row/sheet_table chunk types
+    in the candidate pool -- not on filter_terms alone."""
+
+    # High-fusion-score hit with no term overlap, low-fusion hit with term
+    # overlap -- if the term-count sort fires, order flips; if not, score
+    # order (A first) is preserved.
+    _POINTS = [
+        {
+            "id": "ptA",
+            "score": 0.9,
+            "payload": {
+                "source_id": "chunk-A",
+                "content": "irrelevant wording with no overlap",
+                "metadata": {"chunk_type": "prose"},
+            },
+        },
+        {
+            "id": "ptB",
+            "score": 0.1,
+            "payload": {
+                "source_id": "chunk-B",
+                "content": "supplier invoice transaction reference details",
+                "metadata": {"chunk_type": "prose"},
+            },
+        },
+    ]
+
+    @patch("src.retriever._collection_has_sparse", return_value=False)
+    @patch("src.retriever._qdrant_search")
+    @patch("src.retriever._ollama_embed_query")
+    def test_prose_query_keeps_fusion_order(self, mock_embed, mock_search, _):
+        mock_embed.return_value = [0.1, 0.2]
+        mock_search.return_value = self._POINTS
+        results = retrieve(
+            "supplier invoice transaction reference details",
+            use_qdrant=True,
+            top_k=5,
+        )
+        assert [r["id"] for r in results] == ["chunk-A", "chunk-B"]
+        # over-fetch still fires even though the sort is gated off
+        assert mock_search.call_args.kwargs["top_k"] == 100
+
+    @patch("src.retriever._qdrant_scroll_filter", return_value=[])
+    @patch("src.retriever._collection_has_sparse", return_value=False)
+    @patch("src.retriever._qdrant_search")
+    @patch("src.retriever._ollama_embed_query")
+    def test_id_shaped_query_triggers_term_sort(
+        self, mock_embed, mock_search, _, __
+    ):
+        mock_embed.return_value = [0.1, 0.2]
+        mock_search.return_value = self._POINTS
+        results = retrieve(
+            "supplier invoice transaction reference INV58204",
+            use_qdrant=True,
+            top_k=5,
+            filter_token="INV58204",
+        )
+        assert [r["id"] for r in results] == ["chunk-B", "chunk-A"]
+        assert mock_search.call_args.kwargs["top_k"] == 100
+
+    @patch("src.retriever._collection_has_sparse", return_value=False)
+    @patch("src.retriever._qdrant_search")
+    @patch("src.retriever._ollama_embed_query")
+    def test_sheet_chunk_pool_triggers_term_sort_without_id_token(
+        self, mock_embed, mock_search, _
+    ):
+        points = [
+            {
+                "id": "ptA",
+                "score": 0.9,
+                "payload": {
+                    "source_id": "chunk-A",
+                    "content": "irrelevant wording with no overlap",
+                    "metadata": {"chunk_type": "sheet_row"},
+                },
+            },
+            {
+                "id": "ptB",
+                "score": 0.1,
+                "payload": {
+                    "source_id": "chunk-B",
+                    "content": "supplier invoice transaction reference details",
+                    "metadata": {"chunk_type": "sheet_row"},
+                },
+            },
+        ]
+        mock_embed.return_value = [0.1, 0.2]
+        mock_search.return_value = points
+        results = retrieve(
+            "supplier invoice transaction reference details",
+            use_qdrant=True,
+            top_k=5,
+        )
+        assert [r["id"] for r in results] == ["chunk-B", "chunk-A"]

@@ -22,11 +22,13 @@ from src.answer_quality import (
     _repair_incomplete_answer,
 )
 from src.rag_agent import (
+    _MARKER_OFFSET,
     SYSTEM_PROMPT,
     FinalCorrection,
     _build_system_prompt,
     _extract_refs,
     _is_thinking_model,
+    _renumber_tool_markers,
     ask_agent,
     route_question,
     stream_agent,
@@ -690,3 +692,45 @@ class TestRouteQuestionConfidenceGate:
         ):
             route = route_question("What is the mandatory review date?")
         assert route == {"modality": "document", "source_file": "doc_001.pdf"}
+
+
+class TestRenumberToolMarkers:
+    """search_knowledge_base is wrapped (see build_rag_agent) so the [N]
+    markers the model actually reads are globally unique across calls within
+    one question -- a second call's raw [1] must not collide with the first
+    call's [1] in the model's own context (FM-5/M-5: no amount of downstream
+    remapping in build_citation_map can undo a collision the model already
+    saw and echoed)."""
+
+    def setup_method(self):
+        _MARKER_OFFSET.set(0)
+
+    def test_second_call_markers_continue_past_first_call(self):
+        first = _renumber_tool_markers(
+            "[1] file=doc_a.pdf chunk=1 page=1 score=0.9\nDoc A one.\n\n"
+            "[2] file=doc_a.pdf chunk=2 page=2 score=0.8\nDoc A two."
+        )
+        second = _renumber_tool_markers(
+            "[1] file=doc_b.pdf chunk=1 page=1 score=0.9\nDoc B one."
+        )
+        assert "[1]" in first and "[2]" in first
+        # The second call's raw [1] must not still read as [1] once both
+        # calls are in the model's context -- it has to continue past the
+        # first call's highest marker.
+        assert "[1]" not in second
+        assert "[3]" in second
+
+    def test_single_call_numbering_unaffected(self):
+        content = _renumber_tool_markers(
+            "[1] file=doc_a.pdf chunk=1 page=1 score=0.9\nDoc A one."
+        )
+        assert content == "[1] file=doc_a.pdf chunk=1 page=1 score=0.9\nDoc A one."
+
+    def test_no_result_text_does_not_bump_offset(self):
+        """'No relevant information found.' has no [N] marker -- it must not
+        consume a marker slot the next real call would otherwise start from."""
+        _renumber_tool_markers("No relevant information found.")
+        second = _renumber_tool_markers(
+            "[1] file=doc_a.pdf chunk=1 page=1 score=0.9\nDoc A one."
+        )
+        assert "[1]" in second

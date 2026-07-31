@@ -59,20 +59,30 @@ def _make_retrieve(*, doc_summary=None, sheet_summary=None, content=None, spy=No
     return _retrieve
 
 
-def _build_tool(*, doc_registry=None, use_hyde=False):
+def _build_tool(*, doc_registry=None, use_hyde=False, ranker=None):
     """Build the search_knowledge_base tool with a fake reranker."""
     tool, _limits = _make_unified_tool(
         qdrant_url="http://qdrant.invalid",
         collection="test",
         retrieval_top_k=10,
         rerank_top_n=8,
-        ranker=FakeRanker(),
+        ranker=ranker or FakeRanker(),
         generation_api_base="http://llm.invalid",
         generation_model="test-model",
         use_hyde=use_hyde,
         doc_registry=doc_registry or {},
     )
     return tool
+
+
+class ReversingRanker:
+    """Reranker stub that reverses input order -- used to prove the tool's
+    output order follows the reranker, not the pre-rerank retrieve() order."""
+
+    def rerank(self, query, docs, top_n):
+        n = len(docs)
+        ranked = [{"index": n - 1 - i, "score": 1.0 - i * 0.01} for i in range(n)]
+        return ranked[:top_n]
 
 
 class TestRetrievalToolBehavior:
@@ -309,3 +319,26 @@ class TestRetrievalToolBehavior:
              patch.object(retrieval_tool, "_fetch_neighbor_chunks", return_value={}):
             out, _artifact = _build_tool().func("Who is the manager in the LACERA document?")
         assert out.index("filtered content") < out.index("unfiltered content")
+
+    def test_reranker_order_not_overridden_by_raw_hits(self):
+        """M-2 (MITIGATION_PLAN.md): the doc-scoped branch used to head-insert
+        raw_hits[:3] ahead of the cross-encoder, so the first three chunks the
+        agent saw were pre-rerank order regardless of relevance. With a
+        reranker that reverses retrieve()'s order, the tool's output must
+        follow the reranker end to end, not keep retrieve()'s top 3 first."""
+        hits = [
+            _hit("first raw content", chunk_index=0),
+            _hit("second raw content", chunk_index=1),
+            _hit("third raw content", chunk_index=2),
+            _hit("fourth raw content", chunk_index=3),
+        ]
+        retrieve_fn = _make_retrieve(content=hits)
+        with patch.object(retrieval_tool, "retrieve", side_effect=retrieve_fn), \
+             patch.object(retrieval_tool, "_fetch_neighbor_chunks", return_value={}):
+            out, _artifact = _build_tool(ranker=ReversingRanker()).func(
+                "Who is the manager in the LACERA document?"
+            )
+        # Reranker reversed the pool, so "fourth" must lead and "first" must
+        # trail -- the old head-insert would have forced "first" to lead.
+        assert out.index("fourth raw content") < out.index("first raw content")
+        assert "[1] file=doc_005_report.pdf chunk=3" in out

@@ -1080,6 +1080,28 @@ def _make_unified_tool(
         if not hits:
             return None
 
+        # Drop bodyless chunks -- a page-continuation heading like
+        # "## V. Purchasing and Contracting Policy (Continued)" gets its own
+        # chunk (the _has_section_header() merge guard never dissolves a named
+        # heading into a neighbour, even when it repeats an already-seen
+        # section title with no new content under it). These carry no answer
+        # text but can still out-rank the real content chunk and get cited as
+        # "evidence" that's just a heading. Reproduced live: chunk 25 (55
+        # chars, heading only) got cited over chunk 26 (1768 chars, the real
+        # Sole Source Procurement text) for "who must approve a Sole Source
+        # Procurement?". Filtering here (not in the chunker) needs no
+        # re-ingest and leaves the merge guard itself untouched.
+        non_empty_hits = [
+            h
+            for h in hits
+            if any(
+                ln.strip() and not ln.strip().startswith("#")
+                for ln in (h.get("content") or "").splitlines()
+            )
+        ]
+        if non_empty_hits:
+            hits = non_empty_hits
+
         # Split hits by chunk type: sheet_summaries are ranked by column-name keyword
         # overlap (cross-encoders are trained on passage-answer pairs, not metadata
         # discovery chunks, so they return noise scores for sheet_summaries).
@@ -1221,9 +1243,24 @@ def _make_unified_tool(
                 ][:remaining_slots]
                 top_other = guaranteed + rest
             else:
-                top_other = _merge_hits(
-                    raw_hits[: min(3, _rerank_top_n)], reranked_hits
-                )[:_rerank_top_n]
+                # M-2 (MITIGATION_PLAN.md): this used to head-insert
+                # raw_hits[:3] ahead of the cross-encoder's own ranking,
+                # overriding it for the first three slots the agent ever
+                # sees. Over 18 gold evidence quotes the reranker beat
+                # retrieve()'s pre-rerank order 11:2 on rank-1 hits (see
+                # eval/gold_rank_at_1.py for current numbers). A
+                # confidence-floor guard (fall back to raw_hits[:1] only
+                # when the reranker's top score is low) was tried first and
+                # dropped: correct top-1 chunks and wrong ones both commonly
+                # score negative, so no floor separates the cases -- any
+                # threshold either never fires or fires on nearly every
+                # query. Let the reranker's order stand unconditionally.
+                head = (
+                    raw_hits[: min(3, _rerank_top_n)]
+                    if filter_token and any(c.isdigit() for c in filter_token)
+                    else []
+                )
+                top_other = _merge_hits(head, reranked_hits)[:_rerank_top_n]
         else:
             top_other = other_hits[:_rerank_top_n]
 

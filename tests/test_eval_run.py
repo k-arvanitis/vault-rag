@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from eval.run_eval import (
     _accuracy_by_type,
+    _citation_evidence_metrics,
     _custom_judge_answer,
     _exact_match_score,
     _render_failures_md,
@@ -131,3 +132,96 @@ class TestJudgePromptSkipFaithfulness:
         assert "RETRIEVED CONTEXT" in sent_prompt
         assert "HEDGED/INFERRED CLAIMS" in sent_prompt
         assert "a real retrieved chunk" in sent_prompt
+
+
+class TestCitationEvidenceMetrics:
+    """M-4 (MITIGATION_PLAN.md FM-4): offline citation-evidence metric."""
+
+    def _row(self, **overrides):
+        row = {
+            "predicted_answer": "The limit is $5,000 [1].",
+            "gold_evidence": [{"doc_id": "doc_001", "quote": "the limit is five thousand dollars"}],
+            "sources": [
+                {"document_id": "doc_001", "filename": "a.pdf", "excerpt": "The limit is five thousand dollars total."}
+            ],
+        }
+        row.update(overrides)
+        return row
+
+    def test_coverage_and_precision_on_a_correct_citation(self):
+        out = _citation_evidence_metrics([self._row()])
+        assert out["question_count"] == 1
+        assert out["citation_coverage"] == 1.0
+        assert out["citation_precision"] == 1.0
+        assert out["uncited_answer_rate"] == 0.0
+
+    def test_cited_source_from_wrong_document_scores_zero_coverage(self):
+        row = self._row(
+            sources=[{"document_id": "doc_002", "filename": "b.pdf", "excerpt": "unrelated text"}]
+        )
+        out = _citation_evidence_metrics([row])
+        assert out["citation_coverage"] == 0.0
+        assert out["citation_precision"] == 0.0
+
+    def test_uncited_answer_counted_when_not_unsupported(self):
+        row = self._row(predicted_answer="The limit is $5,000.")  # no [N] marker
+        out = _citation_evidence_metrics([row])
+        assert out["uncited_answer_question_count"] == 1
+        assert out["uncited_answer_rate"] == 1.0
+        # No markers -> no cited sources -> excluded from coverage/precision, not scored 0.
+        assert out["question_count"] == 0
+
+    def test_unsupported_answer_excluded_from_uncited_rate_and_coverage(self):
+        row = self._row(predicted_answer="Unsupported")
+        out = _citation_evidence_metrics([row])
+        assert out["uncited_answer_question_count"] == 0
+        assert out["uncited_answer_rate"] is None
+        assert out["question_count"] == 0
+
+    def test_row_without_persisted_sources_excluded_not_zero(self):
+        row = self._row(sources=None)
+        out = _citation_evidence_metrics([row])
+        assert out["question_count"] == 0
+        assert out["citation_coverage"] is None
+        assert out["citation_precision"] is None
+        # Uncited-answer rate needs only predicted_answer, so it's still computed.
+        assert out["uncited_answer_rate"] == 0.0
+
+    def test_empty_input_returns_none_not_zero_division(self):
+        out = _citation_evidence_metrics([])
+        assert out == {
+            "question_count": 0,
+            "citation_coverage": None,
+            "citation_precision": None,
+            "uncited_answer_question_count": 0,
+            "uncited_answer_rate": None,
+        }
+
+
+class TestLenientQuoteMatcherReuse:
+    """_contains (imported from eval/gold_rank_at_1.py, not reimplemented) backs
+    citation precision -- exercise its three documented behaviours in that role."""
+
+    def test_exact_normalized_substring_matches(self):
+        from eval.gold_rank_at_1 import _contains
+
+        assert _contains(
+            "Excerpt text: the limit is five thousand dollars, per policy.",
+            "the limit is five thousand dollars",
+        )
+
+    def test_eight_word_window_tolerates_markdown_ocr_drift(self):
+        from eval.gold_rank_at_1 import _contains
+
+        # Same 8+ content words, but reflowed with markdown/OCR noise in between.
+        excerpt = "**The** limit is  five\nthousand   dollars **per fiscal year** policy."
+        quote = "The limit is five thousand dollars per fiscal"
+        assert _contains(excerpt, quote)
+
+    def test_genuine_non_match_returns_false(self):
+        from eval.gold_rank_at_1 import _contains
+
+        assert not _contains(
+            "This chunk discusses vendor onboarding timelines entirely.",
+            "the limit is five thousand dollars per fiscal year",
+        )

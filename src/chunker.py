@@ -79,7 +79,8 @@ def generate_document_summary(client: OpenAI, model_name: str, markdown: str) ->
         )
         return (response.choices[0].message.content or "").strip()
     except Exception as e:
-        return f"Summary unavailable: {e}"
+        print(f"[CHUNKER][WARN] document summary failed, storing empty summary: {e}")
+        return ""
 
 
 _MD_HEADING_LINE_RE = re.compile(r"^#{1,3}\s*\**\s*(.+?)\s*\**\s*$")

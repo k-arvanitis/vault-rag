@@ -21,9 +21,11 @@ import json
 import logging
 import os
 import re
+from contextvars import ContextVar
 from typing import Any, Generator, NamedTuple
 
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
+from langchain_core.tools import StructuredTool
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 
@@ -70,6 +72,39 @@ from src.tools.excel import build_excel_agent_tools
 from src.tools.retrieval_tool import _make_unified_tool
 
 logger = logging.getLogger(__name__)
+
+# ContextVar rather than a module-global -- same per-request rationale as
+# FORCED_DOC_ID (src/tools/retrieval_tool.py). Tracks the running count of
+# [N] chunk markers search_knowledge_base has already returned for the
+# current question, so a second call's [1] is renumbered to continue past
+# the first call's range instead of colliding with it (see
+# _renumber_tool_markers and build_citation_map's docstring for FM-5/M-5).
+_MARKER_OFFSET: ContextVar[int] = ContextVar("_MARKER_OFFSET", default=0)
+
+
+def _renumber_tool_markers(content: str) -> str:
+    """Offset each [N] block marker in a search_knowledge_base result by the
+    running total already returned this question (_MARKER_OFFSET), so
+    numbering stays globally unique across tool calls within one answer --
+    a second call starts at [N+1], not [1]. Mirrors the renumbering
+    answer_comparison_deterministic already does locally for its own,
+    separately-driven per-document calls (src/answer_pipeline.py)."""
+    parts = re.split(r"\n\n(?=\[\d+\])", content.strip())
+    offset = _MARKER_OFFSET.get()
+    local_max = 0
+    renumbered = []
+    for part in parts:
+        m = re.match(r"^\[(\d+)\]", part)
+        if not m:
+            renumbered.append(part)
+            continue
+        local_max = max(local_max, int(m.group(1)))
+        renumbered.append(
+            re.sub(r"^\[\d+\]", f"[{offset + int(m.group(1))}]", part, count=1)
+        )
+    _MARKER_OFFSET.set(offset + local_max)
+    return "\n\n".join(renumbered)
+
 
 # ---------------------------------------------------------------------------
 # System prompt — templates live in src/prompts.py; this is the model-specific wiring
@@ -303,6 +338,67 @@ def _build_doc_registry(qdrant_url: str, collection: str) -> dict[str, str]:
     return registry
 
 
+_CATALOGUE_TITLE_RE = re.compile(r"^Title: (.+)$", re.MULTILINE)
+
+
+def _build_doc_catalogue(qdrant_url: str, collection: str) -> dict[str, str]:
+    """Return {doc_id: "title (source_file)"} for M-6's LLM comparison-doc
+    resolver -- identity-only signal (title, never retrieval scores or
+    aliases) read straight from each document's own document_summary chunk.
+
+    Scrolls the same document_summary points as _build_doc_registry (kept
+    separate since that one indexes by filename stem, this one by doc_id).
+    Falls back to the source filename when a document has no literal
+    "Title:" line. document_summary text itself is deliberately NOT included
+    yet -- those chunks are currently polluted with API error strings
+    (TODO.md, 2026-07-30); append it here once that repair lands.
+    """
+    from urllib.request import Request, urlopen
+
+    base = qdrant_url.rstrip("/")
+    url = f"{base}/collections/{collection}/points/scroll"
+    body_bytes = json.dumps(
+        {
+            "limit": 250,
+            "with_payload": True,
+            "with_vector": False,
+            "filter": {
+                "must": [
+                    {
+                        "key": "metadata.chunk_type",
+                        "match": {"value": "document_summary"},
+                    }
+                ]
+            },
+        }
+    ).encode()
+    req = Request(
+        url,
+        data=body_bytes,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+    except Exception:
+        return {}
+
+    catalogue: dict[str, str] = {}
+    for point in data.get("result", {}).get("points", []):
+        payload = point.get("payload") or {}
+        meta = payload.get("metadata") or {}
+        doc_id = meta.get("doc_id", "")
+        if not doc_id:
+            continue
+        source_file = meta.get("source_file") or meta.get("file_name", "")
+        content = payload.get("content") or ""
+        m = _CATALOGUE_TITLE_RE.search(content)
+        title = m.group(1).strip() if m else ""
+        catalogue[doc_id] = f"{title} ({source_file})" if title else source_file
+    return catalogue
+
+
 # ---------------------------------------------------------------------------
 # Agent construction — wire reranker, LLM, tools and doc registry into a ReAct agent
 # ---------------------------------------------------------------------------
@@ -375,6 +471,10 @@ def build_rag_agent(
     if doc_registry:
         print(f"[INFO] Doc registry built: {len(doc_registry)} source file entries.")
 
+    # doc_id -> "title (source_file)" catalogue for M-6's LLM comparison-doc
+    # resolver (answer_pipeline._resolve_comparison_doc_ids's last-resort step).
+    doc_catalogue = _build_doc_catalogue(qdrant_url, collection)
+
     # Build the retrieval tool (search_knowledge_base) and its runtime limits dict.
     tool, _rag_limits = _make_unified_tool(
         qdrant_url=qdrant_url,
@@ -386,6 +486,24 @@ def build_rag_agent(
         generation_model=model_name,
         use_hyde=use_hyde,
         doc_registry=doc_registry,
+    )
+    # Wrap search_knowledge_base so the [N] markers the LLM actually reads are
+    # globally unique across calls within one question (see
+    # _renumber_tool_markers) -- without this, a second call's numbering
+    # restarts at [1] and collides with the first call's in the model's own
+    # context, which no amount of downstream remapping can undo.
+    _search_fn = tool.func
+
+    def _numbered_search(*args: Any, **kwargs: Any) -> tuple[str, dict]:
+        content, artifact = _search_fn(*args, **kwargs)
+        return _renumber_tool_markers(content), artifact
+
+    tool = StructuredTool.from_function(
+        func=_numbered_search,
+        name=tool.name,
+        description=tool.description,
+        response_format="content_and_artifact",
+        args_schema=tool.args_schema,
     )
 
     # Add the Excel text-to-SQL tool (query_excel) backed by the DuckDB store, plus
@@ -410,6 +528,7 @@ def build_rag_agent(
     # key-resolution logic, no duplicated client construction).
     agent._tools_by_name = {t.name: t for t in tools}  # type: ignore[attr-defined]
     agent._doc_registry = doc_registry  # type: ignore[attr-defined]
+    agent._doc_catalogue = doc_catalogue  # type: ignore[attr-defined]
     agent._llm = llm  # type: ignore[attr-defined]
     return agent
 
@@ -612,6 +731,9 @@ def ask_agent(
     # Guard: questions with an empty reference slot are unanswerable by construction.
     if _has_empty_reference_placeholder(query):
         return "Unsupported"
+
+    # Fresh marker numbering for this question (see _MARKER_OFFSET's docstring).
+    _MARKER_OFFSET.set(0)
 
     # Optional Langfuse tracing — None when not configured.
     lf = _get_langfuse()
@@ -869,6 +991,9 @@ def stream_agent(
     if _has_empty_reference_placeholder(query):
         yield "Unsupported"
         return
+
+    # Fresh marker numbering for this question (see _MARKER_OFFSET's docstring).
+    _MARKER_OFFSET.set(0)
 
     # Replay prior turns as LangChain messages, then append the current question.
     messages: list = []

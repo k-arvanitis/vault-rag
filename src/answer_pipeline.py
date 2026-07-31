@@ -11,6 +11,7 @@ callers now go through the same code.
 
 from __future__ import annotations
 
+import itertools
 import re
 from typing import Any, Generator
 from urllib.parse import unquote
@@ -94,7 +95,7 @@ def _title_shortcut_answer(question: str) -> tuple[str, list[str]] | None:
 # of making the second required tool call; this check forces a real second retrieval.
 _COMPARISON_RE = re.compile(
     r"\b(?:compare|comparing|versus|vs\.?|both .+ and\b|between .+ and\b|"
-    r"which .+ and which|which .+\bor the .+\?)",
+    r"which .+ and which|which .+\bor the .+\?|while the other\b)",
     re.IGNORECASE,
 )
 
@@ -108,9 +109,15 @@ _COMPARISON_RE = re.compile(
 _MENTIONED_DOC_ID_RE = re.compile(r"\bdoc_\d+\b", re.IGNORECASE)
 
 
-def _missing_mentioned_docs(question_text: str, srcs: list[dict]) -> list[str]:
-    """doc_XXX ids named in the question with no matching source."""
+def _missing_mentioned_docs(
+    question_text: str, srcs: list[dict], resolved_ids: list[str] | None = None
+) -> list[str]:
+    """doc_XXX ids named in the question, or already resolved for it (M-6's
+    shared resolver -- see _resolve_comparison_doc_ids), with no matching
+    source. resolved_ids widens this past literal "doc_XXX" text so a
+    natural-language comparison (no doc id typed) still gets checked."""
     mentioned = {m.lower() for m in _MENTIONED_DOC_ID_RE.findall(question_text)}
+    mentioned |= {d.lower() for d in (resolved_ids or [])}
     if len(mentioned) < 2:
         return []
     covered = {(s.get("document_id") or "").lower() for s in srcs} | {
@@ -120,12 +127,15 @@ def _missing_mentioned_docs(question_text: str, srcs: list[dict]) -> list[str]:
 
 
 def _comparison_incompleteness(
-    question_text: str, ans: str, coll: list[str]
+    question_text: str,
+    ans: str,
+    coll: list[str],
+    resolved_ids: list[str] | None = None,
 ) -> tuple[list[str], bool, int]:
     """(missing_named_docs, has_partial_unsupported_fragment, n_distinct_sources)."""
     sources = parse_sources(coll)
     n_sources = len({s["filename"] for s in sources})
-    missing = _missing_mentioned_docs(question_text, sources)
+    missing = _missing_mentioned_docs(question_text, sources, resolved_ids)
     has_partial = ans.strip().lower() != "unsupported" and "unsupported" in ans.lower()
     return missing, has_partial, n_sources
 
@@ -148,15 +158,225 @@ def _comparison_incompleteness(
 
 _STEM_STOPWORDS = {"the", "and", "for", "with", "from"}
 
+# Splits "which X ..., while the other Y ...?" into its two contrasted
+# clauses -- see _retrieve_for_doc's docstring for why this exists.
+_COMPARISON_SPLIT_RE = re.compile(
+    r"^(?P<a>.*?),?\s+while the other\s+(?P<b>.*)$", re.IGNORECASE
+)
+
+
+def _split_comparison_clauses(question: str) -> tuple[str, str] | None:
+    """Split a "which X, while the other Y" comparison into its two clauses,
+    or None when the question doesn't match that shape.
+
+    Only handles this one connector today -- the shape our real demo/gold
+    questions use. Returns None (caller falls back to the full question)
+    rather than guessing at other comparison phrasings.
+    """
+    # Strip a "Comparing doc_001 and doc_002:" lead-in before splitting --
+    # otherwise it stays attached to clause A and pollutes its retrieval
+    # query with doc-id tokens that dilute the real match (reproduced live:
+    # clause A's actual match score dropped from 0.83 to 0.33 with the
+    # lead-in still attached).
+    question = re.sub(
+        r"^\s*comparing\s+\S+\s+and\s+\S+\s*:\s*", "", question, flags=re.IGNORECASE
+    )
+    m = _COMPARISON_SPLIT_RE.search(question)
+    if not m:
+        return None
+    a = m.group("a").strip().rstrip("?").strip()
+    b = m.group("b").strip().rstrip("?").strip()
+    if len(a) < 10 or len(b) < 10:
+        return None
+    return a, b
+
+
+def _per_doc_retrieval_queries(question: str, doc_ids: list[str]) -> dict[str, str]:
+    """Pick which query to retrieve with for each doc: the full question by
+    default, or -- when the question splits into two contrasted clauses --
+    whichever clause actually scores best for that doc.
+
+    _retrieve_for_doc passing the whole comparison question to every doc
+    dilutes retrieval: a question like "...requires legal review..., while
+    the other focuses on customer-issued notices..." is dominated by the
+    "legal review" vocabulary, so the doc whose real evidence is the
+    "customer notices" clause has that clause buried near the bottom of its
+    own scoped results (reproduced live: doc_002's actual answer clause
+    ranked last of 10 doc_002-scoped hits on the full question, but first
+    when queried with its own clause text alone). Splitting the question
+    fixes that -- but WHICH clause belongs to WHICH doc_id isn't reliable
+    from question order (a comparison question's clause order need not
+    match doc_ids' sorted-mention order). So instead of guessing, this
+    tries both clauses against both docs and lets each doc's own top
+    retrieval score pick its clause -- self-aligning without an order
+    assumption. Falls back to the full question on any lookup failure or a
+    non-two-way split.
+    """
+    fallback = {doc_id: question for doc_id in doc_ids}
+    if len(doc_ids) != 2:
+        return fallback
+    clauses = _split_comparison_clauses(question)
+    if clauses is None:
+        return fallback
+    try:
+        # score[doc][clause] -- each doc's best hit for each clause.
+        score: list[list[float]] = []
+        for doc_id in doc_ids:
+            row = []
+            for clause in clauses:
+                hits = retrieve(
+                    query=clause,
+                    top_k=1,
+                    qdrant_url=QDRANT_URL,
+                    collection=QDRANT_COLLECTION,
+                    scope_doc_id=doc_id,
+                )
+                row.append(hits[0]["score"] if hits else -1.0)
+            score.append(row)
+        # Pick the ASSIGNMENT (one distinct clause per doc) with the better
+        # total, not each doc's own argmax independently. Scores from two
+        # different query embeddings aren't on a comparable scale, so an
+        # independent argmax can hand both docs the same clause -- reproduced
+        # live: doc_002 scored the doc_001 clause higher in absolute terms and
+        # both docs ended up retrieving with it, re-diluting exactly the
+        # retrieval this split exists to separate. Comparing the two whole
+        # assignments only needs the scores to be comparable WITHIN a doc,
+        # which they are. A comparison question has one clause per document by
+        # construction, so a shared clause is never the intended answer.
+        straight = score[0][0] + score[1][1]
+        crossed = score[0][1] + score[1][0]
+        order = (0, 1) if straight >= crossed else (1, 0)
+        return {doc_ids[i]: clauses[order[i]] for i in range(2)}
+    except Exception:
+        return fallback
+
+
+_DOC_RESOLUTION_PROMPT = (
+    "Below is a catalogue of documents, then a question that compares exactly two of them.\n\n"
+    "CATALOGUE:\n{catalog}\n\n"
+    "QUESTION: {q}\n\n"
+    "Work out which two documents the question contrasts. Think briefly, then end your "
+    "reply with a final line in exactly this form, quoting the exact substring copied from "
+    "each document's own catalogue entry above that justifies picking it:\n"
+    'ANSWER: doc_xxx ("<exact phrase copied from doc_xxx\'s catalogue entry>"), '
+    'doc_yyy ("<exact phrase copied from doc_yyy\'s catalogue entry>")\n'
+    "If the question does not clearly contrast two documents in the catalogue, end with:\n"
+    "ANSWER: NONE"
+)
+_ANSWER_PAIR_RE = re.compile(r'(doc_\d+)\s*\(\s*"([^"]+)"\s*\)', re.IGNORECASE)
+
+# Generic English function words only, stripped before comparing a quoted
+# phrase's vocabulary against the question's -- same restriction excel.py's
+# _TABLE_STOPWORDS documents: strip connectives, never real title/content
+# words like "report" or "policy", which are exactly what distinguishes one
+# document's catalogue entry from another's.
+_DOC_RESOLUTION_STOPWORDS = {
+    "the", "a", "an", "and", "or", "of", "in", "on", "for", "to", "with",
+    "which", "is", "are", "this", "that",
+}
+
+
+# A picked document's own catalogue entry must share at least this many
+# content words with the question. 2 (not 1) because a single shared word is
+# routinely an accident of a publisher name or a shared domain term.
+_DOC_ENTRY_OVERLAP_FLOOR = 2
+
+
+def _entry_matches_question(entry: str, question: str) -> bool:
+    """Does the picked document's catalogue entry share real vocabulary with
+    the question, ignoring generic words?
+
+    Substring-in-catalogue membership alone (verified by the caller) isn't
+    enough: reproduced live, the model quoted a genuine, verifiable phrase
+    from the WRONG document's own catalogue entry when the right answer
+    couldn't be derived from titles at all ("which document identifies 42
+    new topic areas" against a catalogue with no such topic-count anywhere).
+
+    Compared against the whole ENTRY, not the quoted phrase. Measured over
+    all 17 gold cross-document questions: phrase-vs-question overlap rejects
+    correct and incorrect picks alike (the two spreadsheet documents are
+    picked correctly from a question naming "Supplier Name"/"NET Amount",
+    but the quoted title phrase shares no words with it) -- 8/17 correct.
+    Entry-vs-question overlap keeps the same zero-wrong-pair property while
+    recovering those: 12/17 correct, 0 wrong. The question's terms do appear
+    in the right document's summary/column text, and don't appear in an
+    unrelated document's entry, which is the signal that actually separates
+    the two cases.
+    """
+    q_words = set(re.findall(r"[a-z]{3,}", question.lower())) - _DOC_RESOLUTION_STOPWORDS
+    e_words = set(re.findall(r"[a-z]{3,}", entry.lower())) - _DOC_RESOLUTION_STOPWORDS
+    return len(q_words & e_words) >= _DOC_ENTRY_OVERLAP_FLOOR
+
+
+def _resolve_comparison_doc_ids_llm(
+    question: str,
+    catalogue: dict[str, str],
+    api_base: str,
+    model_name: str,
+) -> list[str] | None:
+    """M-6's LLM resolution step: ask the model which two documents in
+    `catalogue` (doc_id -> "title (source_file)") a comparison question
+    names, purely from document identity -- never retrieval scores, and
+    never the eval manifest's aliases (those leak the gold questions'
+    own phrasing).
+
+    Hard verification gate, same shape as excel.py's
+    _column_matches_question: the model must also quote, for each pick, the
+    exact phrase from that document's own catalogue entry that justifies it.
+    A hallucinated id can't produce a phrase that verifies, so it degrades to
+    None (today's fallback to the agent path) instead of a confidently wrong
+    pair -- the failure mode measured and rejected in the first attempt at
+    this (removed 2026-07-30, see MITIGATION_PLAN.md M-6). Requires a large
+    max_tokens: gpt-oss-120b spends the budget on hidden reasoning before any
+    visible output, so a small budget silently returns '' and looks like the
+    model "can't" resolve anything.
+    """
+    if len(catalogue) < 2:
+        return None
+    catalog_text = "\n".join(
+        f"{doc_id}: {desc}" for doc_id, desc in sorted(catalogue.items())
+    )
+    prompt = _DOC_RESOLUTION_PROMPT.format(catalog=catalog_text, q=question)
+    try:
+        reply = _llm_call(prompt, api_base, model_name, max_tokens=1024, temperature=0)
+    except Exception:
+        return None
+    m = re.search(r"ANSWER:\s*(.+)$", reply or "", re.MULTILINE)
+    tail = (m.group(1) if m else (reply or "")).strip()
+    verified: list[str] = []
+    for doc_id, phrase in _ANSWER_PAIR_RE.findall(tail):
+        doc_id = doc_id.lower()
+        entry = catalogue.get(doc_id, "")
+        phrase = phrase.strip()
+        if (
+            entry
+            and phrase.lower() in entry.lower()
+            and _entry_matches_question(entry, question)
+        ):
+            verified.append(doc_id)
+    distinct = list(dict.fromkeys(verified))
+    return distinct if len(distinct) == 2 else None
+
 
 def _resolve_comparison_doc_ids(
     question: str,
     forced_doc_id: str | list[str] | None,
     doc_registry: dict[str, str],
+    catalogue: dict[str, str] | None = None,
+    api_base: str | None = None,
+    model_name: str | None = None,
 ) -> list[str] | None:
     """Resolve which distinct documents a comparison question is actually
     asking about. Returns None when fewer than two can be confidently
     resolved, signaling the caller to fall back to the agent-based path.
+
+    Checked in order: literal doc_XXX ids in the question, the UI's
+    multi-select scope, fuzzy filename-stem overlap, then -- only if
+    `catalogue`/`api_base`/`model_name` are all given -- M-6's LLM
+    resolution step over the document catalogue as a last resort. See
+    _resolve_comparison_doc_ids_llm's docstring and MITIGATION_PLAN.md's M-6
+    for why that step is gated behind a verification check rather than
+    trusted on its own.
     """
     if isinstance(forced_doc_id, list):
         resolved: list[str] = []
@@ -192,6 +412,10 @@ def _resolve_comparison_doc_ids(
         top = sorted(scored, key=lambda d: scored[d], reverse=True)
         if len(top) == 2:
             return top
+
+    if catalogue and api_base and model_name:
+        return _resolve_comparison_doc_ids_llm(question, catalogue, api_base, model_name)
+
     return None
 
 
@@ -225,14 +449,29 @@ def answer_comparison_deterministic(
     question: str,
     forced_doc_id: str | list[str] | None = None,
     trace: Any = None,
+    doc_ids: list[str] | None = None,
 ) -> dict | None:
     """Deterministic comparison path: resolve doc ids, retrieve independently
     from each, synthesize once. Returns None to signal "not applicable here,
     use the existing agent-based comparison path" -- either the documents
     couldn't be confidently resolved, or every one of them came back empty.
+
+    doc_ids: pass the already-resolved pair (answer_query resolves once and
+    shares it with answer_one's coverage retry, M-7) to skip resolving here
+    a second time. Left None, this resolves internally -- kept for direct
+    callers/tests that don't need the shared resolution.
     """
     doc_registry = getattr(agent, "_doc_registry", None) or {}
-    doc_ids = _resolve_comparison_doc_ids(question, forced_doc_id, doc_registry)
+    if doc_ids is None:
+        # M-6's LLM resolution step is deliberately NOT reached here:
+        # answer_query (the only production caller) always resolves once,
+        # including the LLM step, and passes the result through as doc_ids
+        # -- even when that result is None -- so this branch only runs for
+        # direct callers/tests that skip pre-resolution. Passing the
+        # catalogue here too would re-run the (nondeterministic, LLM-backed)
+        # resolution a second time per question in production. Only the
+        # free/deterministic checks run in this branch.
+        doc_ids = _resolve_comparison_doc_ids(question, forced_doc_id, doc_registry)
     if (
         not doc_ids
         or not hasattr(agent, "_tools_by_name")
@@ -244,8 +483,9 @@ def answer_comparison_deterministic(
     covered_doc_ids: list[str] = []
     missing_doc_ids: list[str] = []
     marker = 1
+    retrieval_queries = _per_doc_retrieval_queries(question, doc_ids)
     for doc_id in doc_ids:
-        raw = _retrieve_for_doc(agent, question, doc_id)
+        raw = _retrieve_for_doc(agent, retrieval_queries[doc_id], doc_id)
         if not raw.strip() or raw.strip() == "No relevant information found.":
             missing_doc_ids.append(doc_id)
             continue
@@ -294,7 +534,7 @@ def answer_comparison_deterministic(
         answer, citation_map=citation_map, max_plausible_marker=marker - 1
     )
     answer, sources = _renumber_citations_sequentially(answer, sources)
-    _narrow_quotes_to_answer(sources, answer)
+    answer = _narrow_quotes_to_answer(sources, answer)
     if trace is not None:
         trace.span(
             name="comparison-deterministic",
@@ -425,6 +665,26 @@ _LEAKED_DAGGER_CITATION_RE = re.compile(r"([ \t]*)\[(\d+)†[^\]]*\]")
 # or written as a parenthetical ("(file=doc_010_...pdf)"). "file=" is never
 # legitimate answer prose, so stripping it plus optional wrapping parens is safe.
 _LEAKED_BARE_FILE_RE = re.compile(r"[ \t]*\(?file=\S+?\.\w+\)?")
+# The model's own tool names ("calculate", "search_knowledge_base",
+# "query_excel"), leaked inline as a bracketed tag instead of a real [N]
+# citation -- reproduced live: "2,587.67, the monthly rent... [calculate]"
+# for a value it derived by dividing a retrieved annual figure by 12. Not a
+# citation (no digit inside, _ANSWER_CITATION_RE/_INLINE_CITATION_RE never
+# match it), so it survives every existing strip pass and shows up as literal
+# clutter in the answer. These tool names are never legitimate answer prose
+# on their own in brackets, so stripping is content-safe.
+_LEAKED_TOOL_NAME_TAG_RE = re.compile(
+    r"[ \t]*\[(?:calculate|search_knowledge_base|query_excel)\]", re.IGNORECASE
+)
+# The literal placeholder "[N]" -- the prompt's own instructions use "[N]" as
+# example citation syntax ("prefixed with [N] file=...", "cite the [N] of the
+# passage..."), and the model sometimes echoes that literal template token
+# instead of substituting a real retrieved index -- reproduced live:
+# "$31,052.08, the annual rent for the first year of the lease[N]". Not a
+# citation (no digit, _INLINE_CITATION_RE never matches "N"), so it survived
+# every existing strip pass. Case-sensitive: a lowercase "[n]" is never the
+# model referencing this convention.
+_LEAKED_PLACEHOLDER_N_RE = re.compile(r"[ \t]*\[N\]")
 _INLINE_CITATION_RE = re.compile(r"([ \t]*)\[(\d+)\]")
 # gpt-oss occasionally never separates hidden chain-of-thought / a raw tool-call
 # payload from the real answer at all -- reproduced live: a full raw
@@ -493,7 +753,9 @@ _CONDENSE_PROMPT = (
 )
 
 
-def _condense_followup_question(question: str, history: list[dict] | None, agent: Any = None) -> str:
+def _condense_followup_question(
+    question: str, history: list[dict] | None, agent: Any = None
+) -> str:
     """Rewrite `question` into a standalone question using prior turns.
 
     No-op (returns `question` unchanged) when there's no history -- this
@@ -519,12 +781,16 @@ def _condense_followup_question(question: str, history: list[dict] | None, agent
     )
     prompt = _CONDENSE_PROMPT.format(history=transcript, question=question)
     try:
-        rewritten = _llm_call(prompt, api_base, model_name, max_tokens=200, temperature=0)
+        rewritten = _llm_call(
+            prompt, api_base, model_name, max_tokens=200, temperature=0
+        )
     except Exception:
         return question
     if not rewritten or _is_malformed_generation(rewritten):
         return question
     return rewritten
+
+
 _BLANK_LINES_RE = re.compile(r"\n{3,}")
 
 
@@ -566,32 +832,28 @@ def _chunk_identity(raw: str) -> tuple[int, str, str] | None:
 
 
 def build_citation_map(collected: list[str], sources: list[dict]) -> dict[int, int]:
-    """Map the LAST tool call's raw [N] marker numbers to their 1-based position
+    """Map every tool call's raw [N] marker numbers to their 1-based position
     in the final `sources` list, so inline [N] citations the model emits can be
     renumbered to match what the UI actually shows instead of being stripped.
 
-    Only the last call is used: the model composes its final answer text
-    immediately after reading the most recent ToolMessage, so any [N] it
-    emits is that call's numbering — earlier calls' numbering isn't in scope
-    (see _INLINE_CITATION_RE's docstring on why raw numbering is otherwise
-    unreliable). A marker whose source didn't survive into the final
-    (deduped, capped) sources list is simply absent from the map, and falls
-    back to the old strip-on-sight behavior in strip_leaked_headers.
+    Every call is mapped directly by its raw marker, not just the last: raw
+    numbering is now globally unique across calls within one answer (search_
+    knowledge_base is renumbered at the tool boundary in src/rag_agent.py's
+    _renumber_tool_markers, keyed by the same running total
+    answer_comparison_deterministic already applies to its own independent
+    calls) -- before this, every call restarted at [1], so the last call's
+    markers silently overwrote any earlier call's identical numbers here.
+    A marker whose source didn't survive into the final (deduped, capped)
+    sources list is simply absent from the map, and falls back to the old
+    strip-on-sight behavior in strip_leaked_headers.
     """
-    calls: list[list[str]] = [[]]
-    for raw in collected:
-        if raw == _CALL_BOUNDARY:
-            calls.append([])
-        else:
-            calls[-1].append(raw)
-    calls = [c for c in calls if c]
-    if not calls:
-        return {}
+    citation_map: dict[int, int] = {}
     final_positions = {
         (s["filename"], s["location"]): i + 1 for i, s in enumerate(sources)
     }
-    citation_map: dict[int, int] = {}
-    for raw in calls[-1]:
+    for raw in collected:
+        if raw == _CALL_BOUNDARY:
+            continue
         identity = _chunk_identity(raw)
         if identity is None:
             continue
@@ -600,6 +862,27 @@ def build_citation_map(collected: list[str], sources: list[dict]) -> dict[int, i
         if position is not None:
             citation_map[marker] = position
     return citation_map
+
+
+def _max_marker(collected: list[str]) -> int:
+    """Highest raw [N] marker across every call in `collected`. Markers are
+    now globally unique across calls within one answer (see
+    build_citation_map's docstring), so a multi-call answer's true ceiling
+    can legitimately exceed MAX_TOOL_RESULTS, the same reasoning
+    answer_comparison_deterministic already applies via its own `marker - 1`
+    -- callers should pass max(MAX_TOOL_RESULTS, this) as
+    strip_leaked_headers' max_plausible_marker so a genuine high marker from
+    a second call isn't mistaken for a literal number and left leaking, or
+    conversely a hallucinated one isn't left un-stripped.
+    """
+    best = 0
+    for raw in collected:
+        if raw == _CALL_BOUNDARY:
+            continue
+        identity = _chunk_identity(raw)
+        if identity is not None:
+            best = max(best, identity[0])
+    return best
 
 
 def _strip_inline_citation(
@@ -670,6 +953,8 @@ def strip_leaked_headers(
         lambda m: _strip_dagger_citation(m, citation_map), cleaned
     )
     cleaned = _LEAKED_BARE_FILE_RE.sub("", cleaned)
+    cleaned = _LEAKED_TOOL_NAME_TAG_RE.sub("", cleaned)
+    cleaned = _LEAKED_PLACEHOLDER_N_RE.sub("", cleaned)
     cleaned = _INLINE_CITATION_RE.sub(
         lambda m: _strip_inline_citation(m, citation_map, max_plausible_marker), cleaned
     )
@@ -710,7 +995,11 @@ def _attach_excel_marker_if_missing(
         citation.get("sheet_name"),
     )
     position = next(
-        (i + 1 for i, s in enumerate(sources) if (s["filename"], s.get("sheet")) == key),
+        (
+            i + 1
+            for i, s in enumerate(sources)
+            if (s["filename"], s.get("sheet")) == key
+        ),
         None,
     )
     return f"{text.rstrip()} [{position}]" if position is not None else text
@@ -936,31 +1225,88 @@ def parse_sources(collected: list[str]) -> list[dict]:
                     "_ocr_segments": ocr_segments,
                 }
             )
-    # Cap at 8, but guarantee every distinct file that produced a chunk keeps at
-    # least one slot before a second chunk from an already-represented file
-    # takes one -- reproduced directly: in a two-document comparison, a
-    # redundant re-query of the document that already had a good answer filled
-    # the cap with more of its own chunks (it's processed first, being the
-    # latest call) and silently dropped the other document's genuinely
-    # retrieved chunks from the source list entirely.
-    seen_files: set[str] = set()
-    diverse: list[dict] = []
-    rest: list[dict] = []
+    # Cap at 8, allocated round-robin by filename (each file's rank-1, then
+    # each file's rank-2, ...) so the cap is shared fairly across documents --
+    # reproduced directly: with "one guaranteed slot per file, then fill in
+    # list order" (the previous scheme), a two-document comparison emitting
+    # 12 chunks per document kept 7 of the first document's chunks and only
+    # the second document's own rank-1 chunk, discarding every other
+    # genuinely retrieved chunk from that document -- e.g. its rank-2 chunk,
+    # even when that's the one the answer actually cited. Round-robin still
+    # keeps the original guarantee this replaces (every file gets its rank-1
+    # slot before any file gets a rank-2 -- the fix for a redundant re-query
+    # of an already-answered document crowding out a different document
+    # entirely), it just no longer stops there: each file gets an even share
+    # up to the cap, preserving each file's internal rank order. A
+    # single-file `sources` list is unaffected (identical order), since
+    # round-robin over one group is just that group in order.
+    by_file: dict[str, list[dict]] = {}
     for s in sources:
-        if s["filename"] not in seen_files:
-            seen_files.add(s["filename"])
-            diverse.append(s)
-        else:
-            rest.append(s)
-    return (diverse + rest)[:8]
+        by_file.setdefault(s["filename"], []).append(s)
+    interleaved: list[dict] = []
+    for chunks in itertools.zip_longest(*by_file.values()):
+        interleaved.extend(c for c in chunks if c is not None)
+    return interleaved[:8]
 
 
 # Splits after sentence punctuation, and also before a definitions-list term
 # like "Amendment: " so a preamble ("...construed to have the following
 # meaning:") doesn't stay glued to the actual definition it introduces --
-# there's no period between them, just a colon run-on.
-_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\s+(?=[A-Z][a-zA-Z]{2,24}:\s)")
+# there's no period between them, just a colon run-on. The third alternative
+# handles a quoted-term glossary ("Purchase" means ...; "Term" means ...) --
+# a source PDF table (e.g. doc_002's Appendix C definitions) collapses to
+# semicolon-joined prose once parse_sources strips its "|" table syntax, with
+# no periods at all between entries. Without this, the whole glossary reads
+# as one unsplittable "sentence" and _narrow_quotes_to_answer's oversized-
+# sentence fallback keeps it whole -- reproduced live: a "Term" citation
+# showed the entire multi-definition block instead of just the Term clause.
+_SENTENCE_SPLIT_RE = re.compile(
+    r'(?<=[.!?])\s+|\s+(?=[A-Z][a-zA-Z]{2,24}:\s)|(?<=;)\s+(?=[“"])'
+)
 _WORD_RE = re.compile(r"[a-z0-9]+")
+# Generic connective words, excluded from _narrow_quotes_to_answer's overlap
+# count -- reproduced live: a contract's glossary preamble sentence shared 5
+# words with the answer ("the", "with", "term", "services", "terms") purely
+# by genericness, clearing the overlap>=3 rescue threshold and getting kept
+# alongside the real answer-bearing "Term" definition sentence. Since `kept`
+# joins in original order and the preamble sentence came first, the 350-char
+# display cap then cut the citation off mid-preamble, dropping the real
+# definition entirely. Stripping these before counting leaves only content
+# words, so overlap reflects topical relevance, not shared filler.
+_STOPWORDS = {
+    "the",
+    "and",
+    "or",
+    "of",
+    "in",
+    "to",
+    "for",
+    "as",
+    "by",
+    "is",
+    "are",
+    "was",
+    "were",
+    "has",
+    "have",
+    "had",
+    "with",
+    "from",
+    "that",
+    "this",
+    "these",
+    "those",
+    "may",
+    "shall",
+    "such",
+    "any",
+    "all",
+    "not",
+    "but",
+    "means",
+    "term",
+    "terms",
+}
 _ANSWER_CITATION_RE = re.compile(r"\[(\d+)\]")
 
 
@@ -986,7 +1332,9 @@ def _renumber_citations_sequentially(
         return answer, sources
     remap = {old: new for new, old in enumerate(seen_order, start=1)}
     new_answer = _ANSWER_CITATION_RE.sub(
-        lambda m: f"[{remap[int(m.group(1))]}]" if int(m.group(1)) in remap else m.group(0),
+        lambda m: (
+            f"[{remap[int(m.group(1))]}]" if int(m.group(1)) in remap else m.group(0)
+        ),
         answer,
     )
     cited = [sources[old - 1] for old in seen_order]
@@ -1016,9 +1364,21 @@ def _truncate_at_sentence_boundary(text: str, limit: int) -> str:
     return " ".join(kept) if kept else text[:limit]
 
 
-def _narrow_quotes_to_answer(sources: list[dict], answer: str) -> None:
+# Minimum word-overlap a CITED source's best sentence must clear, or its
+# [N] marker gets stripped from the answer entirely (see _narrow_quotes_to_answer).
+# Calibrated live against two runs of the same cross-doc question: a correctly-
+# cited "Term" definition scored 6, a correctly-cited "Sole Source" clause
+# scored 5, but a wrongly-cited VAT/invoice clause -- attributed to a claim
+# about contract extension periods it has nothing to do with -- scored 2.
+# Same threshold as the existing overlap>=3 rescue below, reused rather than
+# inventing a second magic number.
+_CITATION_OVERLAP_FLOOR = 3
+
+
+def _narrow_quotes_to_answer(sources: list[dict], answer: str) -> str:
     """Trim each source's quote/excerpt down to only the sentence(s) that
-    actually overlap the final answer text, in place.
+    actually overlap the final answer text, in place, and return `answer`
+    with any citation markers that point at an off-topic source stripped.
 
     A retrieved chunk is the retrieval unit, not the attribution unit -- it
     often carries surrounding context (a preceding "Whenever the following
@@ -1030,19 +1390,58 @@ def _narrow_quotes_to_answer(sources: list[dict], answer: str) -> None:
     fragment. Falls back to the untouched excerpt when nothing overlaps
     (e.g. a paraphrased/abstractive answer) -- a full-chunk highlight beats
     guessing at fake precision.
+
+    Sources are already renumbered (see _renumber_citations_sequentially)
+    before this runs, so a source's 1-based position in `sources` IS its
+    [N] marker -- reproduced live: the model sometimes cites a real [N] but
+    points it at the wrong retrieved chunk entirely (a VAT/invoice clause
+    cited as if it supported a contract-extension-period claim). No amount
+    of quote-narrowing fixes that -- the chunk itself is off-topic. When a
+    cited source's best sentence can't clear _CITATION_OVERLAP_FLOOR, strip
+    that marker so the answer degrades to unpinned (the Evidence panel's
+    empty state) instead of showing confidently wrong evidence.
     """
-    answer_words = {w for w in _WORD_RE.findall(answer.lower()) if len(w) > 2}
-    for source in sources:
+    cited_markers = {int(n) for n in _ANSWER_CITATION_RE.findall(answer)}
+    # A token is kept when it is long enough to be a content word OR contains
+    # a digit -- a short figure ("42", "97") is the most specific thing an
+    # answer can share with its source, and the >2 length filter alone
+    # discarded it before any overlap was measured.
+    answer_words = {
+        w
+        for w in _WORD_RE.findall(answer.lower())
+        if (len(w) > 2 or any(ch.isdigit() for ch in w)) and w not in _STOPWORDS
+    }
+    for position, source in enumerate(sources, start=1):
         excerpt = source["excerpt"]
         final = excerpt
+        best_sentence_overlap = 0
         if answer_words:
-            sentences = [s.strip() for s in _SENTENCE_SPLIT_RE.split(excerpt) if s.strip()]
-            kept = []
+            sentences = [
+                s.strip() for s in _SENTENCE_SPLIT_RE.split(excerpt) if s.strip()
+            ]
+            kept: list[tuple[int, str]] = []
             for sentence in sentences:
-                words = {w for w in _WORD_RE.findall(sentence.lower()) if len(w) > 2}
+                words = {
+                    w
+                    for w in _WORD_RE.findall(sentence.lower())
+                    if (len(w) > 2 or any(ch.isdigit() for ch in w))
+                    and w not in _STOPWORDS
+                }
                 if not words:
                     continue
-                overlap = len(words & answer_words)
+                shared = words & answer_words
+                overlap = len(shared)
+                # A shared NUMBER counts for the whole floor. A terse numeric
+                # answer ("$297 billion", "42") has too few content words to
+                # ever reach a 3-word overlap, so the floor below stripped the
+                # citation off exactly the answers whose evidence is most
+                # specific -- reproduced by test_each_parts_citation_survives.
+                # A figure matching between answer and source sentence is
+                # stronger attribution evidence than three shared prose words,
+                # not weaker.
+                if any(any(ch.isdigit() for ch in w) for w in shared):
+                    overlap = max(overlap, _CITATION_OVERLAP_FLOOR)
+                best_sentence_overlap = max(best_sentence_overlap, overlap)
                 # Ratio alone punishes a long, correct sentence: reproduced live, a
                 # numbered clause's heading ("2. Term.") scored ratio=1.0 (its one
                 # real word, "term", is in the answer) and got kept, while the
@@ -1056,12 +1455,51 @@ def _narrow_quotes_to_answer(sources: list[dict], answer: str) -> None:
                 # sentences (which still need the ratio to avoid keeping every
                 # sentence that happens to share one generic word).
                 if overlap / len(words) >= 0.5 or overlap >= 3:
-                    kept.append(sentence)
+                    kept.append((overlap, sentence))
             if len(sentences) > 1 and kept:
-                final = " ".join(kept)
+                # Highest-overlap sentence first, and budget the 350-char cap
+                # directly off that ranking -- reproduced live: a marginal
+                # rescue-threshold sentence (a glossary's opening line,
+                # overlap=4) sorted ahead of the real answer-bearing sentence
+                # (overlap=8) in original document order. Joining in that
+                # order and re-truncating via _truncate_at_sentence_boundary
+                # (below) doesn't fix it either: that function re-splits the
+                # joined text with the same sentence regex, and two sentences
+                # reordered out of their natural document sequence often have
+                # no valid split boundary between them (no period, no
+                # semicolon-plus-quote) -- so it degrades to "keep the whole
+                # oversized blob," silently dragging the irrelevant sentence
+                # back in at full length. Building `final` directly from the
+                # ranked list, greedily within budget, sidesteps that re-split
+                # entirely.
+                kept.sort(key=lambda pair: pair[0], reverse=True)
+                budgeted: list[str] = []
+                total_len = 0
+                for _, sentence in kept:
+                    if budgeted and total_len + len(sentence) + 1 > 350:
+                        continue
+                    budgeted.append(sentence)
+                    total_len += len(sentence) + 1
+                final = " ".join(budgeted)
         final = _truncate_at_sentence_boundary(final, 350)
         source["excerpt"] = final
         source["quote"] = final
+
+        # A SQL-derived citation is exempt from the word-overlap floor: its
+        # source is a spreadsheet row ("NET Amount=0.53") and the answer is
+        # the bare value, so there is no prose to overlap -- the floor
+        # deleted every Excel marker, silently undoing the deterministic
+        # attach _attach_excel_marker_if_missing exists to provide. The
+        # floor guards against a MODEL-emitted marker pointing at unrelated
+        # content; these markers are built from query_excel's own
+        # name-checked citation, so that risk doesn't apply.
+        sql_derived = source.pop("_sql_derived", False)
+        if (
+            position in cited_markers
+            and not sql_derived
+            and best_sentence_overlap < _CITATION_OVERLAP_FLOOR
+        ):
+            answer = re.sub(rf"\[{position}\](?!\d)", "", answer)
 
         # A figure crop is only real evidence for THIS citation if the
         # figure's own description is what the answer actually drew from --
@@ -1072,8 +1510,13 @@ def _narrow_quotes_to_answer(sources: list[dict], answer: str) -> None:
         # known, unless the figure's own words meaningfully overlap it.
         figure_text = source.pop("_figure_text", "")
         if source.get("figure_bbox") is not None and answer_words:
-            figure_words = {w for w in _WORD_RE.findall(figure_text.lower()) if len(w) > 2}
-            if not figure_words or len(figure_words & answer_words) / len(figure_words) < 0.3:
+            figure_words = {
+                w for w in _WORD_RE.findall(figure_text.lower()) if len(w) > 2
+            }
+            if (
+                not figure_words
+                or len(figure_words & answer_words) / len(figure_words) < 0.3
+            ):
                 source["figure_bbox"] = None
 
         # Re-point the OCR crop at whichever element's own text actually
@@ -1090,6 +1533,7 @@ def _narrow_quotes_to_answer(sources: list[dict], answer: str) -> None:
             if best_bbox is not None:
                 source["ocr_bbox"] = best_bbox
         source["quote"] = final
+    return answer
 
 
 def _excel_citations_to_sources(
@@ -1132,6 +1576,11 @@ def _excel_citations_to_sources(
                 "figure_bbox": None,
                 "ocr_bbox": None,
                 "is_aggregate": bool(c.get("is_aggregate")),
+                # Marks a citation built deterministically from query_excel's
+                # own name-checked excel_citations, not emitted by the model.
+                # Stripped before the dict leaves _narrow_quotes_to_answer,
+                # same convention as _figure_text/_ocr_segments.
+                "_sql_derived": True,
             }
         )
     return out
@@ -1225,6 +1674,7 @@ def answer_one(
     trace: Any = None,
     forced_doc_id: str | list[str] | None = None,
     usage: dict | None = None,
+    resolved_doc_ids: list[str] | None = None,
 ) -> tuple[str, list[str], dict]:
     """Answer one question, with a forced retry on a bare Unsupported.
 
@@ -1237,6 +1687,12 @@ def answer_one(
     forced_doc_id: when the UI's source-scope control names a specific
     document, route directly to it instead of semantic auto-detection —
     the user already told us which document, no need to guess.
+
+    resolved_doc_ids: the comparison doc ids answer_query already resolved
+    with the shared M-6 resolver, reused here (M-7) to widen the
+    doc-coverage retry trigger past literal "doc_XXX" text in the question —
+    real users rarely type doc ids, so without this the coverage check below
+    was silently a no-op on almost every natural-language comparison.
 
     Groq inference at temp=0 still has small nondeterminism; the agent
     occasionally skips doc-routing on the first attempt and returns
@@ -1299,12 +1755,12 @@ def answer_one(
             # feed into the same accept-or-keep-original decision.
             is_flat_unsupported = ans.strip().lower() == "unsupported"
             missing, has_partial, n_sources = _comparison_incompleteness(
-                question, ans, coll
+                question, ans, coll, resolved_doc_ids
             )
             if is_flat_unsupported or missing or n_sources < 2 or has_partial:
                 if missing:
                     retry_instruction = (
-                        f"\n\nIMPORTANT: This is a retry. This comparison question names "
+                        f"\n\nIMPORTANT: This is a retry. This comparison is about "
                         f"{', '.join(missing)}, but the previous answer has no evidence "
                         f"from {'it' if len(missing) == 1 else 'them'}. Make a "
                         f"search_knowledge_base call scoped to {' and '.join(missing)} "
@@ -1326,7 +1782,7 @@ def answer_one(
                 )
                 r_flat = r_ans.strip().lower() == "unsupported"
                 r_missing, r_has_partial, r_sources = _comparison_incompleteness(
-                    question, r_ans, r_coll
+                    question, r_ans, r_coll, resolved_doc_ids
                 )
                 improved = (
                     (is_flat_unsupported and not r_flat)
@@ -1420,12 +1876,28 @@ def answer_query(
 
     # Try the deterministic comparison path first: only engages when at least
     # two distinct documents can be confidently resolved (named doc_ids, the
-    # UI's multi-select scope, or a clear two-way title match) -- returns None
-    # for anything more ambiguous, which falls through to the existing
-    # agent-based comparison path below unchanged.
+    # UI's multi-select scope, a clear two-way title match, or M-6's verified
+    # LLM resolution step as a last resort) -- returns None for anything more
+    # ambiguous, which falls through to the existing agent-based comparison
+    # path below unchanged. Resolved once here and reused (M-7) by
+    # answer_one's doc-coverage retry below, rather than re-resolving.
+    resolved_doc_ids: list[str] | None = None
     if _COMPARISON_RE.search(question):
+        doc_registry = getattr(agent, "_doc_registry", None) or {}
+        resolved_doc_ids = _resolve_comparison_doc_ids(
+            question,
+            forced_doc_id,
+            doc_registry,
+            catalogue=getattr(agent, "_doc_catalogue", None),
+            api_base=getattr(agent, "_generation_api_base", None),
+            model_name=getattr(agent, "_generation_model", None),
+        )
         det = answer_comparison_deterministic(
-            agent, question, forced_doc_id=forced_doc_id, trace=trace
+            agent,
+            question,
+            forced_doc_id=forced_doc_id,
+            trace=trace,
+            doc_ids=resolved_doc_ids,
         )
         if det is not None:
             det.setdefault("usage", dict(_zero_usage))
@@ -1451,7 +1923,12 @@ def answer_query(
     is_single_part = len(parts) == 1
     if is_single_part:
         answer, collected, excel_trace = answer_one(
-            agent, question, trace=trace, forced_doc_id=forced_doc_id, usage=usage
+            agent,
+            question,
+            trace=trace,
+            forced_doc_id=forced_doc_id,
+            usage=usage,
+            resolved_doc_ids=resolved_doc_ids,
         )
     else:
         sub_parts: list[tuple[str, list[str], list[dict]]] = []
@@ -1484,7 +1961,11 @@ def answer_query(
     )
     if is_single_part:
         citation_map = build_citation_map(collected, sources)
-        answer = strip_leaked_headers(answer, citation_map=citation_map)
+        answer = strip_leaked_headers(
+            answer,
+            citation_map=citation_map,
+            max_plausible_marker=max(MAX_TOOL_RESULTS, _max_marker(collected)),
+        )
         if _is_malformed_generation(answer) or not answer.strip():
             answer = "Unsupported"
         else:
@@ -1492,23 +1973,28 @@ def answer_query(
                 answer, excel_trace.get("excel_citations") or [], sources
             )
     else:
-        # Each part ran as its own agent call with its own [N] numbering, so a
-        # single citation_map built from the merged `collected` can't resolve
-        # any of them (build_citation_map only looks at the LAST call's
-        # numbering) -- every part's markers used to be dropped entirely here,
-        # which is why a multi-part answer never carried real citations and
-        # the UI's "no markers -> show every retrieved candidate" fallback
-        # kicked in, showing all 8 raw candidates as if all were "used".
-        # Building one map per part (matched against the final merged
-        # `sources` list by chunk identity, not position) restores real,
-        # per-part citations instead.
+        # Each part ran as its own agent call, with its own [N] numbering
+        # reset at the start of that call (see _MARKER_OFFSET in
+        # src/rag_agent.py) -- a single citation_map built from the merged
+        # `collected` would still collide between parts even though each
+        # part's own numbering is internally unique. Building one map per
+        # part (matched against the final merged `sources` list by chunk
+        # identity, not position) gives every part real, resolvable
+        # citations instead of the "no markers -> show every retrieved
+        # candidate" fallback this used to hit.
         cleaned_parts = []
         for p_ans, p_coll, p_excel_citations in sub_parts:
             part_map = build_citation_map(p_coll, sources)
-            cleaned = strip_leaked_headers(p_ans, citation_map=part_map)
+            cleaned = strip_leaked_headers(
+                p_ans,
+                citation_map=part_map,
+                max_plausible_marker=max(MAX_TOOL_RESULTS, _max_marker(p_coll)),
+            )
             if _is_malformed_generation(cleaned):
                 cleaned = "Unsupported"
-            cleaned = _attach_excel_marker_if_missing(cleaned, p_excel_citations, sources)
+            cleaned = _attach_excel_marker_if_missing(
+                cleaned, p_excel_citations, sources
+            )
             cleaned_parts.append(cleaned)
         # Blank line between parts (a single \n is only a soft break in
         # markdown); number them so a terse part still reads as its own answer.
@@ -1545,7 +2031,7 @@ def answer_query(
         answer = "Unsupported"
         sources = []
     answer, sources = _renumber_citations_sequentially(answer, sources)
-    _narrow_quotes_to_answer(sources, answer)
+    answer = _narrow_quotes_to_answer(sources, answer)
     sql_list = [s for s in (excel_trace.get("sql") or []) if s]
     kept_filenames = {s["filename"] for s in sources}
     rejected_sources = []
@@ -1684,9 +2170,20 @@ def stream_answer(
     sources = parse_sources(collected)
     sources += _excel_citations_to_sources(excel_citations, existing=sources)
     citation_map = build_citation_map(collected, sources)
-    answer = strip_leaked_headers(raw_answer, citation_map=citation_map)
+    answer = strip_leaked_headers(
+        raw_answer,
+        citation_map=citation_map,
+        max_plausible_marker=max(MAX_TOOL_RESULTS, _max_marker(collected)),
+    )
+    # answer_query (the non-streaming twin of this function) attaches this;
+    # stream_answer never did -- reproduced live: a correct, single-fact
+    # Excel table-lookup answer ("Doncaster Mbc, the supplier...") came back
+    # from the live UI (which calls this streaming path, not answer_query)
+    # with zero [N] markers and a blank Evidence panel, even though
+    # excel_citations named the real source deterministically the whole time.
+    answer = _attach_excel_marker_if_missing(answer, excel_citations, sources)
     answer, sources = _renumber_citations_sequentially(answer, sources)
-    _narrow_quotes_to_answer(sources, answer)
+    answer = _narrow_quotes_to_answer(sources, answer)
     sql_list = [s for s in sql_trace if s]
     kept_filenames = {s["filename"] for s in sources}
     rejected_sources = []

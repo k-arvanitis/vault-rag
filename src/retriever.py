@@ -690,7 +690,16 @@ def retrieve(
             )
         # Table queries: soft-reorder hits by how many value terms they contain
         # (primary key), breaking ties with the vector score, then cut to top_k.
-        if filter_terms:
+        # Gated to genuine structured lookups -- filter_terms alone fires on any
+        # prose query (any word >=3 chars survives the stop list), so also
+        # require an ID-shaped filter_token (contains a digit) or that the
+        # candidate pool actually contains spreadsheet row/table chunks.
+        is_id_shaped = bool(filter_token and any(c.isdigit() for c in filter_token))
+        has_table_chunks = any(
+            (hit.get("metadata") or {}).get("chunk_type") in ("sheet_row", "sheet_table")
+            for hit in scored_from_qdrant
+        )
+        if filter_terms and (is_id_shaped or has_table_chunks):
 
             def _table_term_score(hit: dict[str, Any]) -> int:
                 """Count how many table value terms appear in a hit's content."""
@@ -701,7 +710,7 @@ def retrieve(
                 key=lambda h: (_table_term_score(h), h.get("score", 0.0)), reverse=True
             )
             return scored_from_qdrant[:top_k]
-        return scored_from_qdrant
+        return scored_from_qdrant[:top_k]
 
     # --- Offline mode: no Qdrant — score a local embeddings JSON file directly.
     if embeddings_path is None:

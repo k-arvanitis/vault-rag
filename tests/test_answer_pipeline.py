@@ -12,6 +12,7 @@ from src.answer_pipeline import (
     _is_malformed_generation,
     _narrow_quotes_to_answer,
     _resolve_comparison_doc_ids,
+    _resolve_comparison_doc_ids_llm,
     _title_shortcut_answer,
     answer_comparison_deterministic,
     answer_one,
@@ -121,9 +122,10 @@ class TestLeakedReasoningChannelMarker:
         )
 
     def test_does_not_strip_legitimate_prose_use_of_analysis(self):
-        assert strip_leaked_headers(
-            "Further analysis shows the lease expired in 2024."
-        ) == "Further analysis shows the lease expired in 2024."
+        assert (
+            strip_leaked_headers("Further analysis shows the lease expired in 2024.")
+            == "Further analysis shows the lease expired in 2024."
+        )
 
 
 class TestMalformedGeneration:
@@ -174,11 +176,11 @@ class TestMalformedGeneration:
         # before the leaked JSON, so an anchored "^" pattern (which only
         # caught a leak that WAS the whole generation) missed it.
         assert _is_malformed_generation(
-            'We must call search_knowledge_base with topic words alone to find '
+            "We must call search_knowledge_base with topic words alone to find "
             'relevant doc summary chunk and get doc_id. Topic: "total NET Amount '
             'spent on MATERIALS".Let\'s call.{\n  "action": "search_knowledge_base",'
             '\n  "arguments": {\n    "query": "total NET Amount spent on MATERIALS"'
-            '\n  }\n}'
+            "\n  }\n}"
         )
 
     def test_detects_narrated_reasoning_with_no_structured_artifact(self):
@@ -207,14 +209,20 @@ class TestStripsInlineLeakedSourceHeader:
     the whole-line-anchored _LEAKED_HEADER_RE never matches that."""
 
     def test_strips_inline_source_file_leak(self):
-        assert strip_leaked_headers(
-            "$297 billion. Source: file=doc_003_fed_annual_report_2024.pdf"
-        ) == "$297 billion."
+        assert (
+            strip_leaked_headers(
+                "$297 billion. Source: file=doc_003_fed_annual_report_2024.pdf"
+            )
+            == "$297 billion."
+        )
 
     def test_strips_inline_source_file_leak_with_chunk_and_page(self):
-        assert strip_leaked_headers(
-            "The answer is 42. Sources: file=doc_008.pdf chunk=1 page=1"
-        ) == "The answer is 42."
+        assert (
+            strip_leaked_headers(
+                "The answer is 42. Sources: file=doc_008.pdf chunk=1 page=1"
+            )
+            == "The answer is 42."
+        )
 
     def test_strips_dangling_source_label_with_no_file(self):
         """Model trails off before ever writing "file=..." -- a bare label
@@ -225,18 +233,22 @@ class TestStripsInlineLeakedSourceHeader:
         )
 
     def test_does_not_strip_prose_source_with_content_on_same_line(self):
-        assert strip_leaked_headers(
-            "See the primary source: the annual report."
-        ) == "See the primary source: the annual report."
+        assert (
+            strip_leaked_headers("See the primary source: the annual report.")
+            == "See the primary source: the annual report."
+        )
 
     def test_strips_dagger_glued_file_citation(self):
         """gpt-oss emits [N†file=doc_X.pdf] citations; _INLINE_CITATION_RE's
         \\[(\\d+)\\] never matches (a dagger follows the digit), so the raw
         filename leaked into answers -- reproduced live 2026-07-21."""
-        assert strip_leaked_headers(
-            "The agreement is governed by English law"
-            "[22†file=doc_002_services_contract_terms.pdf]."
-        ) == "The agreement is governed by English law."
+        assert (
+            strip_leaked_headers(
+                "The agreement is governed by English law"
+                "[22†file=doc_002_services_contract_terms.pdf]."
+            )
+            == "The agreement is governed by English law."
+        )
 
     def test_resolves_dagger_citation_to_real_source_position(self):
         """A dagger citation whose N is a real, resolvable citation index
@@ -244,25 +256,34 @@ class TestStripsInlineLeakedSourceHeader:
         -- reproduced live 2026-07-21: gpt-oss's ONLY citation in the answer
         was this dagger form, so blind stripping left zero [N] markers and
         the UI fell back to showing every retrieved candidate as cited."""
-        assert strip_leaked_headers(
-            "Sole Source Procurements must be approved by the "
-            "CEO【1†file=doc_001_procurement_policy.pdf】",
-            citation_map={1: 1},
-        ) == "Sole Source Procurements must be approved by the CEO[1]"
+        assert (
+            strip_leaked_headers(
+                "Sole Source Procurements must be approved by the "
+                "CEO【1†file=doc_001_procurement_policy.pdf】",
+                citation_map={1: 1},
+            )
+            == "Sole Source Procurements must be approved by the CEO[1]"
+        )
 
     def test_strips_parenthetical_bare_file_leak(self):
-        assert strip_leaked_headers(
-            "Vacation policy (file=doc_010_rosemont_employee_handbook_2024.pdf) applies."
-        ) == "Vacation policy applies."
+        assert (
+            strip_leaked_headers(
+                "Vacation policy (file=doc_010_rosemont_employee_handbook_2024.pdf) applies."
+            )
+            == "Vacation policy applies."
+        )
 
     def test_strips_bare_file_after_stripped_marker(self):
-        assert strip_leaked_headers(
-            "30 days to complete a harassment investigation. "
-            "[6] file=doc_010_rosemont_employee_handbook_2024.pdf"
-        ) == "30 days to complete a harassment investigation."
+        assert (
+            strip_leaked_headers(
+                "30 days to complete a harassment investigation. "
+                "[6] file=doc_010_rosemont_employee_handbook_2024.pdf"
+            )
+            == "30 days to complete a harassment investigation."
+        )
 
     def test_strips_dangling_source_label_glued_to_unresolved_citation(self):
-        """"Source: [1]" where [1] doesn't resolve to a real source (no
+        """ "Source: [1]" where [1] doesn't resolve to a real source (no
         citation_map) is stripped as a whole -- reproduced live in a
         multi-part answer's second part."""
         assert (
@@ -271,7 +292,7 @@ class TestStripsInlineLeakedSourceHeader:
         )
 
     def test_keeps_source_label_when_citation_resolves(self):
-        """"Source: [N]" is the model's own legitimate citation style when
+        """ "Source: [N]" is the model's own legitimate citation style when
         [N] resolves via citation_map -- must not be treated as a leak."""
         assert (
             strip_leaked_headers("The value is 42. Source: [1].", citation_map={1: 2})
@@ -374,9 +395,7 @@ class TestParseSourcesContract:
         )
         sources = parse_sources([f"{header}\n{body}"])
         assert sources[0]["ocr_bbox"] == [100.0, 50.0, 300.0, 70.0]  # default: first
-        _narrow_quotes_to_answer(
-            sources, "The four-year term ended on June 30, 2019"
-        )
+        _narrow_quotes_to_answer(sources, "The four-year term ended on June 30, 2019")
         assert sources[0]["ocr_bbox"] == [70.0, 120.0, 530.0, 170.0]
         assert "_ocr_segments" not in sources[0]
 
@@ -481,6 +500,52 @@ class TestParseSourcesContract:
         assert len(sources) == 8
         assert "doc_b.pdf" in filenames
 
+    def test_eight_cap_round_robins_two_equal_files_instead_of_starving_second(self):
+        """M-1: a two-document comparison emitting 12 chunk blocks per document
+        used to keep 7 of doc_a's chunks and only doc_a's own single guaranteed
+        slot for doc_b (the 'one slot per file, then fill in list order'
+        scheme) -- doc_b's real rank-2 evidence was silently discarded even
+        though it was genuinely retrieved. The cap must instead round-robin by
+        filename: each file's rank-1, then each file's rank-2, ... This test
+        fails under the old (diverse + rest)[:8] tail and passes under
+        round-robin."""
+        doc_a_chunks = [
+            f"[1] file=doc_a.pdf chunk={i} page={i}\nDoc A chunk number {i}."
+            for i in range(12)
+        ]
+        doc_b_chunks = [
+            f"[1] file=doc_b.pdf chunk={i} page={i}\nDoc B chunk number {i}."
+            for i in range(12)
+        ]
+        sources = parse_sources(doc_a_chunks + doc_b_chunks)
+        assert len(sources) == 8
+        counts = {"doc_a.pdf": 0, "doc_b.pdf": 0}
+        for s in sources:
+            counts[s["filename"]] += 1
+        assert counts == {"doc_a.pdf": 4, "doc_b.pdf": 4}
+        # doc_b's rank-2 chunk (its second chunk, chunk=1) specifically --
+        # this is the slot the old scheme dropped.
+        assert any(
+            s["filename"] == "doc_b.pdf" and s["location"] == "chunk 1" for s in sources
+        )
+
+    def test_single_file_source_order_unchanged_by_round_robin(self):
+        """Round-robin over a single filename group must produce the exact
+        same order as before -- the blast radius of M-1 is bounded to the
+        multi-document case."""
+        collected = [
+            f"[1] file=doc_a.pdf chunk={i} page={i}\nDoc A chunk number {i}."
+            for i in range(5)
+        ]
+        sources = parse_sources(collected)
+        assert [s["location"] for s in sources] == [
+            "chunk 0",
+            "chunk 1",
+            "chunk 2",
+            "chunk 3",
+            "chunk 4",
+        ]
+
 
 class TestInlineCitationRenumbering:
     """The model's [N] markers number the last tool call's raw hits, which
@@ -519,6 +584,36 @@ class TestInlineCitationRenumbering:
         citation_map = build_citation_map(collected, sources)
         assert citation_map == {1: 1, 2: 3, 3: 2}
 
+    def test_two_calls_both_resolve_distinctly(self):
+        """Two tool calls in one answer are renumbered to be globally unique
+        before the model ever reads them (src/rag_agent.py's
+        _renumber_tool_markers, tested separately in test_rag_agent.py) --
+        the second call's first chunk is marker [2], not a colliding [1].
+        Before this fix, build_citation_map only mapped the LAST call, so
+        the first call's marker was silently dropped even though it was
+        never ambiguous."""
+        collected = [
+            "[1] file=doc_a.pdf chunk=1 page=1 score=0.9\nDoc A fact.",
+            "---CALL_BOUNDARY---",
+            "[2] file=doc_b.pdf chunk=1 page=1 score=0.9\nDoc B fact.",
+        ]
+        sources = parse_sources(collected)
+        citation_map = build_citation_map(collected, sources)
+        assert len(citation_map) == 2
+        assert citation_map[1] != citation_map[2]
+
+    def test_single_call_marker_map_unchanged(self):
+        """A single-call answer is unaffected by mapping every call instead
+        of just the last -- there's only one call either way."""
+        collected = self._one_call(
+            ("[1] file=doc_a.pdf chunk=1 page=1 score=0.9", "Doc A first chunk."),
+            ("[2] file=doc_a.pdf chunk=2 page=2 score=0.8", "Doc A second chunk."),
+            ("[3] file=doc_b.pdf chunk=1 page=1 score=0.7", "Doc B first chunk."),
+        )
+        sources = parse_sources(collected)
+        citation_map = build_citation_map(collected, sources)
+        assert citation_map == {1: 1, 2: 3, 3: 2}
+
     def test_unresolvable_marker_in_range_still_stripped(self):
         """A marker the model emitted that doesn't correspond to any chunk in
         the last call (hallucinated, or referencing an earlier call) falls
@@ -530,7 +625,10 @@ class TestInlineCitationRenumbering:
     def test_marker_beyond_tool_result_range_left_alone(self):
         """A bracketed year like [2024] is never a citation marker -- must not
         be touched even with an empty citation_map."""
-        assert strip_leaked_headers("Filed in [2024].", citation_map={}) == "Filed in [2024]."
+        assert (
+            strip_leaked_headers("Filed in [2024].", citation_map={})
+            == "Filed in [2024]."
+        )
 
 
 class TestStreamAnswer:
@@ -611,7 +709,11 @@ class TestStreamAnswer:
             patch("src.answer_pipeline.stream_agent", side_effect=fake_stream_agent),
             patch(
                 "src.answer_pipeline.run_once",
-                return_value=("The real answer.", [], {"sql": [], "tools": ["search_knowledge_base"], "rejected": []}),
+                return_value=(
+                    "The real answer.",
+                    [],
+                    {"sql": [], "tools": ["search_knowledge_base"], "rejected": []},
+                ),
             ) as mock_run_once,
         ):
             events = list(stream_answer(agent=object(), question="What is X?"))
@@ -681,8 +783,12 @@ class TestExcelCitationsToSources:
         assert source["page"] is None
 
     def test_skips_citation_missing_source_file_or_sheet(self):
-        assert _excel_citations_to_sources([{"sheet_name": "Sheet1"}], existing=[]) == []
-        assert _excel_citations_to_sources([{"source_file": "x.xlsx"}], existing=[]) == []
+        assert (
+            _excel_citations_to_sources([{"sheet_name": "Sheet1"}], existing=[]) == []
+        )
+        assert (
+            _excel_citations_to_sources([{"source_file": "x.xlsx"}], existing=[]) == []
+        )
 
     def test_dedupes_against_already_parsed_source(self):
         existing = [{"filename": "doc_006.xlsx", "sheet": "DataAnalysis"}]
@@ -869,6 +975,54 @@ class TestComparisonMissingMentionedDocRetry:
             )
         mock_run_once.assert_called_once()
 
+    def test_resolved_doc_ids_trigger_retry_on_a_natural_language_comparison(self):
+        """M-7: the question below names no literal doc_XXX id at all, so
+        the old (unwidened) _missing_mentioned_docs check would see fewer
+        than two "mentioned" docs and return [] -- both it and the
+        grounding check (skipped for comparisons) were off at once,
+        leaving only the coarse n_sources<2 fallback. answer_one must use
+        the ids M-6's resolver already found (passed in as resolved_doc_ids)
+        to see that doc_010 has no evidence and retry -- this fails on the
+        pre-M-7 code, which ignores resolved_doc_ids entirely."""
+        with (
+            patch("src.answer_pipeline.parse_sources") as mock_parse,
+            patch(
+                "src.answer_pipeline.run_once",
+                side_effect=[
+                    (
+                        "The HR manual covers paid leave in detail.",
+                        [],
+                        {},
+                    ),
+                    (
+                        "The HR manual covers paid leave; the budget tracker "
+                        "has no leave policy content.",
+                        [],
+                        {},
+                    ),
+                ],
+            ) as mock_run_once,
+        ):
+            mock_parse.side_effect = [
+                [_src("doc_009_hr.pdf", "doc_009")],
+                [
+                    _src("doc_009_hr.pdf", "doc_009"),
+                    _src("doc_010_budget.pdf", "doc_010"),
+                ],
+            ]
+            ans, _coll, _tr = answer_one(
+                agent=object(),
+                question=(
+                    "Between the Rosemont HR policy manual and the OSSE AFE "
+                    "budget tracker, which one covers leave policies?"
+                ),
+                resolved_doc_ids=["doc_009", "doc_010"],
+            )
+        assert mock_run_once.call_count == 2
+        retry_question = mock_run_once.call_args_list[1][0][1]
+        assert "doc_010" in retry_question
+        assert "no evidence" in retry_question
+
 
 class TestComparisonPartialUnsupportedRetry:
     """A comparison answer can name both documents (n_sources >= 2) yet still
@@ -889,7 +1043,10 @@ class TestComparisonPartialUnsupportedRetry:
                 ],
             ) as mock_run_once,
         ):
-            mock_parse.return_value = [_src("doc_009_hr.pdf"), _src("doc_010_handbook.pdf")]
+            mock_parse.return_value = [
+                _src("doc_009_hr.pdf"),
+                _src("doc_010_handbook.pdf"),
+            ]
             ans, _coll, _tr = answer_one(
                 agent=object(),
                 question="Compare the leave policies in doc_009 and doc_010",
@@ -907,7 +1064,10 @@ class TestComparisonPartialUnsupportedRetry:
                 return_value=("doc_009: a. doc_010: b.", [], {}),
             ) as mock_run_once,
         ):
-            mock_parse.return_value = [_src("doc_009_hr.pdf"), _src("doc_010_handbook.pdf")]
+            mock_parse.return_value = [
+                _src("doc_009_hr.pdf"),
+                _src("doc_010_handbook.pdf"),
+            ]
             answer_one(
                 agent=object(),
                 question="Compare the leave policies in doc_009 and doc_010",
@@ -927,7 +1087,10 @@ class TestComparisonPartialUnsupportedRetry:
                 ],
             ),
         ):
-            mock_parse.return_value = [_src("doc_009_hr.pdf"), _src("doc_010_handbook.pdf")]
+            mock_parse.return_value = [
+                _src("doc_009_hr.pdf"),
+                _src("doc_010_handbook.pdf"),
+            ]
             ans, _coll, _tr = answer_one(
                 agent=object(),
                 question="Compare the leave policies in doc_009 and doc_010",
@@ -935,7 +1098,9 @@ class TestComparisonPartialUnsupportedRetry:
         assert ans == "doc_009: Unsupported\ndoc_010: real answer."
 
 
-def _chunk(marker: int, filename: str, body: str = "Some retrieved passage text.") -> str:
+def _chunk(
+    marker: int, filename: str, body: str = "Some retrieved passage text."
+) -> str:
     return f"[{marker}] file={filename} chunk=1 page=1 score=0.9\n{body}"
 
 
@@ -969,7 +1134,9 @@ class _FakeLLM:
         return _FakeLLMResponse(self.answer)
 
 
-def _fake_agent(tool: _FakeTool, llm: _FakeLLM, doc_registry: dict[str, str]) -> SimpleNamespace:
+def _fake_agent(
+    tool: _FakeTool, llm: _FakeLLM, doc_registry: dict[str, str]
+) -> SimpleNamespace:
     return SimpleNamespace(
         _tools_by_name={"search_knowledge_base": tool},
         _llm=llm,
@@ -998,7 +1165,10 @@ class TestResolveComparisonDocIds:
         }
         result = _resolve_comparison_doc_ids(
             "Compare these two",
-            ["doc_006_purchase_card_transactions_q1_2025_26.xlsx", "doc_007_published_spend_report_april_25.csv"],
+            [
+                "doc_006_purchase_card_transactions_q1_2025_26.xlsx",
+                "doc_007_published_spend_report_april_25.csv",
+            ],
             registry,
         )
         assert result == ["doc_006", "doc_007"]
@@ -1026,10 +1196,104 @@ class TestResolveComparisonDocIds:
         )
         assert result is None
 
+    def test_llm_fallback_not_consulted_without_catalogue(self):
+        """catalogue/api_base/model_name all default to None -- the LLM step
+        must not be reachable unless a caller explicitly wires it in."""
+        with patch("src.answer_pipeline._llm_call") as mock_call:
+            result = _resolve_comparison_doc_ids(
+                "Which document identifies 42 new topic areas?", None, {}
+            )
+        mock_call.assert_not_called()
+        assert result is None
+
+
+_CATALOGUE = {
+    "doc_001": "Annual Procurement Policy (LACERA)",
+    "doc_002": "Q1 Purchase Card Transactions (Village of Bensenville)",
+}
+
+
+class TestResolveComparisonDocIdsLlm:
+    def test_genuine_pair_with_verified_phrases_passes(self):
+        reply = (
+            "The question contrasts a procurement policy and a spending report.\n"
+            'ANSWER: doc_001 ("Annual Procurement Policy"), '
+            'doc_002 ("Q1 Purchase Card Transactions")'
+        )
+        with patch("src.answer_pipeline._llm_call", return_value=reply):
+            result = _resolve_comparison_doc_ids_llm(
+                "Compare the procurement policy and the card transactions report",
+                _CATALOGUE,
+                "http://fake-llm/v1",
+                "fake-model",
+            )
+        assert result == ["doc_001", "doc_002"]
+
+    def test_hallucinated_phrase_degrades_to_none(self):
+        """A pick whose quoted phrase doesn't actually occur in that
+        document's own catalogue entry must not be trusted -- this is the
+        gate that stops a hallucinated id from producing a confidently wrong
+        pair (the failure mode that sank the first attempt at this)."""
+        reply = (
+            'ANSWER: doc_001 ("42 new topic areas"), '
+            'doc_002 ("Llano Airport transactions")'
+        )
+        with patch("src.answer_pipeline._llm_call", return_value=reply):
+            result = _resolve_comparison_doc_ids_llm(
+                "Which document identifies 42 new topic areas, and which "
+                "covers Llano Airport transactions?",
+                _CATALOGUE,
+                "http://fake-llm/v1",
+                "fake-model",
+            )
+        assert result is None
+
+    def test_explicit_none_falls_back_cleanly(self):
+        with patch("src.answer_pipeline._llm_call", return_value="ANSWER: NONE"):
+            result = _resolve_comparison_doc_ids_llm(
+                "Compare the two most recent versions of the contract",
+                _CATALOGUE,
+                "http://fake-llm/v1",
+                "fake-model",
+            )
+        assert result is None
+
+    def test_llm_failure_falls_back_cleanly(self):
+        with patch(
+            "src.answer_pipeline._llm_call", side_effect=RuntimeError("timeout")
+        ):
+            result = _resolve_comparison_doc_ids_llm(
+                "Compare doc_001 and doc_002", _CATALOGUE, "http://fake-llm/v1", "fake-model"
+            )
+        assert result is None
+
+    def test_reachable_as_last_resort_through_resolve_comparison_doc_ids(self):
+        """Both production call sites pass catalogue/api_base/model_name --
+        this is the shape they use to reach the LLM step."""
+        reply = (
+            'ANSWER: doc_001 ("Annual Procurement Policy"), '
+            'doc_002 ("Q1 Purchase Card Transactions")'
+        )
+        with patch("src.answer_pipeline._llm_call", return_value=reply):
+            result = _resolve_comparison_doc_ids(
+                "Compare the procurement policy and the card transactions report",
+                None,
+                {},
+                catalogue=_CATALOGUE,
+                api_base="http://fake-llm/v1",
+                model_name="fake-model",
+            )
+        assert result == ["doc_001", "doc_002"]
+
 
 class TestAnswerComparisonDeterministic:
     def test_two_named_documents_both_covered(self):
-        tool = _FakeTool({"doc_009": _chunk(1, "doc_009_hr.pdf"), "doc_010": _chunk(1, "doc_010_handbook.pdf")})
+        tool = _FakeTool(
+            {
+                "doc_009": _chunk(1, "doc_009_hr.pdf"),
+                "doc_010": _chunk(1, "doc_010_handbook.pdf"),
+            }
+        )
         llm = _FakeLLM("Doc 009 says X [1]. Doc 010 says Y [2].")
         agent = _fake_agent(tool, llm, {})
         result = answer_comparison_deterministic(
@@ -1042,7 +1306,12 @@ class TestAnswerComparisonDeterministic:
 
     def test_two_documents_selected_through_source_scope(self):
         registry = {"doc_006_data": "doc_006", "doc_007_data": "doc_007"}
-        tool = _FakeTool({"doc_006": _chunk(1, "doc_006_data.xlsx"), "doc_007": _chunk(1, "doc_007_data.csv")})
+        tool = _FakeTool(
+            {
+                "doc_006": _chunk(1, "doc_006_data.xlsx"),
+                "doc_007": _chunk(1, "doc_007_data.csv"),
+            }
+        )
         llm = _FakeLLM("Comparison answer.")
         agent = _fake_agent(tool, llm, registry)
         result = answer_comparison_deterministic(
@@ -1051,10 +1320,15 @@ class TestAnswerComparisonDeterministic:
             forced_doc_id=["doc_006_data.xlsx", "doc_007_data.csv"],
         )
         assert result is not None
-        assert {s["filename"] for s in result["sources"]} == {"doc_006_data.xlsx", "doc_007_data.csv"}
+        assert {s["filename"] for s in result["sources"]} == {
+            "doc_006_data.xlsx",
+            "doc_007_data.csv",
+        }
 
     def test_one_document_missing_evidence_notes_it_without_fabricating(self):
-        tool = _FakeTool({"doc_009": _chunk(1, "doc_009_hr.pdf")})  # doc_010 absent -> "No relevant information found."
+        tool = _FakeTool(
+            {"doc_009": _chunk(1, "doc_009_hr.pdf")}
+        )  # doc_010 absent -> "No relevant information found."
         llm = _FakeLLM("Doc 009 says X [1].")
         agent = _fake_agent(tool, llm, {})
         result = answer_comparison_deterministic(
@@ -1125,9 +1399,7 @@ class TestAnswerComparisonDeterministic:
         # per-file slots first), so it must resolve to nothing, not leak raw.
         llm = _FakeLLM("Doc A says X [1]. Doc B says Y [17].")
         agent = _fake_agent(tool, llm, {})
-        result = answer_comparison_deterministic(
-            agent, "Compare doc_001 and doc_002"
-        )
+        result = answer_comparison_deterministic(agent, "Compare doc_001 and doc_002")
         assert result is not None
         assert "[17]" not in result["answer"]
 
@@ -1139,7 +1411,9 @@ class TestAnswerQueryComparisonRouting:
         comparison path -- it isn't asking for a comparison at all."""
         with (
             patch("src.answer_pipeline.answer_comparison_deterministic") as mock_det,
-            patch("src.answer_pipeline.answer_one", return_value=("An answer.", [], {})),
+            patch(
+                "src.answer_pipeline.answer_one", return_value=("An answer.", [], {})
+            ),
         ):
             answer_query(
                 agent=object(),
@@ -1173,7 +1447,9 @@ class TestAnswerQueryComparisonRouting:
     def test_comparison_question_falls_back_when_deterministic_path_declines(self):
         chunk = "[1] file=doc_001.pdf chunk=0 score=0.9\nSome content."
         with (
-            patch("src.answer_pipeline.answer_comparison_deterministic", return_value=None),
+            patch(
+                "src.answer_pipeline.answer_comparison_deterministic", return_value=None
+            ),
             patch(
                 "src.answer_pipeline.answer_one",
                 return_value=("fallback answer", [chunk], {}),
@@ -1196,7 +1472,7 @@ class TestSinglePartExcelAnswerGetsMarker:
     would silently read as "used" without ever being individually cited."""
 
     def test_single_part_excel_answer_gets_deterministic_marker(self):
-        def fake_answer_one(agent, part, trace=None, forced_doc_id=None, usage=None):
+        def fake_answer_one(agent, part, trace=None, forced_doc_id=None, usage=None, **kwargs):
             return (
                 "12976.92, the total NET Amount spent on MATERIALS.",
                 [],
@@ -1236,7 +1512,7 @@ class TestMultiPartAnswerCitations:
         part_a_chunk = "[1] file=doc_003_fed_annual_report_2024.pdf chunk=16 page=2\nThe Fed reduced holdings by $297 billion."
         part_b_chunk = "[1] file=doc_008_gao_24_106915.pdf chunk=1 page=1\n42 new topic areas were identified."
 
-        def fake_answer_one(agent, part, trace=None, forced_doc_id=None, usage=None):
+        def fake_answer_one(agent, part, trace=None, forced_doc_id=None, usage=None, **kwargs):
             if "Federal Reserve" in part:
                 return "$297 billion [1]", [part_a_chunk], {}
             return "42 [1]", [part_b_chunk], {}
@@ -1268,9 +1544,11 @@ class TestMultiPartAnswerCitations:
         part_a_chunk = "[1] file=doc_016a_original_lease.pdf chunk=1 page=2\nRent for the first year is $31,052.08."
         # Wrong-document noise the agent's own search_knowledge_base call
         # returned in the SQL-answered part -- must NOT be cited.
-        part_b_chunk = "[1] file=doc_001_procurement_policy.pdf chunk=9 page=3\nIV. Definitions."
+        part_b_chunk = (
+            "[1] file=doc_001_procurement_policy.pdf chunk=9 page=3\nIV. Definitions."
+        )
 
-        def fake_answer_one(agent, part, trace=None, forced_doc_id=None, usage=None):
+        def fake_answer_one(agent, part, trace=None, forced_doc_id=None, usage=None, **kwargs):
             if "rent" in part.lower():
                 return (
                     "$31,052.08, the annual rent for the first year [1]",
@@ -1308,9 +1586,7 @@ class TestMultiPartAnswerCitations:
             "doc_006_purchase_card_transactions_q1_2025_26.xlsx",
         }
         # The wrong-document noise chunk must not be cited as evidence.
-        excel_source = next(
-            s for s in cited if s["filename"].endswith(".xlsx")
-        )
+        excel_source = next(s for s in cited if s["filename"].endswith(".xlsx"))
         assert excel_source["sheet"] == "DataAnalysis"
 
 
@@ -1326,7 +1602,9 @@ class TestNoEvidenceForcesUnsupported:
             "src.answer_pipeline.answer_one",
             return_value=("2025", [], {}),
         ):
-            result = answer_query(agent=object(), question="What year is it titled for?")
+            result = answer_query(
+                agent=object(), question="What year is it titled for?"
+            )
         assert result["answer"] == "Unsupported"
 
     def test_clarifying_question_with_no_chunks_is_kept_not_replaced(self):
@@ -1343,7 +1621,8 @@ class TestNoEvidenceForcesUnsupported:
             return_value=(clarifying, [], {}),
         ):
             result = answer_query(
-                agent=object(), question="Summarize the main policies across all documents."
+                agent=object(),
+                question="Summarize the main policies across all documents.",
             )
         assert result["answer"] == clarifying
         assert result["sources"] == []
@@ -1358,7 +1637,9 @@ class TestNoEvidenceForcesUnsupported:
             "src.answer_pipeline.answer_one",
             return_value=("2025", ["No relevant results found."], {}),
         ):
-            result = answer_query(agent=object(), question="What year is it titled for?")
+            result = answer_query(
+                agent=object(), question="What year is it titled for?"
+            )
         assert result["answer"] == "Unsupported"
         assert result["sources"] == []
 
@@ -1368,7 +1649,9 @@ class TestNoEvidenceForcesUnsupported:
             "src.answer_pipeline.answer_one",
             return_value=("2025 [1]", [chunk], {}),
         ):
-            result = answer_query(agent=object(), question="What year is it titled for?")
+            result = answer_query(
+                agent=object(), question="What year is it titled for?"
+            )
         assert result["answer"] != "Unsupported"
         assert len(result["sources"]) == 1
 
@@ -1388,7 +1671,9 @@ class TestNoEvidenceForcesUnsupported:
             "src.answer_pipeline.answer_one",
             return_value=("Unsupported", [], {}),
         ):
-            result = answer_query(agent=object(), question="What year is it titled for?")
+            result = answer_query(
+                agent=object(), question="What year is it titled for?"
+            )
         assert result["answer"] == "Unsupported"
         assert result["sources"] == []
 
@@ -1437,10 +1722,13 @@ class TestCondenseFollowupQuestion:
 
     def test_falls_back_to_raw_question_on_llm_failure(self):
         with patch(
-            "src.answer_pipeline._llm_call", side_effect=RuntimeError("connection refused")
+            "src.answer_pipeline._llm_call",
+            side_effect=RuntimeError("connection refused"),
         ):
             result = _condense_followup_question(
-                "Who must that notice be given to?", [{"question": "q", "answer": "a"}], _FAKE_AGENT
+                "Who must that notice be given to?",
+                [{"question": "q", "answer": "a"}],
+                _FAKE_AGENT,
             )
         assert result == "Who must that notice be given to?"
 
@@ -1450,6 +1738,8 @@ class TestCondenseFollowupQuestion:
             return_value='{"tool": "search_knowledge_base"}',
         ):
             result = _condense_followup_question(
-                "Who must that notice be given to?", [{"question": "q", "answer": "a"}], _FAKE_AGENT
+                "Who must that notice be given to?",
+                [{"question": "q", "answer": "a"}],
+                _FAKE_AGENT,
             )
         assert result == "Who must that notice be given to?"
