@@ -158,20 +158,23 @@ def _comparison_incompleteness(
 
 _STEM_STOPWORDS = {"the", "and", "for", "with", "from"}
 
-# Splits "which X ..., while the other Y ...?" into its two contrasted
-# clauses -- see _retrieve_for_doc's docstring for why this exists.
-_COMPARISON_SPLIT_RE = re.compile(
-    r"^(?P<a>.*?),?\s+while the other\s+(?P<b>.*)$", re.IGNORECASE
-)
+# Splits a two-way comparison question into its contrasted clauses -- see
+# _retrieve_for_doc's docstring for why this exists. One pattern per
+# connector _COMPARISON_RE already recognizes as a comparison; tried in
+# order, first match wins.
+_COMPARISON_SPLIT_PATTERNS = [
+    re.compile(r"^(?P<a>.*?),?\s+while the other\s+(?P<b>.*)$", re.IGNORECASE),
+    re.compile(r"^(?P<a>.*?),?\s+and which\s+(?P<b>.*)$", re.IGNORECASE),
+    re.compile(r"^(?P<a>.*?)\bor the\s+(?P<b>.*)$", re.IGNORECASE),
+]
 
 
 def _split_comparison_clauses(question: str) -> tuple[str, str] | None:
-    """Split a "which X, while the other Y" comparison into its two clauses,
-    or None when the question doesn't match that shape.
+    """Split a two-way comparison question into its two clauses, or None
+    when the question doesn't match any recognized connector shape.
 
-    Only handles this one connector today -- the shape our real demo/gold
-    questions use. Returns None (caller falls back to the full question)
-    rather than guessing at other comparison phrasings.
+    Returns None (caller falls back to the full question) rather than
+    guessing at phrasings _COMPARISON_SPLIT_PATTERNS doesn't cover.
     """
     # Strip a "Comparing doc_001 and doc_002:" lead-in before splitting --
     # otherwise it stays attached to clause A and pollutes its retrieval
@@ -181,14 +184,16 @@ def _split_comparison_clauses(question: str) -> tuple[str, str] | None:
     question = re.sub(
         r"^\s*comparing\s+\S+\s+and\s+\S+\s*:\s*", "", question, flags=re.IGNORECASE
     )
-    m = _COMPARISON_SPLIT_RE.search(question)
-    if not m:
-        return None
-    a = m.group("a").strip().rstrip("?").strip()
-    b = m.group("b").strip().rstrip("?").strip()
-    if len(a) < 10 or len(b) < 10:
-        return None
-    return a, b
+    for pattern in _COMPARISON_SPLIT_PATTERNS:
+        m = pattern.search(question)
+        if not m:
+            continue
+        a = m.group("a").strip().rstrip("?").strip()
+        b = m.group("b").strip().rstrip("?").strip()
+        if len(a) < 10 or len(b) < 10:
+            continue
+        return a, b
+    return None
 
 
 def _per_doc_retrieval_queries(question: str, doc_ids: list[str]) -> dict[str, str]:
