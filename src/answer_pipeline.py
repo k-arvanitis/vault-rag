@@ -414,7 +414,22 @@ def _resolve_comparison_doc_ids(
             return top
 
     if catalogue and api_base and model_name:
-        return _resolve_comparison_doc_ids_llm(question, catalogue, api_base, model_name)
+        # Retry once on an abstain. The resolution call is nondeterministic in
+        # practice despite temperature=0 (OpenRouter varies which provider
+        # serves a call -- documented in TODO.md), and the variance is
+        # per-run, not per-question: measured over two full sweeps of the 17
+        # gold cross-document questions, 9 resolved in both runs, 12 in
+        # either, 0 wrong in either. A second sample recovers the flippers
+        # and is only paid on questions that would otherwise fall through to
+        # the agent path anyway. The 5 questions that resolve in neither run
+        # are genuinely unresolvable from the catalogue text and stay NONE.
+        for _ in range(2):
+            resolved = _resolve_comparison_doc_ids_llm(
+                question, catalogue, api_base, model_name
+            )
+            if resolved:
+                return resolved
+        return None
 
     return None
 
@@ -2126,6 +2141,13 @@ def stream_answer(
     raw_tokens: list[str] = []
     correction: str | None = None
     usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+    # search_knowledge_base's bare-filename guard (retrieval_tool.py's
+    # _resolve_scope) reads this the same way query_excel's column-match
+    # gate does -- see ORIGINAL_QUESTION's docstring. stream_answer calls
+    # stream_agent directly rather than through run_once, which is the only
+    # other place this ContextVar gets set, so without this the guard's
+    # fallback is always empty on the live streaming endpoint specifically.
+    question_token = ORIGINAL_QUESTION.set(question)
     try:
         for tok in stream_agent(
             agent,
@@ -2153,6 +2175,7 @@ def stream_answer(
     finally:
         if token is not None:
             FORCED_DOC_ID.reset(token)
+        ORIGINAL_QUESTION.reset(question_token)
 
     raw_answer = correction if correction is not None else "".join(raw_tokens).strip()
     if raw_answer.lower() == "unsupported":

@@ -40,6 +40,7 @@ from src.retriever import (
     infer_query_chunk_types,
     retrieve,
 )
+from src.tools.excel import ORIGINAL_QUESTION
 
 _RETRIEVAL_DEBUG = bool(os.getenv("RETRIEVAL_DEBUG"))
 
@@ -504,6 +505,25 @@ def _make_unified_tool(
     def _resolve_scope(query: str, doc_id: str | list[str]) -> _ScopePlan:
         """Resolve retrieval scope, parallel fan-out, filter token and the
         stage-1 doc-routing boosts from the query."""
+        # The agent sometimes calls this tool with a bare filename as `query`
+        # instead of real content text -- reproduced live: a follow-up call
+        # scoped to a document it had already identified used
+        # query="doc_016a_original_lease.pdf" (the doc_id argument left
+        # empty). A filename has almost no real content-word overlap with
+        # anything in the chunk, so _best_snippet's window-scoring picks an
+        # arbitrary/low-signal window instead of the answer-bearing one --
+        # the model still answered correctly from its own read of the
+        # broader context, but the displayed citation quote/crop came from
+        # the wrong part of the document. Same class of "agent rewrites the
+        # text a downstream check relies on" bug ORIGINAL_QUESTION was built
+        # for in excel.py; reused here rather than a second heuristic.
+        # Exact-match only (not "ends with .pdf") to avoid ever overriding a
+        # genuine question that happens to mention a filename in passing.
+        query_stem = re.sub(r"\.(pdf|docx?|pptx?|xlsx?|csv)$", "", query.strip(), flags=re.IGNORECASE)
+        if doc_registry and query_stem.lower() in doc_registry:
+            fallback = ORIGINAL_QUESTION.get()
+            if fallback:
+                query = fallback
         # A list of doc_ids is the UI's multi-select source scope, forced in via
         # FORCED_DOC_ID — already-validated ids, not LLM-inferred text, so skip
         # the single-doc regex/fuzzy-match/stage1-routing inference below entirely
