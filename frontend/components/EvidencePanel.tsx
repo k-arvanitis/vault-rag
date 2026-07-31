@@ -353,7 +353,11 @@ export default function EvidencePanel({ sources, onInspect, selectedTarget }: Pr
     );
   }
 
-  const source = sources[index];
+  // Clamp inline, not just in the useEffect below -- that effect runs after
+  // render, so a shrinking `sources` prop (new answer, fewer citations) would
+  // otherwise read sources[index] out of bounds on this render already.
+  const clampedIndex = Math.min(index, sources.length - 1);
+  const source = sources[clampedIndex];
 
   return (
     <aside className="h-full w-full overflow-y-auto bg-background p-3">
@@ -361,19 +365,19 @@ export default function EvidencePanel({ sources, onInspect, selectedTarget }: Pr
         <Button
           variant="ghost"
           size="icon-xs"
-          disabled={index === 0}
+          disabled={clampedIndex === 0}
           onClick={() => setIndex((i) => Math.max(0, i - 1))}
           aria-label="Previous citation"
         >
           <ChevronLeft />
         </Button>
         <span className="text-[11px] text-muted-foreground">
-          {index + 1} / {sources.length}
+          {clampedIndex + 1} / {sources.length}
         </span>
         <Button
           variant="ghost"
           size="icon-xs"
-          disabled={index === sources.length - 1}
+          disabled={clampedIndex === sources.length - 1}
           onClick={() => setIndex((i) => Math.min(sources.length - 1, i + 1))}
           aria-label="Next citation"
         >

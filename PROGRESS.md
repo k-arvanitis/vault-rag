@@ -1,7 +1,242 @@
 # vault-rag — Progress & Plan
 
 Single source of truth. Update this at the start of every session.
-Last updated: 2026-07-23
+Last updated: 2026-07-30
+
+---
+
+## Session 2026-07-30 (later, part 2) — mitigation plan executed; corpus pollution recurrence found and repaired
+
+Executed `MITIGATION_PLAN.md` with Sonnet subagents. Landed: M-1 (fair source-cap
+allocation, 7/1 -> 4/4 on a two-doc comparison), M-2 (reranker order no longer overridden by
+the pre-rerank head-insert; gold-evidence rank@1 3/16 -> 8/17, zero rows regressed), M-3
+(term-count sort gated to ID/table lookups), M-4 (citation coverage/precision/uncited-rate in
+`eval/run_eval.py`), M-5 (globally-unique `[N]` markers via a `_MARKER_OFFSET` ContextVar at the
+tool-output boundary, so the numbers the model reads can't collide), M-7 (corrective loop
+re-armed off resolved doc ids). Suite 3 failed / 432 passed throughout — the 3 are a
+pre-existing `_CITATION_OVERLAP_FLOOR` regression in the uncommitted tree that strips markers
+off Excel citations, logged in `TODO.md`, untouched here.
+
+**Found while building the M-6 catalogue: `contextualize_chunk`'s error-swallow bug has a
+sibling, and it had poisoned every demo document.** `generate_document_summary`
+(`src/chunker.py:82`) returned `f"Summary unavailable: {e}"` on failure, so an API error became
+the chunk's content AND its embedded `vector_text` — the exact anti-pattern fixed in the same
+file for F1 on 2026-07-22 (133 polluted chunks), left unfixed in the function next door.
+Trigger: `.env`'s `CHUNK_LLM_MODEL=llama-3.1-8b-instant`, decommissioned by Groq, failing every
+call. Result: 3 of 6 live `document_summary` chunks — doc_001, doc_002, doc_016a, i.e. the
+entire demo corpus — were an error string, and those chunks are what stage-1 doc routing
+embeds. Fixed at the source (empty summary + logged warning, never the exception text) and
+repaired in place via `scripts/repair_document_summaries.py`, mirroring
+`repair_polluted_contexts.py`'s regenerate/re-embed/upsert-by-stable-id pattern. Verified
+independently: 0/6 polluted after, `points_count` unchanged at 127 (nothing deleted — the
+2026-07-23 wrong-deletion incident's lesson held). `.env` still needs
+`CHUNK_LLM_MODEL=gpt-oss-120b`; not edited (user's file). `TABLE_LLM_*` turned out to be dead
+config read by nothing — the table path uses `EXCEL_AGENT_MODEL` and is unaffected.
+
+**Two of this session's own conclusions were wrong and got corrected by re-measurement**, both
+worth remembering. (1) M-6's "the LLM resolver scored 0/8" was a `max_tokens=32` budget starving
+a reasoning model before it emitted a single visible token — the third instance of that exact
+trap in this repo (`_verify_grounded` at `max_tokens=10`, the raw-reasoning-leak). Re-measured
+at 1024 tokens with a required final `ANSWER:` line: **15/17 gold cross-document questions
+resolved correctly from `doc_id: title (publisher)` alone**, none of which name a document — so
+automated doc resolution is viable, contrary to what was recorded a few hours earlier. (2) A
+follow-up sweep that scored 0/17 was a bug in the sweep, not a result: the catalogue text
+contained literal `{` braces (from the pollution above), so `PROMPT.format()` raised and every
+question was scored as unresolved.
+
+---
+
+## Session 2026-07-30 (later) — investigation-only pass: the "reranker" diagnosis below is wrong, real cause found two layers down
+
+Investigation and planning only, no code changed, nothing committed. Full ranked findings,
+mitigations and per-item measurements: [`MITIGATION_PLAN.md`](MITIGATION_PLAN.md).
+
+**Correction to the "Open — not fixed" section below: the reranker is not what demotes the
+correct chunk. It is the component that gets it right.** Reproduced directly against the live
+demo corpus (retrieval only, no generation call), on the same doc_002 clause query:
+
+- cross-encoder ranks the correct chunk (`chunk=6`, "may by written notice") **#1**, score −0.73
+  vs −5.82 for the next candidate;
+- `_fetch_docs`'s `_merge_hits(raw_hits[:3], reranked_hits)` pins the top 3 *pre-rerank* hits
+  ahead of it, so the tool's slot 1 is the wrong chunk (Staff clause) and the correct one lands
+  at slot 2 — the reranker's verdict is overridden, not applied;
+- generalised over all 18 gold evidence quotes whose documents are live (doc_001, doc_002,
+  doc_001×doc_002): gold chunk at rank 1 is **4/18 under `retrieve()` order vs 10/18 under
+  reranker order**, reranker strictly better on 11/18, worse on 2/18. Systematic, not one-off,
+  and not comparison-specific — it degrades the top of every scoped retrieval.
+
+**And the correct chunk was never actually missing from the tool's output — `parse_sources`
+throws it away.** Its 8-source cap guarantees each file exactly one slot then fills the rest in
+list order, so a two-document comparison emitting 12+12 blocks yields
+`[doc_001_c1, doc_002_c1, doc_001_c2..c7]` — **7 of 8 sources doc_001, one for doc_002**, which is
+exactly the symptom recorded below. doc_002's single slot goes to its (wrong) slot-1 chunk; the
+correct one at slot 2 is discarded, so the marker the model emits for it can't resolve and gets
+stripped. "Right clause text, no citation" is deterministic, not flaky.
+
+**Third finding, underneath both: `retrieve()` sorts every query's hits by literal term-occurrence
+count, not relevance.** `_extract_table_filter_terms` (`src/retriever.py`) has no gate — it returns
+content words for any query, and the final sort uses term count as the primary key with the hybrid
+fusion score only as a tie-break. Measured: `chunk=23` (fusion 0.5833) ranks below `chunk=6`
+(0.3929) purely on term count. A spreadsheet row-matching heuristic is ordering prose retrieval
+corpus-wide. Invisible wherever the reranker runs after it, dominant wherever it doesn't (the
+`raw_hits[:3]` head-insert, stage-1 doc routing, `_per_doc_retrieval_queries`' own scoring probe,
+`_direct_retrieval_answer`). Plausible — not re-reproduced — explanation for several older
+"indexed, correct, never ranks" dead ends (doc_001 front matter, C2's numeric deadline,
+`doc_008_qa__qa_4`), all previously re-attributed to embeddings/chunk context/the reranker.
+
+**Eval can't see any of this.** The judge scores answer text only; an answer whose prose is right
+while its citation points at a wrong-document chunk scores 1.0. So `cross_document_compare = 0.850`
+neither detects nor ranks the flagship failure — don't prioritise this work by expected eval-point
+movement. It's also understated: `doc_003_doc_008_cross_document_qa__qa_1` scores 0.0 on a
+manifestly correct answer, penalised only for naming documents by title instead of `doc_003`/
+`doc_008`. `faithfulness` on `cross_document_compare` (0.833, n=15) is the lowest bucket of any
+category and the closest existing proxy, but it judges against retrieved context, not against
+which source a claim is pinned to.
+
+**Refusal-number discrepancy settled** (`eval/run_eval.py:1133-1157`): both use the same
+`correctness >= 1.0` threshold, they differ only by population. `unanswerable_metrics` (n=14)
+selects `retrieval_method == "none"` — every should-refuse question, including 4 Excel
+"field doesn't exist" rows typed `numeric_reasoning`; `correctness_by_question_type` (n=10) selects
+`question_type == "unanswerable"`. **0.857 (12/14) is the honest refusal number**; 0.900 is the
+mean correctness of a subset of it.
+
+**Also rejected on measurement, not opinion:** bypassing the reranker inside `_retrieve_for_doc`
+(one of the two options logged below) would make things worse — it falls back to the ranker that
+scores 4/18. It would have "worked" on the demo question by accident.
+
+---
+
+## Session 2026-07-30 — demo-question hardening (9 fixes shipped), cross-doc citation-collision root-caused, reranker gap found and left open
+
+**Recommendation: don't put the cross-doc question in tonight's demo.** Ship the 4 single-doc
+questions in `DEMO_QUESTIONS.md` — all verified end-to-end through the real `/query/stream`
+endpoint. The cross-doc path has a real fix in progress but isn't demo-safe yet (see "Open"
+below). Three fixes deep on one question, each uncovering a new problem in a different layer
+(citation numbering → frontend crash → retrieval dilution → reranker) — stopped there rather
+than pushing a 4th speculative fix live, per the "3+ fixes = question the architecture" signal.
+
+### Fixed and verified this session
+
+1. **Bodyless-header chunk citation** (`src/tools/retrieval_tool.py`, `_fetch_docs`) — a
+   page-continuation heading-only chunk could outrank the real content chunk and get cited as
+   evidence. Filter chunks with no non-heading text before ranking.
+2. **Evidence panel defaulting to source[0]** (`frontend/app/page.tsx`, `handleTrace`) — an
+   answer that pinned no citation still showed an unrelated retrieved chunk as "supporting
+   evidence." Show nothing instead.
+3. **Legal-glossary quote wall** (`src/answer_pipeline.py`, `_SENTENCE_SPLIT_RE`, `_STOPWORDS`)
+   — semicolon-delimited glossary text with no periods wasn't sentence-split, so a cited quote
+   was the entire multi-definition block instead of the one relevant term.
+4. **Wrong-target citation** (`src/answer_pipeline.py`, `_narrow_quotes_to_answer`,
+   `_CITATION_OVERLAP_FLOOR`) — a citation marker survives only when its source's
+   best-matching sentence clears a minimum word-overlap with the answer; otherwise the marker
+   is stripped instead of pointing at unrelated content.
+5. **`[calculate]` / `[N]` literal leaks** (`src/answer_pipeline.py`,
+   `_LEAKED_TOOL_NAME_TAG_RE`, `_LEAKED_PLACEHOLDER_N_RE`; `src/prompts.py`) — model echoed the
+   tool name or a literal placeholder instead of a real citation number. Root cause was prompt
+   wording handing it a literal "[N]" to copy; fixed the wording, added defensive strips.
+6. **Missing excel-marker attach on the real streaming endpoint** (`src/answer_pipeline.py`,
+   `stream_answer`) — CRITICAL: all testing that day used `/query` (`answer_query`), which
+   calls `_attach_excel_marker_if_missing`; the live UI calls `/query/stream` (`stream_answer`),
+   which never did. Excel answers looked correct over curl and broken in the actual UI. Lesson:
+   always verify against `/query/stream`, never `/query` alone.
+7. **`_COMPARISON_RE` missing "while the other"** (`src/answer_pipeline.py`) — the finalized
+   demo cross-doc question wasn't recognized as a comparison at all, got a generic single-doc
+   clarification instead of an answer.
+8. **PDF highlight failing on list-item quotes** (`api.py`, `document_pdf_highlight`) —
+   pymupdf4llm prefixes numbered clauses with "- " that isn't in the PDF's real text layer, so
+   `fitz.search_for` on a list-item quote always failed and silently fell back to the whole
+   page instead of a highlighted crop. Strip "- " before a clause number before searching.
+9. **EvidencePanel stale-index crash** (`frontend/components/EvidencePanel.tsx`) — `index`
+   state persisted across a new answer with fewer sources; the clamping `useEffect` runs
+   *after* render, so `sources[index]` read past the end for one frame and crashed
+   (`Cannot read properties of undefined (reading 'document_title')`). Clamp inline during
+   render, not just in the effect.
+
+### Cut from the demo
+
+Cross-doc question dropped, replaced with a 4th single-doc question (doc_002 FOIA definition)
+— see `DEMO_QUESTIONS.md`. Re-added afterward once the citation collision was fixed (see
+below), but marked in-progress — per the recommendation above, don't ask it live tonight.
+
+### Cross-doc question: root-cause chain (in order found)
+
+Question: *"Comparing doc_001 and doc_002: which document explicitly requires legal review or
+approval before contracts proceed, while the other focuses instead on customer-issued notices
+for varying the service scope?"*
+
+**1. Duplicate citation marker, one source dropped from Evidence panel.** `build_citation_map`
+only maps the *last* tool call's `[N]` markers (see its own docstring). A comparison question
+answered via the agent-based path (`answer_one`'s `is_comparison` branch) makes two tool
+calls, one per doc, each restarting its own `[N]` numbering from 1 — so both facts in the
+final answer literally read "[1]", and only the second call's chunk resolves correctly.
+
+Fix: route through `answer_comparison_deterministic` instead, which already existed for
+exactly this reason — it assigns globally unique markers across both docs' retrieval (no
+per-call reset), so `build_citation_map` (seeing everything as one call, since no
+`_CALL_BOUNDARY` is inserted) resolves correctly. It just wasn't *engaging*:
+`_resolve_comparison_doc_ids` couldn't confidently resolve doc_001+doc_002 from this phrasing
+(no literal doc ids, no filename-stem overlap).
+
+Tried a content-based retrieval fallback in `_resolve_comparison_doc_ids` to resolve doc pairs
+from vocabulary instead of filenames. **Reverted** — swept all 15 gold cross-document
+questions and it produced 3 confident *wrong*-document-pair resolutions (doc_001 dominates
+unrelated queries by sheer retrieval noise; same issue already logged in
+`project_retrieval_quality_issues.md` memory). No threshold tested (raw count, score, top-3
+presence, summary-only retrieval) separated the 2 good matches from the 3 bad ones. Not
+shippable for the general case — don't retry without a materially different signal.
+
+What's actually in the code now: the existing, precise, already-100%-accurate `mentioned`
+branch (question names `doc_001` and `doc_002` literally → `sorted(mentioned)`). Demo question
+now says "Comparing doc_001 and doc_002: ..." up front so it hits that branch. Verified live:
+no more duplicate "[1]" marker, both docs' facts get distinct citation numbers when cited at
+all (see next bug). Caveat: naming doc ids is a demo affordance, not a general fix — real
+users won't type `doc_001`. The UI's multi-select source-scope control (`forced_doc_id` as a
+list) hits the same precise branch without needing ids in the question text; likely the better
+long-term answer for real cross-doc usage.
+
+**2. doc_002's fact came back uncited entirely.** Once routed through the deterministic path,
+`_retrieve_for_doc` sends the *whole* comparison question as the retrieval query for both
+docs. That query's vocabulary ("legal review", "contracts proceed") is dominated by doc_001's
+topic, so doc_002's real answer clause (3.3, the customer-notice clause) ranked dead last of
+doc_002's own 10 scoped hits. The model still wrote the correct clause text (near-verbatim)
+but had no resolvable marker to attach to it, so it came back uncited — not wrong-target, just
+unpinned.
+
+Fix implemented and verified in isolation: split the question into its two contrasted clauses
+(`_split_comparison_clauses`, regex on "X, while the other Y") and, for each doc, run both
+clauses' raw retrieval scoped to that doc, keeping whichever clause scores higher —
+self-aligning rather than assuming clause order matches doc-mention order
+(`_per_doc_retrieval_queries`). Confirmed via raw `retrieve()`: doc_001's clause query now
+top-scores the real Legal Review chunk (0.83), doc_002's clause query now top-scores the real
+"3 Supply of Services" chunk (0.67) — both correctly self-aligned to their own doc.
+
+### Open — not fixed
+
+**The reranker inside `search_knowledge_base` overrides the dense-score win.** End-to-end
+through `/query/stream` with fix #2 in place, doc_002's correct clause still never makes it
+into the final sources — the tool returns a *different*, wrong doc_002 chunk (a
+Staff/admission-notice clause), and 7 of 8 total sources are doc_001. Same already-logged
+reranker behavior noted elsewhere in the codebase ("the reranker parking the real evidence at
+rank 3, not rank 1" — `answer_pipeline.py`, `_attach_excel_marker_if_missing`'s docstring).
+
+Two ways to close this, not attempted yet:
+- Bypass the reranker specifically inside `_retrieve_for_doc`'s call path, falling back to
+  dense-score order (already shown correct above).
+- Investigate why the reranker demotes/replaces the correct chunk — could be a real
+  reranker-quality issue worth understanding rather than routing around, since it presumably
+  also affects single-doc questions too.
+
+### Also still open (pre-existing, logged earlier, not touched this session)
+
+Bug #2 from prior sessions: leaked raw tool-call JSON scoping an answer to the wrong doc
+(reproduced once, not reproduced again since — deferred by explicit user instruction).
+
+### Not committed
+
+Nothing committed yet (explicit: "fuck the commits. in the end."). Touched, uncommitted:
+`src/tools/retrieval_tool.py`, `frontend/app/page.tsx`, `frontend/components/EvidencePanel.tsx`,
+`src/answer_pipeline.py`, `src/prompts.py`, `api.py`, `DEMO_QUESTIONS.md` (untracked, not
+meant to be committed as source).
 
 ---
 

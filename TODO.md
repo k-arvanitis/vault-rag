@@ -1141,6 +1141,12 @@ any new product capabilities), executed in 6 phases across `55c1a2d`..`4d7c8ec`.
   ambiguous comparisons. **Live-verified 5/5** repeated real runs, all covering
   both requested documents; a real+nonexistent-doc adversarial run correctly
   excluded the nonexistent one with no fabrication. 15 new unit tests.
+  **Caveat added 2026-07-30**: those 5 verified runs all named doc ids or
+  used UI scoping — natural phrasing with no doc id ("compare the
+  procurement policy and the services contract terms...") doesn't resolve
+  via this path at all and falls to the agent-based path instead, which has
+  its own real bug (see the new 2026-07-30 section below). Don't read
+  "5/5" as covering natural-language comparison questions generally.
 - [x] **Phase 3 — one canonical eval result** (`969b8c8`). `docs/EVAL_SUMMARY.md`
   was stale (an 82-question run, different judge) and disagreed with
   README.md/CASE_STUDY.md's numbers. `eval/results/summary.json` now carries
@@ -1309,3 +1315,264 @@ own "Known gaps" section for the current list):
   in uploaded filenames at ingest time (simplest), or make the chunk-header
   wire format spaceless-filename-safe (e.g. quote the filename field) --
   the former is much less risk given how many places read this format.
+
+## Open, not fixed — 2026-07-30 demo-prep session
+
+Full narrative, all 9 fixes, and the reproduction steps below are in
+`PROGRESS.md`'s 2026-07-30 entry — kept short here.
+
+- [ ] **Reranker overrides correct dense-score retrieval on the deterministic
+  comparison path's per-doc queries.** Root-caused a 2-layer bug in the
+  cross-doc demo question: (1) `build_citation_map` only maps the last tool
+  call's `[N]` markers, so the agent-based comparison path (two tool calls)
+  produced a duplicate "[1]" citing the wrong doc — fixed by routing through
+  the already-existing `answer_comparison_deterministic` path instead
+  (global marker numbering, no collision possible). (2) that path sends the
+  *whole* comparison question as the retrieval query for both docs, diluting
+  toward whichever doc's vocabulary dominates the phrasing — fixed by
+  splitting the question into its two contrasted clauses and self-aligning
+  each to whichever doc scores it higher (`_split_comparison_clauses`,
+  `_per_doc_retrieval_queries` in `src/answer_pipeline.py`). Both fixes
+  verified correct in isolation (raw `retrieve()` calls). **Still broken
+  end-to-end**: the reranker inside `search_knowledge_base` overrides the
+  dense-score win and returns a different, wrong chunk for one doc anyway —
+  same class of issue as the "reranker parking real evidence at rank 3, not
+  1" note already in `_attach_excel_marker_if_missing`'s docstring. Two ways
+  in, neither attempted: bypass the reranker specifically in
+  `_retrieve_for_doc`'s call path (fall back to dense order, already shown
+  correct), or investigate why the reranker demotes the correct chunk (it
+  presumably affects single-doc questions too, not just this path).
+  **Superseded 2026-07-30 (later) — this diagnosis is wrong, see the
+  investigation section at the bottom of this file. The reranker ranks the
+  correct chunk #1; `_merge_hits(raw_hits[:3], reranked_hits)` overrides it,
+  and `parse_sources`' 8-cap then discards it regardless. Do NOT bypass the
+  reranker — measured, it's the accurate ranker (10/18 vs 4/18 gold rank@1).**
+- [ ] **`_resolve_comparison_doc_ids` can't resolve real-world comparison
+  phrasing.** Swept all 15 gold `cross_document` questions: only 3/11
+  regex-matched ones resolve a doc pair today (filename-stem overlap only).
+  Tried a content-based retrieval fallback (rank docs by which dominate a
+  broad corpus-wide retrieve) — reverted, it confidently resolved 3 *wrong*
+  doc pairs (doc_001 dominates unrelated queries by retrieval noise, same
+  root cause as the "Unscoped/open-corpus retrieval reliability" item
+  above). No threshold (count/score/top-3/summary-only) separated the good
+  matches from the bad ones. Don't retry this approach without a materially
+  different signal than "which docs place high in a broad retrieve."
+- [x] **PDF highlight silently falling back to whole-page on list-item
+  quotes — fixed 2026-07-30.** `api.py`'s `document_pdf_highlight` does
+  exact-text `fitz.search_for` against a citation quote; pymupdf4llm
+  prefixes numbered clauses with "- " that isn't in the PDF's real text
+  layer, so any list-item quote always failed the search and silently fell
+  back to showing the whole page instead of a highlighted crop. Fixed by
+  stripping "- " before a clause number before searching.
+- [x] **EvidencePanel crash on a shrinking sources list — fixed 2026-07-30.**
+  `frontend/components/EvidencePanel.tsx`'s citation-index `useEffect`
+  clamps `index` to the new `sources.length`, but effects run *after*
+  render — a new answer with fewer sources than the previous one crashed
+  with `Cannot read properties of undefined (reading 'document_title')` for
+  one frame before the effect caught up. Fixed by clamping inline during
+  render, not just in the effect.
+
+## Open, not fixed — 2026-07-30 (later) cross-doc evidence investigation
+
+Investigation/planning pass only, no code changed. Ranked findings, proposed
+fixes (files + scope/risk) and the per-item measurement that proves each one:
+[`MITIGATION_PLAN.md`](MITIGATION_PLAN.md). Narrative in `PROGRESS.md`'s
+matching entry. Reproduced against the live demo corpus, retrieval only.
+
+- [ ] **`parse_sources`' 8-cap starves the second document to one citation
+  slot.** `(diverse + rest)[:8]` (`src/answer_pipeline.py`) guarantees each
+  file one slot then fills the rest in list order, so a two-doc comparison
+  emitting 12+12 blocks keeps 7 doc_001 + 1 doc_002 — the exact symptom logged
+  above. The correct doc_002 chunk IS returned by the tool (slot 2) and is
+  discarded here, so its marker can't resolve and gets stripped: "right clause,
+  no citation" is deterministic, not flaky. Fix: round-robin the cap by
+  filename (single-doc answers unchanged) — verified against the live path
+  before proposing it: 4/4 split, both docs' correct chunks survive. Narrow
+  patch. Top priority, and land it BEFORE the reranker item below, which would
+  otherwise mask it on the demo question (doc_002's single slot happens to hold
+  the right chunk once ordering is fixed) — judge it by a unit test on file B's
+  rank-2 chunk, not by the demo question.
+- [ ] **Pre-rerank order overrides the cross-encoder for the top 3 slots.**
+  `_merge_hits(raw_hits[: min(3, _rerank_top_n)], reranked_hits)` in
+  `_fetch_docs` (`src/tools/retrieval_tool.py`). Measured over all 18 gold
+  evidence quotes for live docs: gold chunk at rank 1 is 4/18 under
+  `retrieve()` order vs 10/18 under reranker order (reranker strictly better
+  11/18, worse 2/18). Affects every scoped retrieval, not just comparisons.
+  Real behaviour change — full eval replay is the ship gate, per this repo's
+  own rule for retrieval changes.
+- [ ] **`retrieve()` sorts every query by literal term-occurrence count.**
+  `_extract_table_filter_terms` (`src/retriever.py`) has no gate, and the final
+  sort uses term count as primary key with the fusion score only as tie-break —
+  a spreadsheet row-matching heuristic ordering prose retrieval corpus-wide
+  (measured: fusion 0.5833 ranked below 0.3929). Dominant wherever no reranker
+  runs after it: the head-insert above, stage-1 doc routing,
+  `_per_doc_retrieval_queries`, `_direct_retrieval_answer`. Gate it to real
+  table/ID queries. Sequence and measure separately from the item above.
+- [ ] **No metric measures citation-evidence quality.** The judge scores answer
+  text only, so an answer with correct prose and a wrong-document citation
+  scores 1.0 — the whole failure class above is invisible to eval, and
+  `cross_document_compare` (0.850) cannot be used to prioritise it. Add
+  citation coverage / citation precision / uncited-answer rate to
+  `eval/run_eval.py`, computable offline from the `gold_evidence` already on
+  every `answer_results.jsonl` row (no regeneration spend).
+- [ ] **`build_citation_map` still only maps the last tool call.** The
+  2026-07-30 fix routed the demo question around this via
+  `answer_comparison_deterministic`; the agent path (still the fallback for 12
+  of 15 gold cross-doc questions) remains broken. Root-cause fix: offset each
+  call's `[N]` numbering by the running total so markers are globally unique,
+  then map all calls.
+- [ ] **The corrective loop is disarmed on natural-language comparisons.**
+  `answer_one` sets `skip_grounding_check=is_comparison`, justified by
+  "comparisons get their own doc-coverage retry" — but that retry's precise
+  branch (`_missing_mentioned_docs`) returns `[]` unless the question literally
+  names two `doc_XXX` ids, which real users never do. So both checks are off at
+  once; only the coarse `n_sources < 2` fallback survives, and that counts
+  distinct filenames read through `parse_sources`' cap, which guarantees each
+  file a slot — so it reads ">= 2" even when one document's only slot holds the
+  wrong chunk. Fix: feed the coverage check the *resolved* doc ids (shared with
+  the resolver work above), then re-test whether the grounding skip is still
+  needed rather than leaving it accidental.
+- [ ] **CRITICAL: document summaries are API error strings, live in Qdrant.**
+  Found 2026-07-30 (later) while building an M-6 catalogue. 3 of the 6 live
+  `document_summary` chunks — `doc_001`, `doc_002`, `doc_016a`, i.e. every
+  document in the demo — have content reading
+  `"Summary unavailable: Error code: 400 - {'error': {'message': "Model
+  'llama-3.1-8b-instant' is not in the catalog..."`. Two separate causes:
+  1. `generate_document_summary` (`src/chunker.py:82`) returns
+     `f"Summary unavailable: {e}"` on any failure, so the error text becomes
+     the chunk's content and its embedded `vector_text`. **This is the exact
+     anti-pattern fixed in `contextualize_chunk` on 2026-07-22 (F1, 133
+     polluted chunks) — the sibling function in the same file was never
+     fixed.** Same fix applies: empty summary on failure + a logged warning,
+     never the exception text.
+  2. `.env`'s `CHUNK_LLM_MODEL=llama-3.1-8b-instant` is decommissioned by Groq,
+     so the call fails every time. `TABLE_LLM_MODEL` points at the same dead
+     model — the table-cleaning path is presumably failing the same way,
+     unverified.
+  Impact: `document_summary` chunks are what stage-1 doc routing embeds, so
+  routing for the demo documents is matching against an error message. Repair
+  is the same no-reingest pattern as F1 (`scripts/repair_polluted_contexts.py`)
+  — pick a live model, regenerate, re-embed, upsert by deterministic point id.
+  Check the other 15 documents too; only 10 have on-disk summaries and 2 of
+  those are polluted.
+- [ ] **DECISION NEEDED: M-6 resolver is built, wired and safe, but does not
+  reliably clear its own >=12/17 gate.** Four gated sweeps of the shipped
+  `_resolve_comparison_doc_ids_llm` over all 17 gold cross-document questions:
+  **8, 9, 12, 9 correct — and 0 wrong pairs in every one of them.** The
+  zero-wrong-pair property (the one that matters: a wrong pair sends the
+  deterministic path to fetch and confidently cite evidence from two wrong
+  documents) is stable across ~68 gated attempts. Recall is not: it varies in
+  an 8-12 band, consistent with this repo's documented provider
+  nondeterminism at temperature=0. Against the pre-registered gate this is a
+  **FAIL** (median ~9, not >=12) and the bar was deliberately not moved after
+  the fact. Against the status quo it is a clear win: today's deterministic
+  checks resolve 3/15, this resolves ~9/17 with no measured downside, and its
+  failure mode is abstention to exactly today's behaviour. **Ship-or-unwire is
+  a judgement call, left to the user** — currently WIRED (`_build_doc_catalogue`
+  in `src/rag_agent.py` reads Qdrant at runtime, consumed at
+  `answer_pipeline.py:1846`). To unwire: stop passing `catalogue=` there.
+- [x] **LLM doc-resolution for comparison questions — re-tested 2026-07-30
+  (later): the earlier "0/8, removed" verdict was a MEASUREMENT ARTIFACT.**
+  The removed implementation called `_llm_call` with `max_tokens=32`. Direct
+  probe on a question whose gold pair is derivable from titles alone:
+  `max_tokens=32 -> ''`, `128 -> ''`, `512 -> 'NONE'` — `gpt-oss-120b` is a
+  reasoning model and spends the budget on hidden chain-of-thought before
+  emitting any visible token, so the call never produced an answer to parse.
+  **This is the third time this exact trap has been hit in this repo**
+  (`_verify_grounded` at `max_tokens=10`; the whole-answer-as-raw-reasoning
+  leak) — check the token budget before concluding a reasoning model "can't"
+  do something. Re-swept all 17 gold cross-document questions with a 1024-token
+  budget, a catalogue of `doc_id: title (publisher)`, and a required final
+  `ANSWER: doc_x, doc_y` line so reasoning can't swallow the answer:
+  **15/17 correct, 1 wrong, 1 unresolved** — none of which name a document.
+  The 2 failures both identify documents by content facts, not topic ("which
+  identifies 42 new topic areas", "which covers August 24-25 2012 for Llano
+  Airport"), which titles cannot answer and summaries could — except the
+  summaries are polluted (see the item above). Remaining blocker is the 1 wrong
+  pair, since the deterministic path would then fetch evidence from two wrong
+  documents and cite it confidently. Proposed gate, same shape as
+  `_column_matches_question`: require the model to quote the catalogue phrase
+  justifying each pick and verify programmatically that the phrase occurs in
+  that document's own entry — a hallucinated id can't produce one, so it
+  degrades to NONE (today's fallback) instead of a confident wrong pair.
+- [x] **(superseded, kept for the record) LLM doc-resolution — built,
+  validated offline, gate FAILED, removed 2026-07-30.** M-6's proposal: resolve which two
+  documents a comparison question names by showing the model the registry
+  (doc_id + title) and asking for exactly two ids or NONE — deliberately a
+  different signal from the reverted retrieve()-vote resolver, since it reads
+  document identity only. Offline sweep over all 15 gold cross-document
+  questions (18-doc registry built from `document_manifest.json`'s doc_id +
+  title, aliases deliberately excluded as they leak the questions' own
+  phrasing): **7/15 correct, 0 wrong pairs, 8 unresolved** — short of the
+  pre-registered >=12/15 gate. Decisive detail: re-running with the LLM step
+  disabled gave the *identical* 7 — **the LLM step resolved 0 of the 8
+  questions it was actually consulted on**; every success came from the
+  pre-existing literal-doc_id and fuzzy-stem heuristics. Zero wrong pairs is a
+  real safety result, but the step adds an LLM call per comparison question for
+  no measured gain. Code removed rather than left dormant behind opt-in params
+  — this repo has already been bitten once by a correct-but-dormant path
+  (`answer_comparison_deterministic`). Don't rebuild it with the same
+  title-only catalog; a retry needs a materially richer signal (e.g. the
+  `document_summary` chunk text, not just the title).
+- [x] **Comparison clause self-alignment made order-independent, 2026-07-30.**
+  `_per_doc_retrieval_queries` picked each document's clause by that document's
+  own argmax over raw `retrieve()` scores — but scores from two different query
+  embeddings aren't on a comparable scale, so both documents could pick the
+  *same* clause, re-diluting the retrieval the split exists to separate.
+  Reproduced live the moment the term-count sort was gated (see the retriever
+  item above): doc_002 scored doc_001's clause higher in absolute terms and
+  both docs retrieved with it. Fixed by choosing the better whole *assignment*
+  (one distinct clause per document) instead of two independent argmaxes —
+  only needs scores comparable within a document, which they are. Verified:
+  doc_001 → the legal-review clause, doc_002 → the customer-notice clause.
+- [ ] **Cosmetic churn in two files, flagged for review.** `ruff format` was
+  run on `src/answer_pipeline.py` and `tests/test_answer_pipeline.py` during
+  this session; the repo is not format-clean (28 files would reformat), so it
+  rewrote ~37 and ~208 **pre-existing** lines respectively that this session
+  never touched. No behaviour change, tests unaffected. Either accept it, or
+  decide separately whether to format the whole repo — but don't read those
+  hunks as intentional edits.
+- [ ] **37% of answered eval rows cite nothing at all.** First measurement of
+  this, from M-4's new `citation_evidence_metrics` in `eval/run_eval.py`:
+  `uncited_answer_rate` = 0.368 on the 2026-07-23 benchmark run — 35 of 95
+  answered (non-`Unsupported`) rows resolve zero `[N]` markers, including 7 of
+  the 20 `cross_document_compare` rows (`doc_001_doc_002_qa_2` and all five
+  `doc_006_doc_007_qa_*`). Directly contradicts the product promise ("verify
+  every answer against its real source") and no metric expressed it before.
+  Caveat: that run predates the 2026-07-30 fixes, so this is the number for
+  that snapshot, not for current code — re-measure on the next full run.
+  `citation_coverage`/`citation_precision` are `None` for those historical rows
+  by design: the cited sources were never persisted, and reconstructing them is
+  unsound (`_renumber_citations_sequentially` isn't invertible from the answer
+  text alone). Both become computable from the next run onward, since M-4 now
+  persists `sources` into `raw_answers.jsonl`/`answer_results.jsonl`.
+- [ ] **`_CITATION_OVERLAP_FLOOR` strips Excel-derived citation markers.** Found
+  2026-07-30 (later) while running the suite against the current working tree:
+  3 tests fail (`TestSinglePartExcelAnswerGetsMarker`, both
+  `TestMultiPartAnswerCitations` marker tests) with the marker deleted from the
+  answer — e.g. `"2. 12892.0, the largest single purchase card transaction
+  amount."` with no `[2]`. The uncommitted 2026-07-30 fix #4 keeps a marker only
+  when its source's best-matching sentence clears a minimum word overlap with
+  the answer; a numeric SQL value has no words to overlap, so it never clears
+  the floor. This silently undoes the 2026-07-23 deterministic Excel-marker fix
+  (`_attach_excel_marker_if_missing`). Pre-existing in the tree, unrelated to
+  this session's investigation. Baseline for anyone measuring test counts right
+  now: 3 failed / 416 passed.
+- Two housekeeping notes, no action taken: `unanswerable_metrics` (0.857, n=14)
+  and `correctness_by_question_type["unanswerable"]` (0.900, n=10) differ only
+  by population (`retrieval_method == "none"` vs `question_type`), same
+  threshold — 0.857 is the honest refusal number. And
+  `doc_003_doc_008_cross_document_qa__qa_1` is a judge artifact: correct answer
+  scored 0.0 for naming documents by title instead of `doc_003`/`doc_008`.
+
+## Housekeeping — LiteLLM proxy effort, deprioritize
+
+`TODO_LITELLM.md` (semantic cache + Langfuse cost logging via the LiteLLM
+proxy) has been stale since 2026-06-06 and the app has since moved further
+away from it, not closer: `.env` bypasses the proxy entirely (local vLLM or
+a direct provider — see the "LiteLLM fallback doesn't trigger on Groq's
+billing error" item above), and the 2026-07-24 BYOK feature
+(`src/llm_credentials.py`) added a second, separate, proxy-free way to pick
+a provider/key per admin. Marked deprioritized in `TODO_LITELLM.md` itself
+rather than deleted — revisit only if proxy-level semantic caching becomes
+worth its complexity again, not as a default next task.

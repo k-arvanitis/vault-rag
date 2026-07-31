@@ -1319,12 +1319,18 @@ async def document_pdf_highlight(filename: str, page: int, quote: str):
         # A mid-chunk excerpt is prefixed/suffixed with a literal "…" to mark
         # truncation (see retrieval_tool.py's _best_snippet) -- that marker
         # isn't in the PDF's real text, so strip it before an exact search.
+        # pymupdf4llm also prefixes numbered clauses with "- " that isn't in
+        # the PDF's real text layer (a clause like "7.1.1 refuse admission…"
+        # appears bare) -- strip it wherever it precedes a clause number so
+        # list-item quotes aren't silently unsearchable and dropped to the
+        # whole-page fallback.
         search_text = quote.strip().strip("…").strip()
+        search_text = re.sub(r"-\s+(?=\d+(?:\.\d+)*\s)", "", search_text)
         rects = fitz_page.search_for(search_text)
         if not rects:
             sentences = [
                 s.strip()
-                for s in re.split(r"(?<=[.:!?])\s+", search_text)
+                for s in re.split(r"(?<=[.:!?;])\s+", search_text)
                 if len(s.strip()) > 15
             ]
             rects = [r for s in sentences for r in fitz_page.search_for(s)]

@@ -1,5 +1,13 @@
 # TODO — finish LiteLLM semantic cache + cost logging integration
 
+**Deprioritized as of 2026-07-30** — the app has moved further from the proxy
+since this was written, not closer: `.env` bypasses it entirely (local vLLM
+or a direct provider), and the BYOK admin feature (`src/llm_credentials.py`,
+2026-07-24) added a second, separate, proxy-free way to pick a provider/key.
+Not deleting this file (real setup work, might be worth revisiting if
+proxy-level semantic caching becomes worth the complexity again), but don't
+treat it as a live next task.
+
 Status as of 2026-06-06. The proxy is **healthy** and the plumbing is wired, but two
 things are NOT yet verified working. Pick this up later.
 

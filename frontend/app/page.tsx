@@ -10,7 +10,7 @@ import {
   type InspectTarget,
   type Source,
 } from "@/lib/api";
-import { citedOnlySources } from "@/lib/product";
+import { citedIndices, citedOnlySources } from "@/lib/product";
 import { SidebarProvider, SidebarInset, useSidebar } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -110,9 +110,18 @@ export default function Home() {
   // an older message's citation afterward overrides this via handleSelectEvidence.
   const handleTrace = useCallback((t: Trace | null) => {
     setTrace(t);
-    const sources = citedOnlySources(t?.answer ?? "", t?.sources ?? []);
+    const answer = t?.answer ?? "";
+    // citedOnlySources falls back to the FULL retrieved-candidate list when
+    // the answer cites nothing inline (see its own docstring) -- right for
+    // "Sources used" (browsable technical detail), wrong here: it made the
+    // Evidence panel default to sources[0] and label an unrelated retrieved
+    // chunk "SUPPORTING EVIDENCE" for an answer that pinned no citation at
+    // all. Reproduced live: a correct "2587.67" rent answer showed an
+    // unrelated Successors-and-Assigns clause as its evidence. Show nothing
+    // instead of a candidate that never backed the answer.
+    const sources = citedIndices(answer).size > 0 ? citedOnlySources(answer, t?.sources ?? []) : [];
     setEvidenceSources(sources);
-    const firstCitation = t?.answer?.match(/\[(\d+)\]/);
+    const firstCitation = answer.match(/\[(\d+)\]/);
     const firstSource = firstCitation ? sources[Number(firstCitation[1]) - 1] : undefined;
     setSelectedCitation(firstSource ? sourceInspectTarget(firstSource) : null);
   }, []);
