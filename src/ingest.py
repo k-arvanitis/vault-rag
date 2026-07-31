@@ -724,12 +724,20 @@ def _run_ingest_pdf(
 
     # 4) embeddings JSON -> vector store (Qdrant)
     _log("Upsert embeddings -> Qdrant", step=4, enabled=verbose)
+    # Must match metadata.source_file, which is set to the original PDF's
+    # name (pdf_path.name, see the chunker call below) -- not md_path.name,
+    # the intermediate markdown file. Those were never the same string, so
+    # this delete silently matched zero points on every PDF re-ingestion:
+    # reproduced live 2026-07-31 re-ingesting doc_016a, "Removed N existing
+    # points" never printed, and the old (no-bbox) LightOn OCR chunks
+    # survived alongside the new (bbox-carrying) unstructured OCR chunks as
+    # duplicate, undeleted points.
     deleted = delete_by_file(
-        url=qdrant_url, collection=collection, file_name=md_path.name
+        url=qdrant_url, collection=collection, file_name=pdf_path.name
     )
     if deleted > 0:
         _log(
-            f"Removed {deleted} existing points for '{md_path.name}'",
+            f"Removed {deleted} existing points for '{pdf_path.name}'",
             step=4,
             enabled=verbose,
         )
