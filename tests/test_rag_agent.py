@@ -655,8 +655,8 @@ class TestStreamAgentLiveTokens:
         assert corrections[0].text == "Unsupported"
 
 
-def _hit(source_file: str) -> dict:
-    return {"metadata": {"source_file": source_file}}
+def _hit(source_file: str, score: float = 0.5) -> dict:
+    return {"metadata": {"source_file": source_file}, "score": score}
 
 
 class TestRouteQuestionConfidenceGate:
@@ -685,13 +685,40 @@ class TestRouteQuestionConfidenceGate:
         with patch(
             "src.rag_agent.retrieve",
             return_value=[
-                _hit("doc_001.pdf"),
-                _hit("doc_001.pdf"),
-                _hit("doc_003.pdf"),
+                _hit("doc_001.pdf", score=0.9),
+                _hit("doc_001.pdf", score=0.8),
+                _hit("doc_003.pdf", score=0.2),
             ],
         ):
             route = route_question("What is the mandatory review date?")
         assert route == {"modality": "document", "source_file": "doc_001.pdf"}
+
+    def test_abstains_when_top_3_agree_but_lead_is_within_margin(self):
+        """Reproduced live 2026-07-31: a table-value question retrieved
+        [doc_002(0.51), doc_006(0.50), doc_002(0.35), doc_006(0.33)] -- the
+        top-3 window happened to hold 2 of doc_002's hits vs 1 of doc_006's,
+        so the majority-vote gate above passed with unearned confidence on a
+        lead of 0.014. doc_006 was the actual answer's document. A
+        document-agreement vote inside a fixed top-3 window can be fooled by
+        which chunks happen to land in it; comparing each distinct
+        document's BEST score across every fetched hit is not fooled the
+        same way. Directing the agent onto the wrong tool this confidently
+        is worse than not directing it at all."""
+        with patch(
+            "src.rag_agent.retrieve",
+            return_value=[
+                _hit("doc_002.pdf", score=0.5139),
+                _hit("doc_006.xlsx", score=0.5000),
+                _hit("doc_002.pdf", score=0.3542),
+                _hit("doc_006.xlsx", score=0.3333),
+                _hit("doc_002.pdf", score=0.2647),
+            ],
+        ):
+            route = route_question(
+                "Which supplier appears on the row where the Department is "
+                "BUSINESS DONCASTER and the NET Amount is 206?"
+            )
+        assert route == {"modality": "", "source_file": ""}
 
 
 class TestRenumberToolMarkers:

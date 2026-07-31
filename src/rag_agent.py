@@ -54,6 +54,7 @@ from src.config import (
     RERANKER_ENABLED,
     RERANKER_MODEL,
     RETRIEVAL_TOP_K,
+    ROUTE_CONFIDENCE_MARGIN,
 )
 from src.duckdb_store import DuckDBStore
 from src.llm_credentials import key_for_base
@@ -244,6 +245,28 @@ def route_question(
     top = hits[:3]
     top_source = _source(hits[0])
     if sum(1 for h in top if _source(h) == top_source) < 2:
+        return {"modality": "", "source_file": ""}
+
+    # Score-margin gate: the top-3 vote above can still be fooled. Reproduced
+    # live -- a table-value question ("Department is X, NET Amount is 206")
+    # retrieved [doc_002(0.51), doc_006(0.50), doc_002(0.35), doc_006(0.33)];
+    # doc_006 was the right document, but the raw top-3 window happened to
+    # contain 2 of doc_002's chunks against 1 of doc_006's, so the vote above
+    # passed with unearned confidence on a lead of 0.014. Directing the agent
+    # onto the wrong tool this confidently is worse than not directing it at
+    # all (the agent's own undirected judgment gets this case right, per the
+    # comment above). Compare each distinct document's BEST score across all
+    # fetched hits, not just who wins the top-3 window, and abstain unless
+    # the leader clears the runner-up by a real margin.
+    best_by_source: dict[str, float] = {}
+    for h in hits:
+        src = _source(h)
+        if not src:
+            continue
+        score = h.get("score", 0.0) or 0.0
+        best_by_source[src] = max(best_by_source.get(src, float("-inf")), score)
+    ranked = sorted(best_by_source.values(), reverse=True)
+    if len(ranked) >= 2 and (ranked[0] - ranked[1]) < ROUTE_CONFIDENCE_MARGIN:
         return {"modality": "", "source_file": ""}
 
     # Majority vote over the top-3 hits: more table-extension sources -> excel.

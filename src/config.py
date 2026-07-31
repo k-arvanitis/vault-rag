@@ -79,6 +79,7 @@ class Settings(BaseSettings):
     retrieval_top_k: int = 100
     rerank_top_n: int = 10
     doc_min_score: float = 0.01
+    route_confidence_margin: float = 0.05
     max_chunk_chars: int = 1500
     max_table_chars: int = 3000
     max_tool_results: int = 12
@@ -205,6 +206,7 @@ EMBED_DEVICE: str = _s.embed_device
 RETRIEVAL_TOP_K: int = _s.retrieval_top_k
 RERANK_TOP_N: int = _s.rerank_top_n
 DOC_MIN_SCORE: float = _s.doc_min_score
+ROUTE_CONFIDENCE_MARGIN: float = _s.route_confidence_margin
 MAX_CHUNK_CHARS: int = _s.max_chunk_chars
 MAX_TABLE_CHARS: int = _s.max_table_chars
 MAX_TOOL_RESULTS: int = _s.max_tool_results
