@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import requests
 
-from src.config import QDRANT_COLLECTION, QDRANT_URL
-from src.sparse_embedder import get_sparse_embedder
+from vault_rag.config import QDRANT_COLLECTION, QDRANT_URL
+from vault_rag.sparse_embedder import get_sparse_embedder
 
 
 def backfill(url: str = QDRANT_URL, collection: str = QDRANT_COLLECTION, batch_size: int = 64) -> None:

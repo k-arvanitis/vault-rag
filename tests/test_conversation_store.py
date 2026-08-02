@@ -1,7 +1,7 @@
 """Tests for src/conversation_store.py."""
 import pytest
 
-import src.conversation_store as conversation_store
+import vault_rag.conversation_store as conversation_store
 
 
 @pytest.fixture(autouse=True)

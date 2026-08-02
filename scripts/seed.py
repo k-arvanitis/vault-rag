@@ -89,7 +89,7 @@ def _download(url: str, dest: Path) -> None:
 def _ingest_pdf(path: Path) -> None:
     """Ingest a born-digital PDF via the standard ingestion pipeline."""
     subprocess.run(
-        ["uv", "run", "python", "-m", "src.ingest", "--pdf", str(path)],
+        ["uv", "run", "python", "-m", "vault_rag.ingest", "--pdf", str(path)],
         check=True,
     )
 
@@ -101,7 +101,7 @@ def _ingest_table(path: Path) -> None:
     structured queries for these documents are answered from DuckDB.
     """
     subprocess.run(
-        ["uv", "run", "python", "-m", "src.ingest_table_rows", str(path)],
+        ["uv", "run", "python", "-m", "vault_rag.ingest_table_rows", str(path)],
         check=True,
     )
 

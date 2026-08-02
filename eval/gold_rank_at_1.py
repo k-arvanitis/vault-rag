@@ -41,7 +41,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.config import (  # noqa: E402
+from vault_rag.config import (  # noqa: E402
     GENERATION_API_BASE,
     GENERATION_MODEL,
     QDRANT_COLLECTION,
@@ -51,9 +51,9 @@ from src.config import (  # noqa: E402
     RERANKER_MODEL,
     RETRIEVAL_TOP_K,
 )
-from src.reranker import BGEReranker  # noqa: E402
-from src.retriever import retrieve  # noqa: E402
-from src.tools.retrieval_tool import _make_unified_tool  # noqa: E402
+from vault_rag.reranker import BGEReranker  # noqa: E402
+from vault_rag.retriever import retrieve  # noqa: E402
+from vault_rag.tools.retrieval_tool import _make_unified_tool  # noqa: E402
 
 LIVE_DOCS = {"doc_001", "doc_002"}
 QA_FILES = [

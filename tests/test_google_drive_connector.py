@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import src.connectors.google_drive as gdrive
+import vault_rag.connectors.google_drive as gdrive
 
 
 @pytest.fixture(autouse=True)
@@ -47,7 +47,7 @@ def test_sync_downloads_and_ingests_new_file(tmp_path):
         patch.object(gdrive, "_list_drive_files", return_value=[drive_file]),
         patch.object(gdrive, "_download_file", return_value=tmp_path / "policy.pdf"),
         patch.object(gdrive, "_ingest_file") as mock_ingest,
-        patch("src.connectors.google_drive.INPUT_DIR", str(tmp_path)),
+        patch("vault_rag.connectors.google_drive.INPUT_DIR", str(tmp_path)),
     ):
         result = gdrive.sync()
 

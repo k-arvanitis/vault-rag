@@ -13,7 +13,7 @@ import re
 
 import requests
 
-from src.config import QDRANT_COLLECTION, QDRANT_URL
+from vault_rag.config import QDRANT_COLLECTION, QDRANT_URL
 
 _DOC_ID_RE = re.compile(r"doc_\d+")
 

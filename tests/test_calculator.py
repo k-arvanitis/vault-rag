@@ -1,6 +1,6 @@
 """Tests for the controlled arithmetic tool in src/tools/calculator.py."""
 
-from src.tools.calculator import calculate
+from vault_rag.tools.calculator import calculate
 
 
 def test_calculate_basic_arithmetic():

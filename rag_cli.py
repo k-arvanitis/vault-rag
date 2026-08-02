@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from src.config import (
+from vault_rag.config import (
     GENERATION_API_BASE,
     GENERATION_MODEL,
     QDRANT_COLLECTION,
@@ -19,7 +19,7 @@ from src.config import (
     RERANKER_MODEL,
     RETRIEVAL_TOP_K,
 )
-from src.rag_agent import ask_agent, build_rag_agent, stream_agent
+from vault_rag.rag_agent import ask_agent, build_rag_agent, stream_agent
 
 
 def main() -> None:

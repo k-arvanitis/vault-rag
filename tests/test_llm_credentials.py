@@ -2,7 +2,7 @@
 
 import pytest
 
-import src.llm_credentials as llm_credentials
+import vault_rag.llm_credentials as llm_credentials
 
 
 @pytest.fixture(autouse=True)

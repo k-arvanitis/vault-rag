@@ -42,18 +42,18 @@ def test_text_layer_no_images_uses_pymupdf(tmp_path):
     expected_md = "# Heading\n\nSome content"
 
     with (
-        patch("src.parser.pdf_parser.fitz") as mock_fitz,
-        patch("src.parser.pdf_parser.pymupdf4llm") as mock_pymupdf,
-        patch("src.parser.pdf_parser.call_lighton_ocr") as mock_ocr,
-        patch("src.parser.pdf_parser.call_vlm_description") as mock_vlm,
-        patch("src.parser.pdf_parser.VLM_ENABLED", True),
+        patch("vault_rag.parser.pdf_parser.fitz") as mock_fitz,
+        patch("vault_rag.parser.pdf_parser.pymupdf4llm") as mock_pymupdf,
+        patch("vault_rag.parser.pdf_parser.call_lighton_ocr") as mock_ocr,
+        patch("vault_rag.parser.pdf_parser.call_vlm_description") as mock_vlm,
+        patch("vault_rag.parser.pdf_parser.VLM_ENABLED", True),
     ):
         mock_fitz.open.return_value = _make_doc([_make_page(page_text)])
         mock_pymupdf.to_markdown.return_value = _mock_pymupdf_chunk(
             expected_md, images=[]
         )
 
-        from src.parser.pdf_parser import parse_pdf
+        from vault_rag.parser.pdf_parser import parse_pdf
 
         result = parse_pdf("fake.pdf")
 
@@ -73,9 +73,9 @@ def test_scanned_page_uses_lighton_ocr():
     ocr_result = "Scanned page markdown"
 
     with (
-        patch("src.parser.pdf_parser.fitz") as mock_fitz,
-        patch("src.parser.pdf_parser.pymupdf4llm") as mock_pymupdf,
-        patch("src.parser.pdf_parser.call_lighton_ocr") as mock_ocr,
+        patch("vault_rag.parser.pdf_parser.fitz") as mock_fitz,
+        patch("vault_rag.parser.pdf_parser.pymupdf4llm") as mock_pymupdf,
+        patch("vault_rag.parser.pdf_parser.call_lighton_ocr") as mock_ocr,
     ):
         mock_page = _make_page(page_text)
         mock_pixmap = MagicMock()
@@ -83,7 +83,7 @@ def test_scanned_page_uses_lighton_ocr():
         mock_fitz.open.return_value = _make_doc([mock_page])
         mock_ocr.return_value = ocr_result
 
-        from src.parser.pdf_parser import parse_pdf
+        from vault_rag.parser.pdf_parser import parse_pdf
 
         result = parse_pdf("fake.pdf")
 
@@ -107,12 +107,12 @@ def test_text_layer_with_image_calls_vlm(tmp_path):
     vlm_desc = "A bar chart showing quarterly revenue."
 
     with (
-        patch("src.parser.pdf_parser.fitz") as mock_fitz,
-        patch("src.parser.pdf_parser.pymupdf4llm") as mock_pymupdf,
-        patch("src.parser.pdf_parser.call_lighton_ocr"),
-        patch("src.parser.pdf_parser.call_vlm_description") as mock_vlm,
-        patch("src.parser.pdf_parser.VLM_ENABLED", True),
-        patch("src.parser.pdf_parser.tempfile.TemporaryDirectory") as mock_tmpdir,
+        patch("vault_rag.parser.pdf_parser.fitz") as mock_fitz,
+        patch("vault_rag.parser.pdf_parser.pymupdf4llm") as mock_pymupdf,
+        patch("vault_rag.parser.pdf_parser.call_lighton_ocr"),
+        patch("vault_rag.parser.pdf_parser.call_vlm_description") as mock_vlm,
+        patch("vault_rag.parser.pdf_parser.VLM_ENABLED", True),
+        patch("vault_rag.parser.pdf_parser.tempfile.TemporaryDirectory") as mock_tmpdir,
     ):
         mock_tmpdir.return_value.__enter__ = MagicMock(return_value=str(tmp_path))
         mock_tmpdir.return_value.__exit__ = MagicMock(return_value=False)
@@ -122,7 +122,7 @@ def test_text_layer_with_image_calls_vlm(tmp_path):
         )
         mock_vlm.return_value = vlm_desc
 
-        from src.parser.pdf_parser import parse_pdf
+        from vault_rag.parser.pdf_parser import parse_pdf
 
         result = parse_pdf("doc.pdf")
 
@@ -144,12 +144,12 @@ def test_vlm_disabled_leaves_image_refs_unchanged(tmp_path):
     page_md = "# Title\n\n![](doc-0-0.png)\n\nText"
 
     with (
-        patch("src.parser.pdf_parser.fitz") as mock_fitz,
-        patch("src.parser.pdf_parser.pymupdf4llm") as mock_pymupdf,
-        patch("src.parser.pdf_parser.call_lighton_ocr"),
-        patch("src.parser.pdf_parser.call_vlm_description") as mock_vlm,
-        patch("src.parser.pdf_parser.VLM_ENABLED", False),
-        patch("src.parser.pdf_parser.tempfile.TemporaryDirectory") as mock_tmpdir,
+        patch("vault_rag.parser.pdf_parser.fitz") as mock_fitz,
+        patch("vault_rag.parser.pdf_parser.pymupdf4llm") as mock_pymupdf,
+        patch("vault_rag.parser.pdf_parser.call_lighton_ocr"),
+        patch("vault_rag.parser.pdf_parser.call_vlm_description") as mock_vlm,
+        patch("vault_rag.parser.pdf_parser.VLM_ENABLED", False),
+        patch("vault_rag.parser.pdf_parser.tempfile.TemporaryDirectory") as mock_tmpdir,
     ):
         mock_tmpdir.return_value.__enter__ = MagicMock(return_value=str(tmp_path))
         mock_tmpdir.return_value.__exit__ = MagicMock(return_value=False)
@@ -158,7 +158,7 @@ def test_vlm_disabled_leaves_image_refs_unchanged(tmp_path):
             page_md, images=[{"bbox": [0, 0, 100, 100]}]
         )
 
-        from src.parser.pdf_parser import parse_pdf
+        from vault_rag.parser.pdf_parser import parse_pdf
 
         result = parse_pdf("doc.pdf")
 
@@ -179,12 +179,12 @@ def test_vlm_exception_inserts_fallback(tmp_path):
     page_md = "# Title\n\n![](doc-0-0.png)\n\nText"
 
     with (
-        patch("src.parser.pdf_parser.fitz") as mock_fitz,
-        patch("src.parser.pdf_parser.pymupdf4llm") as mock_pymupdf,
-        patch("src.parser.pdf_parser.call_lighton_ocr"),
-        patch("src.parser.pdf_parser.call_vlm_description") as mock_vlm,
-        patch("src.parser.pdf_parser.VLM_ENABLED", True),
-        patch("src.parser.pdf_parser.tempfile.TemporaryDirectory") as mock_tmpdir,
+        patch("vault_rag.parser.pdf_parser.fitz") as mock_fitz,
+        patch("vault_rag.parser.pdf_parser.pymupdf4llm") as mock_pymupdf,
+        patch("vault_rag.parser.pdf_parser.call_lighton_ocr"),
+        patch("vault_rag.parser.pdf_parser.call_vlm_description") as mock_vlm,
+        patch("vault_rag.parser.pdf_parser.VLM_ENABLED", True),
+        patch("vault_rag.parser.pdf_parser.tempfile.TemporaryDirectory") as mock_tmpdir,
     ):
         mock_tmpdir.return_value.__enter__ = MagicMock(return_value=str(tmp_path))
         mock_tmpdir.return_value.__exit__ = MagicMock(return_value=False)
@@ -194,7 +194,7 @@ def test_vlm_exception_inserts_fallback(tmp_path):
         )
         mock_vlm.side_effect = RuntimeError("API timeout")
 
-        from src.parser.pdf_parser import parse_pdf
+        from vault_rag.parser.pdf_parser import parse_pdf
 
         # Must not raise
         result = parse_pdf("doc.pdf")
@@ -217,12 +217,12 @@ def test_mixed_document_routes_pages_correctly(tmp_path):
     ocr_md = "Scanned page OCR result"
 
     with (
-        patch("src.parser.pdf_parser.fitz") as mock_fitz,
-        patch("src.parser.pdf_parser.pymupdf4llm") as mock_pymupdf,
-        patch("src.parser.pdf_parser.call_lighton_ocr") as mock_ocr,
-        patch("src.parser.pdf_parser.call_vlm_description"),
-        patch("src.parser.pdf_parser.VLM_ENABLED", True),
-        patch("src.parser.pdf_parser.tempfile.TemporaryDirectory") as mock_tmpdir,
+        patch("vault_rag.parser.pdf_parser.fitz") as mock_fitz,
+        patch("vault_rag.parser.pdf_parser.pymupdf4llm") as mock_pymupdf,
+        patch("vault_rag.parser.pdf_parser.call_lighton_ocr") as mock_ocr,
+        patch("vault_rag.parser.pdf_parser.call_vlm_description"),
+        patch("vault_rag.parser.pdf_parser.VLM_ENABLED", True),
+        patch("vault_rag.parser.pdf_parser.tempfile.TemporaryDirectory") as mock_tmpdir,
     ):
         mock_tmpdir.return_value.__enter__ = MagicMock(return_value=str(tmp_path))
         mock_tmpdir.return_value.__exit__ = MagicMock(return_value=False)
@@ -232,7 +232,7 @@ def test_mixed_document_routes_pages_correctly(tmp_path):
         )
         mock_ocr.return_value = ocr_md
 
-        from src.parser.pdf_parser import parse_pdf
+        from vault_rag.parser.pdf_parser import parse_pdf
 
         result = parse_pdf("mixed.pdf")
 
@@ -272,12 +272,12 @@ def test_header_banner_moved_to_start_in_ocr_fallback_path(tmp_path):
     fitz_doc.extract_image.return_value = {"image": b"fakepng"}
 
     with (
-        patch("src.parser.pdf_parser.fitz") as mock_fitz,
-        patch("src.parser.pdf_parser.pymupdf4llm") as mock_pymupdf,
-        patch("src.parser.pdf_parser.call_lighton_ocr"),
-        patch("src.parser.pdf_parser.call_vlm_description") as mock_vlm,
-        patch("src.parser.pdf_parser.VLM_ENABLED", True),
-        patch("src.parser.pdf_parser.tempfile.TemporaryDirectory") as mock_tmpdir,
+        patch("vault_rag.parser.pdf_parser.fitz") as mock_fitz,
+        patch("vault_rag.parser.pdf_parser.pymupdf4llm") as mock_pymupdf,
+        patch("vault_rag.parser.pdf_parser.call_lighton_ocr"),
+        patch("vault_rag.parser.pdf_parser.call_vlm_description") as mock_vlm,
+        patch("vault_rag.parser.pdf_parser.VLM_ENABLED", True),
+        patch("vault_rag.parser.pdf_parser.tempfile.TemporaryDirectory") as mock_tmpdir,
     ):
         mock_tmpdir.return_value.__enter__ = MagicMock(return_value=str(tmp_path))
         mock_tmpdir.return_value.__exit__ = MagicMock(return_value=False)
@@ -296,7 +296,7 @@ def test_header_banner_moved_to_start_in_ocr_fallback_path(tmp_path):
         mock_pymupdf.to_markdown.return_value = _mock_pymupdf_chunk(page_md, images=None)
         mock_vlm.return_value = vlm_desc
 
-        from src.parser.pdf_parser import parse_pdf
+        from vault_rag.parser.pdf_parser import parse_pdf
 
         result = parse_pdf("doc.pdf")
 
@@ -321,12 +321,12 @@ def test_header_banner_figure_moved_to_start_of_page(tmp_path):
     vlm_desc = "LACERA logo."
 
     with (
-        patch("src.parser.pdf_parser.fitz") as mock_fitz,
-        patch("src.parser.pdf_parser.pymupdf4llm") as mock_pymupdf,
-        patch("src.parser.pdf_parser.call_lighton_ocr"),
-        patch("src.parser.pdf_parser.call_vlm_description") as mock_vlm,
-        patch("src.parser.pdf_parser.VLM_ENABLED", True),
-        patch("src.parser.pdf_parser.tempfile.TemporaryDirectory") as mock_tmpdir,
+        patch("vault_rag.parser.pdf_parser.fitz") as mock_fitz,
+        patch("vault_rag.parser.pdf_parser.pymupdf4llm") as mock_pymupdf,
+        patch("vault_rag.parser.pdf_parser.call_lighton_ocr"),
+        patch("vault_rag.parser.pdf_parser.call_vlm_description") as mock_vlm,
+        patch("vault_rag.parser.pdf_parser.VLM_ENABLED", True),
+        patch("vault_rag.parser.pdf_parser.tempfile.TemporaryDirectory") as mock_tmpdir,
     ):
         mock_tmpdir.return_value.__enter__ = MagicMock(return_value=str(tmp_path))
         mock_tmpdir.return_value.__exit__ = MagicMock(return_value=False)
@@ -336,7 +336,7 @@ def test_header_banner_figure_moved_to_start_of_page(tmp_path):
         )
         mock_vlm.return_value = vlm_desc
 
-        from src.parser.pdf_parser import parse_pdf
+        from vault_rag.parser.pdf_parser import parse_pdf
 
         result = parse_pdf("doc.pdf")
 
@@ -351,7 +351,7 @@ def test_header_banner_figure_moved_to_start_of_page(tmp_path):
 
 
 def test_dedupe_duplicate_table_cells_blanks_duplicated_header():
-    from src.parser.pdf_parser import _dedupe_duplicate_table_cells
+    from vault_rag.parser.pdf_parser import _dedupe_duplicate_table_cells
 
     md = (
         "Whenever the following words appear in this Policy, they will be "
@@ -369,7 +369,7 @@ def test_dedupe_duplicate_table_cells_blanks_duplicated_header():
 
 
 def test_dedupe_duplicate_table_cells_leaves_real_headers_untouched():
-    from src.parser.pdf_parser import _dedupe_duplicate_table_cells
+    from vault_rag.parser.pdf_parser import _dedupe_duplicate_table_cells
 
     md = (
         "Some unrelated paragraph text that has nothing to do with the table below.\n\n"
@@ -384,7 +384,7 @@ def test_dedupe_duplicate_table_cells_leaves_real_headers_untouched():
 
 
 def test_dedupe_duplicate_table_cells_blanks_duplicated_body_row():
-    from src.parser.pdf_parser import _dedupe_duplicate_table_cells
+    from vault_rag.parser.pdf_parser import _dedupe_duplicate_table_cells
 
     # Reproduced on doc_002 page 1's "Interpretation" table: an ordinary body
     # row (not the header) where pymupdf4llm spilled the lead-in text into
@@ -408,7 +408,7 @@ def test_dedupe_duplicate_table_cells_blanks_duplicated_body_row():
 
 
 def test_dedupe_duplicate_table_cells_blanks_fully_identical_row():
-    from src.parser.pdf_parser import _dedupe_duplicate_table_cells
+    from vault_rag.parser.pdf_parser import _dedupe_duplicate_table_cells
 
     # Reproduced on doc_002 page 1's wrapped "Key Personnel" row: pymupdf4llm
     # duplicated the entire cell text into both columns verbatim.

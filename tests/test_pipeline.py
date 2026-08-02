@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
-from src.pipeline import (
+from vault_rag.pipeline import (
     _is_unsupported,
     _looks_excel,
     ask_with_decomposition,
@@ -63,7 +63,7 @@ def _make_agent(answer: str) -> MagicMock:
 class TestReflectionPipeline:
     def test_good_answer_returned_directly(self):
         agent = _make_agent("The answer is 42.")
-        with patch("src.rag_agent.ask_agent", return_value="The answer is 42.") as mock_ask:
+        with patch("vault_rag.rag_agent.ask_agent", return_value="The answer is 42.") as mock_ask:
             pipeline = build_reflection_pipeline(agent)
             result = ask_with_reflection(pipeline, "What is the answer?")
         assert result == "The answer is 42."
@@ -72,7 +72,7 @@ class TestReflectionPipeline:
     def test_unsupported_triggers_retry(self):
         agent = MagicMock()
         answers = ["Unsupported", "Found it on retry."]
-        with patch("src.rag_agent.ask_agent", side_effect=answers) as mock_ask:
+        with patch("vault_rag.rag_agent.ask_agent", side_effect=answers) as mock_ask:
             pipeline = build_reflection_pipeline(agent)
             result = ask_with_reflection(pipeline, "What is in doc_001?")
         assert result == "Found it on retry."
@@ -80,7 +80,7 @@ class TestReflectionPipeline:
 
     def test_unsupported_twice_stops_at_two_retries(self):
         agent = MagicMock()
-        with patch("src.rag_agent.ask_agent", return_value="Unsupported") as mock_ask:
+        with patch("vault_rag.rag_agent.ask_agent", return_value="Unsupported") as mock_ask:
             pipeline = build_reflection_pipeline(agent)
             result = ask_with_reflection(pipeline, "What is in doc_001?")
         assert result == "Unsupported"
@@ -96,7 +96,7 @@ class TestReflectionPipeline:
             captured_questions.append(q)
             return answers.pop(0)
 
-        with patch("src.rag_agent.ask_agent", side_effect=capture):
+        with patch("vault_rag.rag_agent.ask_agent", side_effect=capture):
             pipeline = build_reflection_pipeline(agent)
             ask_with_reflection(pipeline, "What is the term in doc_001?")
 
@@ -123,7 +123,7 @@ class TestDecompositionPipeline:
         question = "Who is the authorizing manager?"
         openai_response = _mock_openai_response([question])
 
-        with patch("src.rag_agent.ask_agent", return_value="Ricki Contreras."), \
+        with patch("vault_rag.rag_agent.ask_agent", return_value="Ricki Contreras."), \
              patch("openai.OpenAI") as mock_openai_cls:
             mock_client = MagicMock()
             mock_client.chat.completions.create.return_value = openai_response
@@ -149,7 +149,7 @@ class TestDecompositionPipeline:
         ]
         openai_response = _mock_openai_response(sub_qs)
 
-        with patch("src.rag_agent.ask_agent", return_value="Policy allows longer."), \
+        with patch("vault_rag.rag_agent.ask_agent", return_value="Policy allows longer."), \
              patch("openai.OpenAI") as mock_openai_cls:
             mock_client = MagicMock()
             mock_client.chat.completions.create.return_value = openai_response
@@ -173,7 +173,7 @@ class TestDecompositionPipeline:
         agent = MagicMock()
         question = "Which document is longer?"
 
-        with patch("src.rag_agent.ask_agent", return_value="Doc A."), \
+        with patch("vault_rag.rag_agent.ask_agent", return_value="Doc A."), \
              patch("openai.OpenAI") as mock_openai_cls:
             mock_client = MagicMock()
             mock_client.chat.completions.create.side_effect = RuntimeError("API down")
@@ -201,7 +201,7 @@ class TestDecompositionPipeline:
         response = MagicMock()
         response.choices = [choice]
 
-        with patch("src.rag_agent.ask_agent", return_value="Result."), \
+        with patch("vault_rag.rag_agent.ask_agent", return_value="Result."), \
              patch("openai.OpenAI") as mock_openai_cls:
             mock_client = MagicMock()
             mock_client.chat.completions.create.return_value = response
@@ -222,7 +222,7 @@ class TestDecompositionPipeline:
         question = "Simple question?"
         openai_response = _mock_openai_response([question])
 
-        with patch("src.rag_agent.ask_agent", return_value="Simple answer."), \
+        with patch("vault_rag.rag_agent.ask_agent", return_value="Simple answer."), \
              patch("openai.OpenAI") as mock_openai_cls:
             mock_client = MagicMock()
             mock_client.chat.completions.create.return_value = openai_response

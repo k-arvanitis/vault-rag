@@ -1,7 +1,7 @@
 """Tests for src/feedback_store.py."""
 import pytest
 
-import src.feedback_store as feedback_store
+import vault_rag.feedback_store as feedback_store
 
 
 @pytest.fixture(autouse=True)

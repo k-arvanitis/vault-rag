@@ -3,7 +3,7 @@ import json
 import openpyxl
 import pytest
 
-from src.preprocessing.excel_cleaner import (
+from vault_rag.preprocessing.excel_cleaner import (
     _parse_llm_json,
     find_data_end_row,
     heuristic_fallback,

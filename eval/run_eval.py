@@ -27,15 +27,15 @@ load_dotenv(override=True)
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
 
 from eval.gold_rank_at_1 import _contains  # noqa: E402
-from src.answer_pipeline import answer_query  # noqa: E402
-from src.config import (  # noqa: E402
+from vault_rag.answer_pipeline import answer_query  # noqa: E402
+from vault_rag.config import (  # noqa: E402
     GENERATION_API_BASE,
     GENERATION_MODEL,
     LITELLM_MASTER_KEY,
     QDRANT_COLLECTION,
     QDRANT_URL,
 )
-from src.pipeline import (  # noqa: E402
+from vault_rag.pipeline import (  # noqa: E402
     _looks_excel,
     ask_with_decomposition,
     ask_with_reflection,
@@ -43,13 +43,13 @@ from src.pipeline import (  # noqa: E402
     build_decomposition_pipeline,
     build_reflection_pipeline,
 )
-from src.rag_agent import build_rag_agent  # noqa: E402
-from src.retriever import retrieve  # noqa: E402
+from vault_rag.rag_agent import build_rag_agent  # noqa: E402
+from vault_rag.retriever import retrieve  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Commented out: retrieval-metric imports (available for ablation runs)
 # ---------------------------------------------------------------------------
-# from src.retriever import retrieve, infer_query_chunk_types, _TABLE_CHUNK_TYPES
+# from vault_rag.retriever import retrieve, infer_query_chunk_types, _TABLE_CHUNK_TYPES
 
 
 def _generation_api_key() -> str:
@@ -342,8 +342,8 @@ def _custom_judge_answer(
     }
 
 
-# from src.reranker import BGEReranker, QwenReranker
-# from src.rag_agent import _hyde
+# from vault_rag.reranker import BGEReranker, QwenReranker
+# from vault_rag.rag_agent import _hyde
 
 EVAL_DIR = REPO_ROOT / "eval"
 QA_PAIRS_DIR = EVAL_DIR / "data/qa_pairs"

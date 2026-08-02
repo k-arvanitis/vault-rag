@@ -19,8 +19,8 @@ class TestBGEReranker:
 
     def _make_ranker(self, scores: list[float]):
         """Build a BGEReranker with mocked model that returns `scores` as logits."""
-        with patch("src.reranker.AutoTokenizer.from_pretrained") as mock_tok_cls, \
-             patch("src.reranker.AutoModelForSequenceClassification.from_pretrained") as mock_model_cls:
+        with patch("vault_rag.reranker.AutoTokenizer.from_pretrained") as mock_tok_cls, \
+             patch("vault_rag.reranker.AutoModelForSequenceClassification.from_pretrained") as mock_model_cls:
 
             mock_tokenizer = MagicMock()
             mock_tok_cls.return_value = mock_tokenizer
@@ -39,7 +39,7 @@ class TestBGEReranker:
             mock_output.logits = logits
             mock_model.return_value = mock_output
 
-            from src.reranker import BGEReranker
+            from vault_rag.reranker import BGEReranker
             ranker = BGEReranker(model_name="fake-model", device="cpu")
 
         return ranker
@@ -90,8 +90,8 @@ class TestQwenReranker:
 
     def _make_ranker(self, yes_logits: list[float]):
         """Build a QwenReranker whose model returns controlled yes-logits per doc."""
-        with patch("src.reranker.AutoTokenizer.from_pretrained") as mock_tok_cls, \
-             patch("src.reranker.AutoModelForCausalLM.from_pretrained") as mock_model_cls:
+        with patch("vault_rag.reranker.AutoTokenizer.from_pretrained") as mock_tok_cls, \
+             patch("vault_rag.reranker.AutoModelForCausalLM.from_pretrained") as mock_model_cls:
 
             mock_tokenizer = MagicMock()
             mock_tok_cls.return_value = mock_tokenizer
@@ -103,7 +103,7 @@ class TestQwenReranker:
             mock_model.device = "cpu"
             mock_model_cls.return_value.eval.return_value = mock_model
 
-            from src.reranker import QwenReranker
+            from vault_rag.reranker import QwenReranker
             ranker = QwenReranker(model_name="fake-qwen", device="cpu")
 
         # Wire tokenizer to return fake inputs per call

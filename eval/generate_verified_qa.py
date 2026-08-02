@@ -18,7 +18,7 @@ from pathlib import Path
 
 import duckdb
 
-from src.config import DUCKDB_PATH
+from vault_rag.config import DUCKDB_PATH
 
 random.seed(7)
 REPO = Path(__file__).resolve().parents[1]

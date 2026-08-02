@@ -1,7 +1,7 @@
 """Tests for src/title_overrides.py."""
 import pytest
 
-import src.title_overrides as title_overrides
+import vault_rag.title_overrides as title_overrides
 
 
 @pytest.fixture(autouse=True)

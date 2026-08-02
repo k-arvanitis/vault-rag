@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.answer_quality import (
+from vault_rag.answer_quality import (
     _is_bare_filename_answer,
     _is_multi_part_query,
     _split_multi_part_query,

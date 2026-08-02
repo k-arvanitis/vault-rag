@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
-from src.config import API_BASE  # noqa: E402
+from vault_rag.config import API_BASE  # noqa: E402
 
 _QUERY_TIMEOUT = 120.0
 

@@ -20,9 +20,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.answer_pipeline import answer_query
-from src.config import QDRANT_COLLECTION
-from src.rag_agent import build_rag_agent
+from vault_rag.answer_pipeline import answer_query
+from vault_rag.config import QDRANT_COLLECTION
+from vault_rag.rag_agent import build_rag_agent
 
 RAW_DIR = Path(__file__).resolve().parent.parent / "eval" / "data" / "raw"
 
@@ -38,7 +38,7 @@ def _check(label: str, condition: bool, detail: str = "") -> None:
 
 def check_pdf_reingest_and_query(agent) -> None:
     """Reingest a real PDF, then ask a question and verify a real citation comes back."""
-    from src.ingest import run_ingest
+    from vault_rag.ingest import run_ingest
 
     pdf_path = RAW_DIR / "doc_001_procurement_policy.pdf"
     print(f"\n-- Reingesting {pdf_path.name} --")
@@ -68,7 +68,7 @@ def check_pdf_reingest_and_query(agent) -> None:
 
 def check_excel_reingest_and_query(agent) -> None:
     """Reingest a real spreadsheet, then ask a table-lookup question with a known answer."""
-    from src.ingest_table_rows import ingest_table_rows
+    from vault_rag.ingest_table_rows import ingest_table_rows
 
     xlsx_path = RAW_DIR / "doc_006_purchase_card_transactions_q1_2025_26.xlsx"
     print(f"\n-- Reingesting {xlsx_path.name} --")

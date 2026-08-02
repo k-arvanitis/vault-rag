@@ -39,8 +39,8 @@ from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import JSONResponse, StreamingResponse  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
-from src import query_cache  # noqa: E402
-from src.config import (  # noqa: E402
+from vault_rag import query_cache  # noqa: E402
+from vault_rag.config import (  # noqa: E402
     ACCESS_MODE,
     ADMIN_PASSWORD,
     API_CORS_ORIGINS,
@@ -61,9 +61,9 @@ from src.config import (  # noqa: E402
     RETRIEVAL_TOP_K,
     SESSION_SECRET,
 )
-from src.retriever import _ollama_embed_query  # noqa: E402
-from src.vector_store import _request as _qdrant  # noqa: E402
-from src.vector_store import (  # noqa: E402
+from vault_rag.retriever import _ollama_embed_query  # noqa: E402
+from vault_rag.vector_store import _request as _qdrant  # noqa: E402
+from vault_rag.vector_store import (  # noqa: E402
     delete_by_file,
     get_chunks_by_file,
     scroll_all_payloads,
@@ -283,8 +283,8 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 @lru_cache(maxsize=1)
 def _get_agent() -> Any:
     """Build (and cache) the RAG agent — one instance reused across requests."""
-    from src.llm_credentials import resolve_generation_override
-    from src.rag_agent import build_rag_agent
+    from vault_rag.llm_credentials import resolve_generation_override
+    from vault_rag.rag_agent import build_rag_agent
 
     override = resolve_generation_override()
     api_base, model_name = override or (GENERATION_API_BASE, GENERATION_MODEL)
@@ -312,12 +312,12 @@ def _run_ingest_sync(
     try:
         if suffix in {".xlsx", ".xls", ".csv"}:
             _jobs[job_id]["stage"] = "chunking"
-            from src.ingest_table_rows import ingest_table_rows
+            from vault_rag.ingest_table_rows import ingest_table_rows
 
             ingest_table_rows(str(dest), collection=QDRANT_COLLECTION)
             _jobs[job_id]["chunks_created"] = -1
         else:
-            from src.ingest import run_ingest
+            from vault_rag.ingest import run_ingest
 
             _jobs[job_id]["stage"] = "parsing"
             result = run_ingest(
@@ -578,7 +578,7 @@ async def list_documents():
         payloads = scroll_all_payloads(QDRANT_URL, QDRANT_COLLECTION)
     except Exception:
         return []
-    from src.title_overrides import get_overrides
+    from vault_rag.title_overrides import get_overrides
 
     docs = _payloads_to_docs(payloads)
     overrides = get_overrides()
@@ -597,7 +597,7 @@ async def set_document_title(filename: str, req: SetTitleRequest):
     """PATCH /documents/{filename}/title — set or clear this source's
     admin display title. A blank/missing title clears the override,
     reverting to the extracted title (or filename, if none)."""
-    from src.title_overrides import clear_title, set_title
+    from vault_rag.title_overrides import clear_title, set_title
 
     if req.title and req.title.strip():
         set_title(filename, req.title.strip())
@@ -668,7 +668,7 @@ async def stats():
 @app.get("/usage", dependencies=[Depends(require_admin)])
 async def usage():
     """GET /usage — per-question token/cost log and daily rollups. Admin-only."""
-    from src.usage_log import stats as usage_stats
+    from vault_rag.usage_log import stats as usage_stats
 
     return usage_stats()
 
@@ -683,7 +683,7 @@ class LLMCredentialsRequest(BaseModel):
 async def get_llm_credentials():
     """GET /admin/llm-credentials — the stored BYOK provider/model and whether
     a key is set, masked to its last 4 characters. Never returns the full key."""
-    from src.llm_credentials import PROVIDERS, get_masked
+    from vault_rag.llm_credentials import PROVIDERS, get_masked
 
     return {**get_masked(), "providers": list(PROVIDERS.keys())}
 
@@ -693,7 +693,7 @@ async def set_llm_credentials(req: LLMCredentialsRequest):
     """POST /admin/llm-credentials — save the admin's chosen provider/key/model
     and rebuild the agent on the next request. A blank api_key keeps the
     existing stored key (see set_credentials's docstring)."""
-    from src.llm_credentials import set_credentials
+    from vault_rag.llm_credentials import set_credentials
 
     try:
         set_credentials(req.provider, req.api_key, req.model)
@@ -707,7 +707,7 @@ async def set_llm_credentials(req: LLMCredentialsRequest):
 async def delete_llm_credentials():
     """DELETE /admin/llm-credentials — clear the stored override, reverting to
     env-configured generation, and rebuild the agent on the next request."""
-    from src.llm_credentials import clear_credentials
+    from vault_rag.llm_credentials import clear_credentials
 
     clear_credentials()
     _get_agent.cache_clear()
@@ -725,7 +725,7 @@ class FeedbackRequest(BaseModel):
 @app.post("/feedback")
 async def submit_feedback(req: FeedbackRequest):
     """POST /feedback — record a thumbs up/down (with optional reason) on an answer."""
-    from src.feedback_store import add_feedback
+    from vault_rag.feedback_store import add_feedback
 
     return add_feedback(req.question, req.answer, req.rating, req.reason, req.sources)
 
@@ -733,7 +733,7 @@ async def submit_feedback(req: FeedbackRequest):
 @app.get("/feedback", dependencies=[Depends(require_admin)])
 async def get_feedback():
     """GET /feedback — list all feedback records for the admin queue, newest first."""
-    from src.feedback_store import list_feedback
+    from vault_rag.feedback_store import list_feedback
 
     return list_feedback()
 
@@ -746,7 +746,7 @@ class FeedbackResolveRequest(BaseModel):
 @app.patch("/feedback/{feedback_id}", dependencies=[Depends(require_admin)])
 async def resolve_feedback_endpoint(feedback_id: str, req: FeedbackResolveRequest):
     """PATCH /feedback/{id} — mark a feedback record resolved with an admin action."""
-    from src.feedback_store import resolve_feedback
+    from vault_rag.feedback_store import resolve_feedback
 
     try:
         return resolve_feedback(feedback_id, req.action, req.note)
@@ -762,7 +762,7 @@ class ConversationSaveRequest(BaseModel):
 @app.post("/conversations")
 async def save_conversation_endpoint(req: ConversationSaveRequest):
     """POST /conversations — create or update a saved conversation."""
-    from src.conversation_store import save_conversation
+    from vault_rag.conversation_store import save_conversation
 
     return save_conversation(req.id, req.messages)
 
@@ -770,7 +770,7 @@ async def save_conversation_endpoint(req: ConversationSaveRequest):
 @app.get("/conversations")
 async def list_conversations_endpoint():
     """GET /conversations — list saved conversations (metadata only), newest first."""
-    from src.conversation_store import list_conversations
+    from vault_rag.conversation_store import list_conversations
 
     return list_conversations()
 
@@ -778,7 +778,7 @@ async def list_conversations_endpoint():
 @app.get("/conversations/{conversation_id}")
 async def get_conversation_endpoint(conversation_id: str):
     """GET /conversations/{id} — return one saved conversation with its full messages."""
-    from src.conversation_store import get_conversation
+    from vault_rag.conversation_store import get_conversation
 
     try:
         return get_conversation(conversation_id)
@@ -789,7 +789,7 @@ async def get_conversation_endpoint(conversation_id: str):
 @app.delete("/conversations/{conversation_id}")
 async def delete_conversation_endpoint(conversation_id: str):
     """DELETE /conversations/{id} — remove a saved conversation."""
-    from src.conversation_store import delete_conversation
+    from vault_rag.conversation_store import delete_conversation
 
     try:
         delete_conversation(conversation_id)
@@ -816,15 +816,15 @@ async def query(
     src/answer_pipeline.answer_query — shared with eval/run_eval.py so both
     the live app and the benchmark measure the exact same behavior.
     """
-    from src.answer_pipeline import answer_query
-    from src.guardrails import (
+    from vault_rag.answer_pipeline import answer_query
+    from vault_rag.guardrails import (
         REFUSAL_MESSAGE,
         check_corpus_enumeration,
         check_document_count_question,
         check_prompt_injection,
         check_system_prompt_leak,
     )
-    from src.rag_agent import _get_langfuse
+    from vault_rag.rag_agent import _get_langfuse
 
     is_admin = _is_admin_caller(x_api_key, vault_admin_session)
 
@@ -876,7 +876,7 @@ async def query(
     )
     _latency_ms = (time.monotonic() - _start) * 1000
 
-    from src.usage_log import log as log_usage
+    from vault_rag.usage_log import log as log_usage
 
     log_usage(
         req.question,
@@ -940,8 +940,8 @@ async def query_stream(
     is garbage collected. Wasted compute on an aborted answer, not a
     correctness bug (nothing is read from the queue after disconnect).
     """
-    from src.answer_pipeline import stream_answer
-    from src.guardrails import (
+    from vault_rag.answer_pipeline import stream_answer
+    from vault_rag.guardrails import (
         REFUSAL_MESSAGE,
         check_corpus_enumeration,
         check_document_count_question,
@@ -1013,7 +1013,7 @@ async def query_stream(
                 if event.get("done") and "tools" in event:
                     event["tools_used"] = _tools_used(event.pop("tools"))
                 if event.get("done"):
-                    from src.usage_log import log as log_usage
+                    from vault_rag.usage_log import log as log_usage
 
                     log_usage(
                         req.question,
@@ -1138,7 +1138,7 @@ async def configure_google_drive(req: DriveConfigureRequest):
     in .env) -- share the target folder with that service account's email, no
     interactive login required.
     """
-    from src.connectors.google_drive import configure
+    from vault_rag.connectors.google_drive import configure
 
     return configure(req.folder_id, req.service_account_file)
 
@@ -1151,7 +1151,7 @@ async def sync_google_drive(req: DriveSyncRequest):
     typically small and bounded; each file's own ingestion failure is captured
     per-file in the response rather than aborting the whole sync.
     """
-    from src.connectors.google_drive import sync
+    from vault_rag.connectors.google_drive import sync
 
     try:
         result = sync(remove_deleted=req.remove_deleted)
@@ -1165,7 +1165,7 @@ async def sync_google_drive(req: DriveSyncRequest):
 @app.get("/connectors/google-drive/status")
 async def google_drive_status():
     """GET /connectors/google-drive/status — configured folder + last sync summary."""
-    from src.connectors.google_drive import status
+    from vault_rag.connectors.google_drive import status
 
     return status()
 
@@ -1173,7 +1173,7 @@ async def google_drive_status():
 @app.get("/connectors/google-drive/files")
 async def google_drive_files():
     """GET /connectors/google-drive/files — every Drive file currently tracked."""
-    from src.connectors.google_drive import list_files
+    from vault_rag.connectors.google_drive import list_files
 
     return list_files()
 

@@ -1,5 +1,5 @@
 """Tests for src/config.py."""
-import src.config as config
+import vault_rag.config as config
 
 
 def test_groq_api_key_var_exists():

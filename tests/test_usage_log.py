@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-import src.usage_log as usage_log
+import vault_rag.usage_log as usage_log
 
 
 @pytest.fixture(autouse=True)
@@ -49,12 +49,12 @@ def test_daily_includes_today_zeroed_when_last_activity_was_a_prior_day():
     mislabeled as "Today." daily[0] must be today's real date even with
     nothing logged for it yet."""
     usage = {"input_tokens": 10, "output_tokens": 10, "total_tokens": 20}
-    with patch("src.usage_log.datetime") as mock_dt:
+    with patch("vault_rag.usage_log.datetime") as mock_dt:
         mock_dt.now.return_value = datetime(2026, 7, 23, 18, 0, tzinfo=timezone.utc)
         mock_dt.now.side_effect = None
         usage_log.log("q1", "model-a", usage)
 
-    with patch("src.usage_log.datetime") as mock_dt:
+    with patch("vault_rag.usage_log.datetime") as mock_dt:
         mock_dt.now.return_value = datetime(2026, 7, 24, 9, 0, tzinfo=timezone.utc)
         result = usage_log.stats()
 

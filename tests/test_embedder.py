@@ -2,7 +2,7 @@
 
 from unittest.mock import patch
 
-from src.embedder import embed_chunks
+from vault_rag.embedder import embed_chunks
 
 
 def _chunk(content: str) -> dict:
@@ -27,7 +27,7 @@ class TestEmbedChunksNaNFallback:
                 )
             return [[0.1, 0.2] for _ in texts]
 
-        with patch("src.embedder._ollama_embed_batch", side_effect=fake_embed):
+        with patch("vault_rag.embedder._ollama_embed_batch", side_effect=fake_embed):
             result = embed_chunks(chunks, model_name="bge-m3", api_base="http://x", batch_size=2)
 
         assert len(result) == 2
@@ -44,7 +44,7 @@ class TestEmbedChunksNaNFallback:
         def fake_embed(api_base, model_name, texts):
             raise RuntimeError("Could not connect to Ollama at http://x.")
 
-        with patch("src.embedder._ollama_embed_batch", side_effect=fake_embed):
+        with patch("vault_rag.embedder._ollama_embed_batch", side_effect=fake_embed):
             try:
                 embed_chunks(chunks, model_name="bge-m3", api_base="http://x", batch_size=1)
                 assert False, "expected RuntimeError to propagate"
@@ -54,7 +54,7 @@ class TestEmbedChunksNaNFallback:
     def test_all_chunks_embed_normally_when_no_failure(self):
         chunks = [_chunk("a"), _chunk("b")]
         with patch(
-            "src.embedder._ollama_embed_batch",
+            "vault_rag.embedder._ollama_embed_batch",
             return_value=[[1.0], [2.0]],
         ):
             result = embed_chunks(chunks, model_name="bge-m3", api_base="http://x", batch_size=2)

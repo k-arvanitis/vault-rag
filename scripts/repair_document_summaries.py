@@ -25,9 +25,9 @@ from pathlib import Path
 
 from openai import OpenAI
 
-from src import query_cache
-from src.chunker import generate_document_summary
-from src.config import (
+from vault_rag import query_cache
+from vault_rag.chunker import generate_document_summary
+from vault_rag.config import (
     CHUNK_LLM_API_BASE,
     CHUNK_LLM_API_KEY,
     OLLAMA_API_BASE,
@@ -35,8 +35,8 @@ from src.config import (
     QDRANT_COLLECTION,
     QDRANT_URL,
 )
-from src.retriever import _ollama_embed_query
-from src.vector_store import ingest_embeddings
+from vault_rag.retriever import _ollama_embed_query
+from vault_rag.vector_store import ingest_embeddings
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CHUNKS_DIR = REPO_ROOT / "data/output/chunks"

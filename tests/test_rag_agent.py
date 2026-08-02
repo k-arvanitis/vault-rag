@@ -16,12 +16,12 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
-from src.answer_quality import (
+from vault_rag.answer_quality import (
     _context_source_count,
     _extract_key_value_answer,
     _repair_incomplete_answer,
 )
-from src.rag_agent import (
+from vault_rag.rag_agent import (
     _MARKER_OFFSET,
     SYSTEM_PROMPT,
     FinalCorrection,
@@ -33,7 +33,7 @@ from src.rag_agent import (
     route_question,
     stream_agent,
 )
-from src.tools.retrieval_tool import _best_snippet, _hyde
+from vault_rag.tools.retrieval_tool import _best_snippet, _hyde
 
 # ---------------------------------------------------------------------------
 # _extract_refs
@@ -145,7 +145,7 @@ class TestBuildSystemPrompt:
 
 class TestHyde:
     def test_thinking_model_prompt_has_no_think_prefix(self):
-        with patch("src.tools.retrieval_tool._llm_call") as mock_llm:
+        with patch("vault_rag.tools.retrieval_tool._llm_call") as mock_llm:
             mock_llm.return_value = "A hypothetical passage."
             result = _hyde("What is RAG?", "http://localhost:4000", "qwen3-30b")
             call_args = mock_llm.call_args
@@ -155,7 +155,7 @@ class TestHyde:
             assert result == "A hypothetical passage."
 
     def test_regular_model_prompt_no_prefix(self):
-        with patch("src.tools.retrieval_tool._llm_call") as mock_llm:
+        with patch("vault_rag.tools.retrieval_tool._llm_call") as mock_llm:
             mock_llm.return_value = "Another passage."
             result = _hyde("Explain vector DBs", "http://localhost:4000", "gpt-4o")
             call_args = mock_llm.call_args
@@ -228,11 +228,11 @@ class TestIncompleteAnswerRepair:
         )
 
         with (
-            patch("src.answer_quality._llm_split_subqueries") as split,
-            patch("src.answer_quality._coverage_check") as coverage,
-            patch("src.answer_quality.retrieve") as retrieve_mock,
+            patch("vault_rag.answer_quality._llm_split_subqueries") as split,
+            patch("vault_rag.answer_quality._coverage_check") as coverage,
+            patch("vault_rag.answer_quality.retrieve") as retrieve_mock,
             patch(
-                "src.answer_quality._direct_answer_from_context"
+                "vault_rag.answer_quality._direct_answer_from_context"
             ) as answer_from_context,
         ):
             split.return_value = [
@@ -394,7 +394,7 @@ class TestAskAgent:
         agent._generation_model = "gpt-test"
 
         with patch(
-            "src.rag_agent._direct_answer_from_context",
+            "vault_rag.rag_agent._direct_answer_from_context",
             return_value="December 15, 2005",
         ) as fallback:
             result = ask_agent(agent, "What is the original issue date?")
@@ -495,7 +495,7 @@ class TestStreamAgent:
         agent._generation_model = "gpt-test"
 
         with patch(
-            "src.rag_agent._direct_answer_from_context",
+            "vault_rag.rag_agent._direct_answer_from_context",
             return_value="December 15, 2005",
         ) as fallback:
             result = "".join(stream_agent(agent, "What is the original issue date?"))
@@ -644,7 +644,7 @@ class TestStreamAgentLiveTokens:
             ["The", " answer."], tool_content="[1] file=a.pdf chunk=0 score=0.9\nsome context"
         )
         with patch(
-            "src.rag_agent._apply_grounding_check", return_value="Unsupported"
+            "vault_rag.rag_agent._apply_grounding_check", return_value="Unsupported"
         ):
             items = list(stream_agent(agent, "q", live_tokens=True))
 
@@ -669,7 +669,7 @@ class TestRouteQuestionConfidenceGate:
 
     def test_suppresses_directive_when_top_3_disagree_on_document(self):
         with patch(
-            "src.rag_agent.retrieve",
+            "vault_rag.rag_agent.retrieve",
             return_value=[
                 _hit("doc_005.pdf"),
                 _hit("doc_003.pdf"),
@@ -683,7 +683,7 @@ class TestRouteQuestionConfidenceGate:
 
     def test_routes_when_top_3_agree_on_document(self):
         with patch(
-            "src.rag_agent.retrieve",
+            "vault_rag.rag_agent.retrieve",
             return_value=[
                 _hit("doc_001.pdf", score=0.9),
                 _hit("doc_001.pdf", score=0.8),
@@ -705,7 +705,7 @@ class TestRouteQuestionConfidenceGate:
         same way. Directing the agent onto the wrong tool this confidently
         is worse than not directing it at all."""
         with patch(
-            "src.rag_agent.retrieve",
+            "vault_rag.rag_agent.retrieve",
             return_value=[
                 _hit("doc_002.pdf", score=0.5139),
                 _hit("doc_006.xlsx", score=0.5000),

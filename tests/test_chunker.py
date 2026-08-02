@@ -10,13 +10,13 @@ from unittest.mock import patch
 
 import tiktoken
 
-from src.chunker import (
+from vault_rag.chunker import (
     chunk_markdown,
     contextualize_chunk,
     extract_literal_title,
     generate_document_summary,
 )
-from src.config import CHUNK_MAX_TOKENS, CHUNK_MIN_TOKENS
+from vault_rag.config import CHUNK_MAX_TOKENS, CHUNK_MIN_TOKENS
 
 
 def _make_long_markdown(n_sections: int = 10, words_per_section: int = 400) -> str:
@@ -140,10 +140,10 @@ def test_document_summary_chunk_carries_literal_title():
     with (
         tempfile.TemporaryDirectory() as tmp,
         patch(
-            "src.chunker.generate_document_summary",
+            "vault_rag.chunker.generate_document_summary",
             return_value="This document is a procurement policy.",
         ),
-        patch("src.chunker.contextualize_chunk", return_value="context"),
+        patch("vault_rag.chunker.contextualize_chunk", return_value="context"),
     ):
         chunks = chunk_markdown(
             md,
@@ -298,11 +298,11 @@ def test_error_context_never_reaches_vector_text():
     with (
         tempfile.TemporaryDirectory() as tmp,
         patch(
-            "src.chunker.contextualize_chunk",
+            "vault_rag.chunker.contextualize_chunk",
             side_effect=lambda *a, **k: "Error: 429 rate limited",
         ),
         patch(
-            "src.chunker.generate_document_summary",
+            "vault_rag.chunker.generate_document_summary",
             side_effect=lambda *a, **k: "A summary.",
         ),
     ):

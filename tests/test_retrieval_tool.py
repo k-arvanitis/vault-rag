@@ -8,8 +8,12 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from src.tools import retrieval_tool
-from src.tools.retrieval_tool import FORCED_DOC_ID, FORCED_MODALITY, _make_unified_tool
+from vault_rag.tools import retrieval_tool
+from vault_rag.tools.retrieval_tool import (
+    FORCED_DOC_ID,
+    FORCED_MODALITY,
+    _make_unified_tool,
+)
 
 
 class FakeRanker:

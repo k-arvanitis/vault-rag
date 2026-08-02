@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from src.tools.excel import (
+from vault_rag.tools.excel import (
     _answer_in_result,
     _build_inner_graph,
     _column_matches_question,
@@ -153,7 +153,7 @@ class TestFabricationGuard:
             # evaluate's FORMAT turn: fabricate a value not in the result.
             return "150.00"
 
-        monkeypatch.setattr("src.tools.excel._llm_chat", fake_llm_chat)
+        monkeypatch.setattr("vault_rag.tools.excel._llm_chat", fake_llm_chat)
         inner = _build_inner_graph(_FakeStore())
         state = {
             "question": "What is the purchase of expenditure?",
@@ -205,14 +205,14 @@ class TestQueryExcelCitations:
         return "VALUE1"
 
     def test_shared_table_gets_exactly_one_citation(self, monkeypatch):
-        monkeypatch.setattr("src.tools.excel.EXCEL_AGENT_API_KEY", "fake-key")
-        monkeypatch.setattr("src.tools.excel._llm_chat", self._fake_llm_chat)
+        monkeypatch.setattr("vault_rag.tools.excel.EXCEL_AGENT_API_KEY", "fake-key")
+        monkeypatch.setattr("vault_rag.tools.excel._llm_chat", self._fake_llm_chat)
         monkeypatch.setattr(
-            "src.tools.excel._doc_tables",
+            "vault_rag.tools.excel._doc_tables",
             lambda store: {"doc_006_t1": ["Amount"]},
         )
         monkeypatch.setattr(
-            "src.tools.excel.get_source_by_duckdb_table",
+            "vault_rag.tools.excel.get_source_by_duckdb_table",
             lambda url, collection, table: {
                 "source_file": "doc_006_transactions.xlsx",
                 "sheet_name": "DataAnalysis",
@@ -227,9 +227,9 @@ class TestQueryExcelCitations:
         assert artifact["citations"][0]["source_file"] == "doc_006_transactions.xlsx"
 
     def test_two_distinct_tables_get_two_citations(self, monkeypatch):
-        monkeypatch.setattr("src.tools.excel.EXCEL_AGENT_API_KEY", "fake-key")
+        monkeypatch.setattr("vault_rag.tools.excel.EXCEL_AGENT_API_KEY", "fake-key")
         monkeypatch.setattr(
-            "src.tools.excel._doc_tables",
+            "vault_rag.tools.excel._doc_tables",
             lambda store: {"doc_006_t1": ["Amount"], "doc_007_t2": ["Amount"]},
         )
         sources = {
@@ -237,7 +237,7 @@ class TestQueryExcelCitations:
             "doc_007_t2": {"source_file": "doc_007.csv", "sheet_name": "S2"},
         }
         monkeypatch.setattr(
-            "src.tools.excel.get_source_by_duckdb_table",
+            "vault_rag.tools.excel.get_source_by_duckdb_table",
             lambda url, collection, table: dict(sources[table]),
         )
 
@@ -253,7 +253,7 @@ class TestQueryExcelCitations:
                 return f'```sql\nSELECT "Amount" FROM {table};\n```'
             return "VALUE1"
 
-        monkeypatch.setattr("src.tools.excel._llm_chat", fake_llm_chat)
+        monkeypatch.setattr("vault_rag.tools.excel._llm_chat", fake_llm_chat)
         tool = build_excel_agent_tools(self._FakeStore())[0]
         answer, artifact = tool.func(
             "What is the Amount in doc_006? And in doc_007?"
@@ -272,13 +272,13 @@ class TestQueryExcelCitations:
         WHERE clause's own filter literal ("MATERIALS") DOES appear verbatim
         in every real matching row, so quoting that instead gives the
         highlighter something genuine to find."""
-        monkeypatch.setattr("src.tools.excel.EXCEL_AGENT_API_KEY", "fake-key")
+        monkeypatch.setattr("vault_rag.tools.excel.EXCEL_AGENT_API_KEY", "fake-key")
         monkeypatch.setattr(
-            "src.tools.excel._doc_tables",
+            "vault_rag.tools.excel._doc_tables",
             lambda store: {"doc_006_t1": ["NET Amount", "Purchase of Expenditure"]},
         )
         monkeypatch.setattr(
-            "src.tools.excel.get_source_by_duckdb_table",
+            "vault_rag.tools.excel.get_source_by_duckdb_table",
             lambda url, collection, table: {
                 "source_file": "doc_006_transactions.xlsx",
                 "sheet_name": "DataAnalysis",
@@ -296,7 +296,7 @@ class TestQueryExcelCitations:
                 )
             return "12976.92"
 
-        monkeypatch.setattr("src.tools.excel._llm_chat", fake_llm_chat)
+        monkeypatch.setattr("vault_rag.tools.excel._llm_chat", fake_llm_chat)
         tool = build_excel_agent_tools(self._FakeStore())[0]
         answer, artifact = tool.func(
             "What is the total NET Amount spent on MATERIALS across all transactions?"
@@ -310,13 +310,13 @@ class TestQueryExcelCitations:
         """A point lookup (no SUM/COUNT/...) must keep the existing
         behavior -- the result text IS a real row's value there, so
         rewriting the quote would only make things worse."""
-        monkeypatch.setattr("src.tools.excel.EXCEL_AGENT_API_KEY", "fake-key")
+        monkeypatch.setattr("vault_rag.tools.excel.EXCEL_AGENT_API_KEY", "fake-key")
         monkeypatch.setattr(
-            "src.tools.excel._doc_tables",
+            "vault_rag.tools.excel._doc_tables",
             lambda store: {"doc_006_t1": ["Amount"]},
         )
         monkeypatch.setattr(
-            "src.tools.excel.get_source_by_duckdb_table",
+            "vault_rag.tools.excel.get_source_by_duckdb_table",
             lambda url, collection, table: {
                 "source_file": "doc_006_transactions.xlsx",
                 "sheet_name": "DataAnalysis",
@@ -331,7 +331,7 @@ class TestQueryExcelCitations:
                 return '```sql\nSELECT "Amount" FROM t1;\n```'
             return "VALUE1"
 
-        monkeypatch.setattr("src.tools.excel._llm_chat", fake_llm_chat)
+        monkeypatch.setattr("vault_rag.tools.excel._llm_chat", fake_llm_chat)
         tool = build_excel_agent_tools(self._FakeStore())[0]
         answer, artifact = tool.func("What is the Amount?")
         citation = artifact["citations"][0]

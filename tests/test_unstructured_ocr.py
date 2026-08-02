@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import numpy as np
 
-from src.ingestion.unstructured_ocr import call_unstructured_ocr
+from vault_rag.ingestion.unstructured_ocr import call_unstructured_ocr
 
 
 class _FakePix:

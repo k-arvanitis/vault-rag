@@ -1,7 +1,7 @@
 """Unit tests for SQL-literal rewriting helpers in src/duckdb_store.py."""
 from __future__ import annotations
 
-from src.duckdb_store import _normalize_special_chars_ilike
+from vault_rag.duckdb_store import _normalize_special_chars_ilike
 
 
 def test_normalizes_ampersand_to_match_and_variant():

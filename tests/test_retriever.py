@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from src.retriever import (
+from vault_rag.retriever import (
     _cosine_similarity,
     _metadata_filter,
     _text_filter,
@@ -120,7 +120,7 @@ class TestRetrieveFromJson:
         p.write_text(json.dumps(rows), encoding="utf-8")
         return p
 
-    @patch("src.retriever._ollama_embed_query")
+    @patch("vault_rag.retriever._ollama_embed_query")
     def test_returns_top_k_results(self, mock_embed):
         mock_embed.return_value = self._FAKE_EMBED
         rows = [
@@ -137,7 +137,7 @@ class TestRetrieveFromJson:
             results = retrieve("q", embeddings_path=path, top_k=3, use_qdrant=False)
         assert len(results) == 3
 
-    @patch("src.retriever._ollama_embed_query")
+    @patch("vault_rag.retriever._ollama_embed_query")
     def test_results_sorted_by_score_descending(self, mock_embed):
         mock_embed.return_value = [1.0, 0.0]
         rows = [
@@ -159,7 +159,7 @@ class TestRetrieveFromJson:
             results = retrieve("q", embeddings_path=path, top_k=2, use_qdrant=False)
         assert results[0]["id"] == "high"
 
-    @patch("src.retriever._ollama_embed_query")
+    @patch("vault_rag.retriever._ollama_embed_query")
     def test_empty_json_returns_empty_list(self, mock_embed):
         mock_embed.return_value = self._FAKE_EMBED
         with tempfile.TemporaryDirectory() as tmp:
@@ -167,7 +167,7 @@ class TestRetrieveFromJson:
             results = retrieve("q", embeddings_path=path, top_k=5, use_qdrant=False)
         assert results == []
 
-    @patch("src.retriever._ollama_embed_query")
+    @patch("vault_rag.retriever._ollama_embed_query")
     def test_rows_without_embedding_skipped(self, mock_embed):
         mock_embed.return_value = self._FAKE_EMBED
         rows = [
@@ -185,7 +185,7 @@ class TestRetrieveFromJson:
         assert len(results) == 1
         assert results[0]["id"] == "2"
 
-    @patch("src.retriever._ollama_embed_query")
+    @patch("vault_rag.retriever._ollama_embed_query")
     def test_result_has_required_keys(self, mock_embed):
         mock_embed.return_value = [1.0, 0.0]
         rows = [
@@ -234,9 +234,9 @@ class TestRetrieveFromQdrant:
         },
     ]
 
-    @patch("src.retriever._collection_has_sparse", return_value=False)
-    @patch("src.retriever._qdrant_search")
-    @patch("src.retriever._ollama_embed_query")
+    @patch("vault_rag.retriever._collection_has_sparse", return_value=False)
+    @patch("vault_rag.retriever._qdrant_search")
+    @patch("vault_rag.retriever._ollama_embed_query")
     def test_dense_search_returns_mapped_hits(self, mock_embed, mock_search, _):
         mock_embed.return_value = self._FAKE_EMBED
         mock_search.return_value = self._QDRANT_POINTS
@@ -246,13 +246,13 @@ class TestRetrieveFromQdrant:
         assert results[0]["content"] == "first chunk"
         assert results[0]["score"] == 0.9
 
-    @patch("src.retriever._collection_has_sparse", return_value=True)
-    @patch("src.retriever._qdrant_hybrid_search")
-    @patch("src.retriever._ollama_embed_query")
+    @patch("vault_rag.retriever._collection_has_sparse", return_value=True)
+    @patch("vault_rag.retriever._qdrant_hybrid_search")
+    @patch("vault_rag.retriever._ollama_embed_query")
     def test_hybrid_search_used_when_sparse_present(self, mock_embed, mock_hybrid, _):
         mock_embed.return_value = self._FAKE_EMBED
         mock_hybrid.return_value = self._QDRANT_POINTS
-        with patch("src.sparse_embedder.get_sparse_embedder") as mock_sparse_cls:
+        with patch("vault_rag.sparse_embedder.get_sparse_embedder") as mock_sparse_cls:
             mock_sparse = MagicMock()
             mock_sparse.embed.return_value = ([0, 1], [0.5, 0.5])
             mock_sparse_cls.return_value = mock_sparse
@@ -260,9 +260,9 @@ class TestRetrieveFromQdrant:
         mock_hybrid.assert_called_once()
         assert len(results) == 2
 
-    @patch("src.retriever._collection_has_sparse", return_value=False)
-    @patch("src.retriever._qdrant_search")
-    @patch("src.retriever._ollama_embed_query")
+    @patch("vault_rag.retriever._collection_has_sparse", return_value=False)
+    @patch("vault_rag.retriever._qdrant_search")
+    @patch("vault_rag.retriever._ollama_embed_query")
     def test_scoped_retrieval_with_results_issues_one_search(
         self, mock_embed, mock_search, _
     ):
@@ -279,10 +279,10 @@ class TestRetrieveFromQdrant:
         assert len(results) == 2
         mock_search.assert_called_once()
 
-    @patch("src.retriever._qdrant_scroll_filter", return_value=[])
-    @patch("src.retriever._collection_has_sparse", return_value=False)
-    @patch("src.retriever._qdrant_search")
-    @patch("src.retriever._ollama_embed_query")
+    @patch("vault_rag.retriever._qdrant_scroll_filter", return_value=[])
+    @patch("vault_rag.retriever._collection_has_sparse", return_value=False)
+    @patch("vault_rag.retriever._qdrant_search")
+    @patch("vault_rag.retriever._ollama_embed_query")
     def test_scoped_retrieval_empty_with_filter_token_retries_once(
         self, mock_embed, mock_search, _, __
     ):
@@ -337,9 +337,9 @@ class TestTermCountSortGate:
         },
     ]
 
-    @patch("src.retriever._collection_has_sparse", return_value=False)
-    @patch("src.retriever._qdrant_search")
-    @patch("src.retriever._ollama_embed_query")
+    @patch("vault_rag.retriever._collection_has_sparse", return_value=False)
+    @patch("vault_rag.retriever._qdrant_search")
+    @patch("vault_rag.retriever._ollama_embed_query")
     def test_prose_query_keeps_fusion_order(self, mock_embed, mock_search, _):
         mock_embed.return_value = [0.1, 0.2]
         mock_search.return_value = self._POINTS
@@ -352,10 +352,10 @@ class TestTermCountSortGate:
         # over-fetch still fires even though the sort is gated off
         assert mock_search.call_args.kwargs["top_k"] == 100
 
-    @patch("src.retriever._qdrant_scroll_filter", return_value=[])
-    @patch("src.retriever._collection_has_sparse", return_value=False)
-    @patch("src.retriever._qdrant_search")
-    @patch("src.retriever._ollama_embed_query")
+    @patch("vault_rag.retriever._qdrant_scroll_filter", return_value=[])
+    @patch("vault_rag.retriever._collection_has_sparse", return_value=False)
+    @patch("vault_rag.retriever._qdrant_search")
+    @patch("vault_rag.retriever._ollama_embed_query")
     def test_id_shaped_query_triggers_term_sort(
         self, mock_embed, mock_search, _, __
     ):
@@ -370,9 +370,9 @@ class TestTermCountSortGate:
         assert [r["id"] for r in results] == ["chunk-B", "chunk-A"]
         assert mock_search.call_args.kwargs["top_k"] == 100
 
-    @patch("src.retriever._collection_has_sparse", return_value=False)
-    @patch("src.retriever._qdrant_search")
-    @patch("src.retriever._ollama_embed_query")
+    @patch("vault_rag.retriever._collection_has_sparse", return_value=False)
+    @patch("vault_rag.retriever._qdrant_search")
+    @patch("vault_rag.retriever._ollama_embed_query")
     def test_sheet_chunk_pool_triggers_term_sort_without_id_token(
         self, mock_embed, mock_search, _
     ):

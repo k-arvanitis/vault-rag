@@ -29,8 +29,8 @@ from dotenv import load_dotenv  # noqa: E402
 load_dotenv(override=True)
 
 from eval.run_eval import _exact_match_score, _load_questions_for_run  # noqa: E402
-from src.duckdb_store import DuckDBStore  # noqa: E402
-from src.tools.excel import _execute_sql, build_excel_agent_tools  # noqa: E402
+from vault_rag.duckdb_store import DuckDBStore  # noqa: E402
+from vault_rag.tools.excel import _execute_sql, build_excel_agent_tools  # noqa: E402
 
 RESULTS_PATH = REPO_ROOT / "eval" / "results" / "text2sql_eval.json"
 

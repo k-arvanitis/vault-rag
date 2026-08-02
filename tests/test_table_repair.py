@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from src.ingest import (
+from vault_rag.ingest import (
     _derive_column_names,
     _fill_empty_last_column_from_text,
     _fix_html_multirow_header,
@@ -173,7 +173,7 @@ class TestFillEmptyLastColumnFromText:
     def test_pdf_extraction_failure_leaves_markdown_intact(self):
         """If pypdf raises, the original markdown must be returned unchanged."""
         from pathlib import Path
-        with patch("src.ingest.PdfReader", side_effect=Exception("corrupt PDF")):
+        with patch("vault_rag.ingest.PdfReader", side_effect=Exception("corrupt PDF")):
             result = _fill_empty_last_column_from_text(
                 self._MARKDOWN_WITH_EMPTY_LAST,
                 Path("fake.pdf"),

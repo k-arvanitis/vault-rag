@@ -18,10 +18,15 @@ from pathlib import Path
 
 import requests
 
-from src.chunker import extract_literal_title
-from src.config import EMBED_API_BASE, OLLAMA_EMBED_MODEL, QDRANT_COLLECTION, QDRANT_URL
-from src.retriever import _ollama_embed_query
-from src.sparse_embedder import get_sparse_embedder
+from vault_rag.chunker import extract_literal_title
+from vault_rag.config import (
+    EMBED_API_BASE,
+    OLLAMA_EMBED_MODEL,
+    QDRANT_COLLECTION,
+    QDRANT_URL,
+)
+from vault_rag.retriever import _ollama_embed_query
+from vault_rag.sparse_embedder import get_sparse_embedder
 
 PROCESSED_DIR = Path(__file__).resolve().parents[1] / "data/output/processed"
 _TITLE_LINE_RE = re.compile(r"\nTitle: [^\n]*")

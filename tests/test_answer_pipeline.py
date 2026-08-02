@@ -5,7 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from src.answer_pipeline import (
+from vault_rag.answer_pipeline import (
     _TITLE_QUESTION_RE,
     _condense_followup_question,
     _excel_citations_to_sources,
@@ -22,7 +22,7 @@ from src.answer_pipeline import (
     stream_answer,
     strip_leaked_headers,
 )
-from src.rag_agent import FinalCorrection
+from vault_rag.rag_agent import FinalCorrection
 
 
 def _summary_hit(title: str, file_name: str = "doc_001_procurement_policy.md") -> dict:
@@ -57,7 +57,7 @@ class TestTitleShortcutAnswer:
 
     def test_extracts_title_line_from_document_summary_hit(self):
         with patch(
-            "src.answer_pipeline.retrieve",
+            "vault_rag.answer_pipeline.retrieve",
             return_value=[
                 _summary_hit("POLICY FOR THE PROCUREMENT OF GOODS AND SERVICES (PGS)")
             ],
@@ -75,14 +75,14 @@ class TestTitleShortcutAnswer:
             "metadata": {"file_name": "doc_002.md"},
             "score": 0.9,
         }
-        with patch("src.answer_pipeline.retrieve", return_value=[no_title_hit]):
+        with patch("vault_rag.answer_pipeline.retrieve", return_value=[no_title_hit]):
             assert _title_shortcut_answer("What is the title of this document?") is None
 
     def test_answer_query_bypasses_the_agent_entirely(self):
         """agent=None would crash any code path that touches the agent -- if this
         returns cleanly, the shortcut never reached the normal answer flow."""
         with patch(
-            "src.answer_pipeline.retrieve",
+            "vault_rag.answer_pipeline.retrieve",
             return_value=[
                 _summary_hit("CUSTOMER INVOICE", "doc_005_fueling_records_invoice.md")
             ],
@@ -644,8 +644,8 @@ class TestStreamAnswer:
             yield "world."
 
         with (
-            patch("src.answer_pipeline.route_question", return_value={}),
-            patch("src.answer_pipeline.stream_agent", side_effect=fake_stream_agent),
+            patch("vault_rag.answer_pipeline.route_question", return_value={}),
+            patch("vault_rag.answer_pipeline.stream_agent", side_effect=fake_stream_agent),
         ):
             events = list(stream_answer(agent=object(), question="What is X?"))
 
@@ -667,8 +667,8 @@ class TestStreamAnswer:
             yield FinalCorrection("The corrected, complete answer.")
 
         with (
-            patch("src.answer_pipeline.route_question", return_value={}),
-            patch("src.answer_pipeline.stream_agent", side_effect=fake_stream_agent),
+            patch("vault_rag.answer_pipeline.route_question", return_value={}),
+            patch("vault_rag.answer_pipeline.stream_agent", side_effect=fake_stream_agent),
         ):
             events = list(stream_answer(agent=object(), question="What is X?"))
 
@@ -688,8 +688,8 @@ class TestStreamAnswer:
             yield "An answer."
 
         with (
-            patch("src.answer_pipeline.route_question", return_value={}),
-            patch("src.answer_pipeline.stream_agent", side_effect=fake_stream_agent),
+            patch("vault_rag.answer_pipeline.route_question", return_value={}),
+            patch("vault_rag.answer_pipeline.stream_agent", side_effect=fake_stream_agent),
         ):
             list(stream_answer(agent=object(), question="What is X?"))
 
@@ -705,10 +705,10 @@ class TestStreamAnswer:
             yield "Unsupported"
 
         with (
-            patch("src.answer_pipeline.route_question", return_value={}),
-            patch("src.answer_pipeline.stream_agent", side_effect=fake_stream_agent),
+            patch("vault_rag.answer_pipeline.route_question", return_value={}),
+            patch("vault_rag.answer_pipeline.stream_agent", side_effect=fake_stream_agent),
             patch(
-                "src.answer_pipeline.run_once",
+                "vault_rag.answer_pipeline.run_once",
                 return_value=(
                     "The real answer.",
                     [],
@@ -732,7 +732,7 @@ class TestStreamAnswer:
             "tools": ["search_knowledge_base"],
             "rejected_sources": [],
         }
-        with patch("src.answer_pipeline.answer_query", return_value=canned) as mock_aq:
+        with patch("vault_rag.answer_pipeline.answer_query", return_value=canned) as mock_aq:
             events = list(
                 stream_answer(
                     agent=object(),
@@ -752,7 +752,7 @@ class TestStreamAnswer:
             "tools": [],
             "rejected_sources": [],
         }
-        with patch("src.answer_pipeline.answer_query", return_value=canned) as mock_aq:
+        with patch("vault_rag.answer_pipeline.answer_query", return_value=canned) as mock_aq:
             events = list(
                 stream_answer(
                     agent=object(),
@@ -806,14 +806,14 @@ class TestComparisonSkipsGroundingCheck:
 
     def test_comparison_question_skips_grounding_check(self):
         with patch(
-            "src.answer_pipeline.run_once", return_value=("An answer.", [], {})
+            "vault_rag.answer_pipeline.run_once", return_value=("An answer.", [], {})
         ) as mock_run_once:
             answer_one(agent=object(), question="Compare doc_009 and doc_010")
         assert mock_run_once.call_args.kwargs["skip_grounding_check"] is True
 
     def test_non_comparison_question_runs_grounding_check(self):
         with patch(
-            "src.answer_pipeline.run_once", return_value=("An answer.", [], {})
+            "vault_rag.answer_pipeline.run_once", return_value=("An answer.", [], {})
         ) as mock_run_once:
             answer_one(agent=object(), question="What is the total invoice amount?")
         assert mock_run_once.call_args.kwargs["skip_grounding_check"] is False
@@ -827,9 +827,9 @@ class TestForcedDocScope:
 
     def test_forced_pdf_doc_id_routes_to_search_knowledge_base(self):
         with (
-            patch("src.answer_pipeline.route_question") as mock_route,
+            patch("vault_rag.answer_pipeline.route_question") as mock_route,
             patch(
-                "src.answer_pipeline.run_once",
+                "vault_rag.answer_pipeline.run_once",
                 return_value=("An answer.", [], {}),
             ) as mock_run_once,
         ):
@@ -845,9 +845,9 @@ class TestForcedDocScope:
 
     def test_forced_spreadsheet_doc_id_routes_to_query_excel(self):
         with (
-            patch("src.answer_pipeline.route_question") as mock_route,
+            patch("vault_rag.answer_pipeline.route_question") as mock_route,
             patch(
-                "src.answer_pipeline.run_once",
+                "vault_rag.answer_pipeline.run_once",
                 return_value=("An answer.", [], {}),
             ) as mock_run_once,
         ):
@@ -865,7 +865,7 @@ class TestForcedDocScope:
         also resolve excel modality -- verified live: the routing directive
         alone didn't stop the agent from calling search_knowledge_base anyway.
         FORCED_MODALITY must be set for the run_once call in this case too."""
-        from src.tools.retrieval_tool import FORCED_MODALITY
+        from vault_rag.tools.retrieval_tool import FORCED_MODALITY
 
         seen_modality = {}
 
@@ -875,10 +875,10 @@ class TestForcedDocScope:
 
         with (
             patch(
-                "src.answer_pipeline.route_question",
+                "vault_rag.answer_pipeline.route_question",
                 return_value={"modality": "excel", "source_file": "doc_006.xlsx"},
             ),
-            patch("src.answer_pipeline.run_once", side_effect=fake_run_once),
+            patch("vault_rag.answer_pipeline.run_once", side_effect=fake_run_once),
         ):
             answer_one(agent=object(), question="What's the total spend?")
         assert seen_modality["value"] == "excel"
@@ -888,9 +888,9 @@ class TestForcedDocScope:
         """The title shortcut's own retrieve() call isn't scoped to a document,
         so it must not short-circuit a scoped query."""
         with (
-            patch("src.answer_pipeline._title_shortcut_answer") as mock_shortcut,
+            patch("vault_rag.answer_pipeline._title_shortcut_answer") as mock_shortcut,
             patch(
-                "src.answer_pipeline.answer_one",
+                "vault_rag.answer_pipeline.answer_one",
                 return_value=("An answer.", [], {}),
             ),
         ):
@@ -921,9 +921,9 @@ class TestComparisonMissingMentionedDocRetry:
 
     def test_missing_named_doc_triggers_retry_regardless_of_answer_wording(self):
         with (
-            patch("src.answer_pipeline.parse_sources") as mock_parse,
+            patch("vault_rag.answer_pipeline.parse_sources") as mock_parse,
             patch(
-                "src.answer_pipeline.run_once",
+                "vault_rag.answer_pipeline.run_once",
                 side_effect=[
                     (
                         "doc_010 says leave is unpaid. No details about leave "
@@ -959,9 +959,9 @@ class TestComparisonMissingMentionedDocRetry:
 
     def test_no_retry_when_both_named_docs_covered(self):
         with (
-            patch("src.answer_pipeline.parse_sources") as mock_parse,
+            patch("vault_rag.answer_pipeline.parse_sources") as mock_parse,
             patch(
-                "src.answer_pipeline.run_once",
+                "vault_rag.answer_pipeline.run_once",
                 return_value=("doc_009: a. doc_010: b.", [], {}),
             ) as mock_run_once,
         ):
@@ -985,9 +985,9 @@ class TestComparisonMissingMentionedDocRetry:
         to see that doc_010 has no evidence and retry -- this fails on the
         pre-M-7 code, which ignores resolved_doc_ids entirely."""
         with (
-            patch("src.answer_pipeline.parse_sources") as mock_parse,
+            patch("vault_rag.answer_pipeline.parse_sources") as mock_parse,
             patch(
-                "src.answer_pipeline.run_once",
+                "vault_rag.answer_pipeline.run_once",
                 side_effect=[
                     (
                         "The HR manual covers paid leave in detail.",
@@ -1034,9 +1034,9 @@ class TestComparisonPartialUnsupportedRetry:
 
     def test_partial_unsupported_with_two_sources_triggers_retry(self):
         with (
-            patch("src.answer_pipeline.parse_sources") as mock_parse,
+            patch("vault_rag.answer_pipeline.parse_sources") as mock_parse,
             patch(
-                "src.answer_pipeline.run_once",
+                "vault_rag.answer_pipeline.run_once",
                 side_effect=[
                     ("doc_009: Unsupported\ndoc_010: real answer.", [], {}),
                     ("doc_009: a real answer.\ndoc_010: real answer.", [], {}),
@@ -1058,9 +1058,9 @@ class TestComparisonPartialUnsupportedRetry:
 
     def test_no_retry_when_no_unsupported_fragment(self):
         with (
-            patch("src.answer_pipeline.parse_sources") as mock_parse,
+            patch("vault_rag.answer_pipeline.parse_sources") as mock_parse,
             patch(
-                "src.answer_pipeline.run_once",
+                "vault_rag.answer_pipeline.run_once",
                 return_value=("doc_009: a. doc_010: b.", [], {}),
             ) as mock_run_once,
         ):
@@ -1078,9 +1078,9 @@ class TestComparisonPartialUnsupportedRetry:
         """If the retry doesn't actually fix it, keep the first answer rather
         than silently swapping in an equally-broken retry."""
         with (
-            patch("src.answer_pipeline.parse_sources") as mock_parse,
+            patch("vault_rag.answer_pipeline.parse_sources") as mock_parse,
             patch(
-                "src.answer_pipeline.run_once",
+                "vault_rag.answer_pipeline.run_once",
                 side_effect=[
                     ("doc_009: Unsupported\ndoc_010: real answer.", [], {}),
                     ("doc_009: Unsupported\ndoc_010: real answer.", [], {}),
@@ -1199,7 +1199,7 @@ class TestResolveComparisonDocIds:
     def test_llm_fallback_not_consulted_without_catalogue(self):
         """catalogue/api_base/model_name all default to None -- the LLM step
         must not be reachable unless a caller explicitly wires it in."""
-        with patch("src.answer_pipeline._llm_call") as mock_call:
+        with patch("vault_rag.answer_pipeline._llm_call") as mock_call:
             result = _resolve_comparison_doc_ids(
                 "Which document identifies 42 new topic areas?", None, {}
             )
@@ -1220,7 +1220,7 @@ class TestResolveComparisonDocIdsLlm:
             'ANSWER: doc_001 ("Annual Procurement Policy"), '
             'doc_002 ("Q1 Purchase Card Transactions")'
         )
-        with patch("src.answer_pipeline._llm_call", return_value=reply):
+        with patch("vault_rag.answer_pipeline._llm_call", return_value=reply):
             result = _resolve_comparison_doc_ids_llm(
                 "Compare the procurement policy and the card transactions report",
                 _CATALOGUE,
@@ -1238,7 +1238,7 @@ class TestResolveComparisonDocIdsLlm:
             'ANSWER: doc_001 ("42 new topic areas"), '
             'doc_002 ("Llano Airport transactions")'
         )
-        with patch("src.answer_pipeline._llm_call", return_value=reply):
+        with patch("vault_rag.answer_pipeline._llm_call", return_value=reply):
             result = _resolve_comparison_doc_ids_llm(
                 "Which document identifies 42 new topic areas, and which "
                 "covers Llano Airport transactions?",
@@ -1249,7 +1249,7 @@ class TestResolveComparisonDocIdsLlm:
         assert result is None
 
     def test_explicit_none_falls_back_cleanly(self):
-        with patch("src.answer_pipeline._llm_call", return_value="ANSWER: NONE"):
+        with patch("vault_rag.answer_pipeline._llm_call", return_value="ANSWER: NONE"):
             result = _resolve_comparison_doc_ids_llm(
                 "Compare the two most recent versions of the contract",
                 _CATALOGUE,
@@ -1260,7 +1260,7 @@ class TestResolveComparisonDocIdsLlm:
 
     def test_llm_failure_falls_back_cleanly(self):
         with patch(
-            "src.answer_pipeline._llm_call", side_effect=RuntimeError("timeout")
+            "vault_rag.answer_pipeline._llm_call", side_effect=RuntimeError("timeout")
         ):
             result = _resolve_comparison_doc_ids_llm(
                 "Compare doc_001 and doc_002", _CATALOGUE, "http://fake-llm/v1", "fake-model"
@@ -1274,7 +1274,7 @@ class TestResolveComparisonDocIdsLlm:
             'ANSWER: doc_001 ("Annual Procurement Policy"), '
             'doc_002 ("Q1 Purchase Card Transactions")'
         )
-        with patch("src.answer_pipeline._llm_call", return_value=reply):
+        with patch("vault_rag.answer_pipeline._llm_call", return_value=reply):
             result = _resolve_comparison_doc_ids(
                 "Compare the procurement policy and the card transactions report",
                 None,
@@ -1410,9 +1410,9 @@ class TestAnswerQueryComparisonRouting:
         comparison language must not be forced through the deterministic
         comparison path -- it isn't asking for a comparison at all."""
         with (
-            patch("src.answer_pipeline.answer_comparison_deterministic") as mock_det,
+            patch("vault_rag.answer_pipeline.answer_comparison_deterministic") as mock_det,
             patch(
-                "src.answer_pipeline.answer_one", return_value=("An answer.", [], {})
+                "vault_rag.answer_pipeline.answer_one", return_value=("An answer.", [], {})
             ),
         ):
             answer_query(
@@ -1424,7 +1424,7 @@ class TestAnswerQueryComparisonRouting:
     def test_comparison_question_tries_deterministic_path_first(self):
         with (
             patch(
-                "src.answer_pipeline.answer_comparison_deterministic",
+                "vault_rag.answer_pipeline.answer_comparison_deterministic",
                 return_value={
                     "answer": "det answer",
                     "sources": [],
@@ -1434,7 +1434,7 @@ class TestAnswerQueryComparisonRouting:
                     "collected": [],
                 },
             ) as mock_det,
-            patch("src.answer_pipeline.answer_one") as mock_answer_one,
+            patch("vault_rag.answer_pipeline.answer_one") as mock_answer_one,
         ):
             result = answer_query(
                 agent=object(),
@@ -1448,10 +1448,10 @@ class TestAnswerQueryComparisonRouting:
         chunk = "[1] file=doc_001.pdf chunk=0 score=0.9\nSome content."
         with (
             patch(
-                "src.answer_pipeline.answer_comparison_deterministic", return_value=None
+                "vault_rag.answer_pipeline.answer_comparison_deterministic", return_value=None
             ),
             patch(
-                "src.answer_pipeline.answer_one",
+                "vault_rag.answer_pipeline.answer_one",
                 return_value=("fallback answer", [chunk], {}),
             ) as mock_answer_one,
         ):
@@ -1487,7 +1487,7 @@ class TestSinglePartExcelAnswerGetsMarker:
                 },
             )
 
-        with patch("src.answer_pipeline.answer_one", side_effect=fake_answer_one):
+        with patch("vault_rag.answer_pipeline.answer_one", side_effect=fake_answer_one):
             result = answer_query(
                 agent=object(),
                 question="What is the total NET Amount spent on MATERIALS?",
@@ -1517,7 +1517,7 @@ class TestMultiPartAnswerCitations:
                 return "$297 billion [1]", [part_a_chunk], {}
             return "42 [1]", [part_b_chunk], {}
 
-        with patch("src.answer_pipeline.answer_one", side_effect=fake_answer_one):
+        with patch("vault_rag.answer_pipeline.answer_one", side_effect=fake_answer_one):
             result = answer_query(
                 agent=object(),
                 question=(
@@ -1569,7 +1569,7 @@ class TestMultiPartAnswerCitations:
                 },
             )
 
-        with patch("src.answer_pipeline.answer_one", side_effect=fake_answer_one):
+        with patch("vault_rag.answer_pipeline.answer_one", side_effect=fake_answer_one):
             result = answer_query(
                 agent=object(),
                 question=(
@@ -1599,7 +1599,7 @@ class TestNoEvidenceForcesUnsupported:
 
     def test_ungrounded_answer_with_no_chunks_becomes_unsupported(self):
         with patch(
-            "src.answer_pipeline.answer_one",
+            "vault_rag.answer_pipeline.answer_one",
             return_value=("2025", [], {}),
         ):
             result = answer_query(
@@ -1617,7 +1617,7 @@ class TestNoEvidenceForcesUnsupported:
             "employee conduct, travel—should be summarized?"
         )
         with patch(
-            "src.answer_pipeline.answer_one",
+            "vault_rag.answer_pipeline.answer_one",
             return_value=(clarifying, [], {}),
         ):
             result = answer_query(
@@ -1634,7 +1634,7 @@ class TestNoEvidenceForcesUnsupported:
         `collected`, but zero real sources once parsed. Must still refuse,
         not just when `collected` is literally []."""
         with patch(
-            "src.answer_pipeline.answer_one",
+            "vault_rag.answer_pipeline.answer_one",
             return_value=("2025", ["No relevant results found."], {}),
         ):
             result = answer_query(
@@ -1646,7 +1646,7 @@ class TestNoEvidenceForcesUnsupported:
     def test_grounded_answer_with_real_chunks_is_unaffected(self):
         chunk = "[1] file=doc_011.xlsx chunk=0 score=0.9\nTitle: 2025 Questionnaire"
         with patch(
-            "src.answer_pipeline.answer_one",
+            "vault_rag.answer_pipeline.answer_one",
             return_value=("2025 [1]", [chunk], {}),
         ):
             result = answer_query(
@@ -1660,7 +1660,7 @@ class TestNoEvidenceForcesUnsupported:
         `collected` chunks is the normal, expected shape for it, not a sign
         of a groundless answer."""
         with patch(
-            "src.answer_pipeline.answer_one",
+            "vault_rag.answer_pipeline.answer_one",
             return_value=("42", [], {"sql": ["SELECT 42"]}),
         ):
             result = answer_query(agent=object(), question="What is the total?")
@@ -1668,7 +1668,7 @@ class TestNoEvidenceForcesUnsupported:
 
     def test_already_unsupported_with_no_chunks_stays_unsupported(self):
         with patch(
-            "src.answer_pipeline.answer_one",
+            "vault_rag.answer_pipeline.answer_one",
             return_value=("Unsupported", [], {}),
         ):
             result = answer_query(
@@ -1686,7 +1686,7 @@ _FAKE_AGENT = SimpleNamespace(
 class TestCondenseFollowupQuestion:
     def test_no_history_is_a_noop(self):
         """eval/run_eval.py never passes history -- must not call the LLM at all."""
-        with patch("src.answer_pipeline._llm_call") as mock_call:
+        with patch("vault_rag.answer_pipeline._llm_call") as mock_call:
             result = _condense_followup_question(
                 "Who must that notice be given to?", None, _FAKE_AGENT
             )
@@ -1697,7 +1697,7 @@ class TestCondenseFollowupQuestion:
         """No agent (or one missing _generation_api_base/_generation_model,
         e.g. a bare `object()` used in other tests) must not call the LLM."""
         history = [{"question": "q", "answer": "a"}]
-        with patch("src.answer_pipeline._llm_call") as mock_call:
+        with patch("vault_rag.answer_pipeline._llm_call") as mock_call:
             result = _condense_followup_question(
                 "Who must that notice be given to?", history, object()
             )
@@ -1712,7 +1712,7 @@ class TestCondenseFollowupQuestion:
             }
         ]
         with patch(
-            "src.answer_pipeline._llm_call",
+            "vault_rag.answer_pipeline._llm_call",
             return_value="Who must the 180-day lease termination notice be given to?",
         ):
             result = _condense_followup_question(
@@ -1722,7 +1722,7 @@ class TestCondenseFollowupQuestion:
 
     def test_falls_back_to_raw_question_on_llm_failure(self):
         with patch(
-            "src.answer_pipeline._llm_call",
+            "vault_rag.answer_pipeline._llm_call",
             side_effect=RuntimeError("connection refused"),
         ):
             result = _condense_followup_question(
@@ -1734,7 +1734,7 @@ class TestCondenseFollowupQuestion:
 
     def test_falls_back_to_raw_question_on_malformed_rewrite(self):
         with patch(
-            "src.answer_pipeline._llm_call",
+            "vault_rag.answer_pipeline._llm_call",
             return_value='{"tool": "search_knowledge_base"}',
         ):
             result = _condense_followup_question(
