@@ -8,8 +8,49 @@
       cached answer served to a live question until the cache was cleared by hand. Real
       fix: clear (or at least invalidate affected doc_ids in) `data/query_cache.json` from
       `src/ingest.py` itself so both entry points behave the same.
-- [ ] `MITIGATION_PLAN.md`'s queued items (reranker override on cross-doc comparisons,
-      etc.) — not touched this session, still open.
+- [ ] **`docker compose build` not verified end-to-end this session.** `frontend`'s
+      `next build` passed and `frontend/.dockerignore` was fixed (missing `test-results/`,
+      `.deepeval/`, `.duckdb/`, `.ruff_cache/`, etc., now excluded). The backend `api` image
+      build (5 GB, PyTorch + reranker weights) was *not* run — skipped as too heavy for a
+      shared box — and this session didn't touch anything `Dockerfile`'s `COPY src/ / eval/ /
+      api.py` list depends on, so risk is low but unproven. Run `docker compose build` (or
+      `make docker-up`) once before actually shipping the image.
+- [ ] **`MITIGATION_PLAN.md`'s remaining items — not implemented, plan doc deleted, summary
+      kept here.** M-1/M-2/M-3/M-4/M-5/M-7 already landed (see `PROGRESS.md`'s 2026-07-30
+      part-2 entry). Still open, in priority order:
+      - **M-6 — resolve comparison documents by LLM against the doc registry, with
+        abstention.** Investigated, not solved: the registry-based resolver scored
+        8/9/12/9 correct across four sweeps (out of 15 gold cross-document questions) —
+        genuinely nondeterministic, not a bug to fix by tuning. Non-negotiable gate before
+        shipping this: ≥12/15 correct with **zero** confidently-wrong pairs (a wrong pair is
+        worse than not resolving at all, since the deterministic comparison path then
+        guarantees evidence from two wrong documents). `src/answer_pipeline.py`,
+        `_resolve_comparison_doc_ids`.
+      - **M-8 — decompose-then-retrieve, supersedes M-6.** Route-then-retrieve (M-6's
+        approach) is irreducibly probabilistic because it classifies documents before
+        seeing evidence. The alternative — decompose the question into clauses, retrieve
+        each clause *unscoped* over the whole collection, let document identity fall out of
+        the evidence — measured 3/3 correct, deterministic, zero LLM calls, on a small
+        offline test (`test_unscoped_clauses.py`, not committed). The real gap it exposed:
+        `_split_comparison_clauses` only matches the literal connector "while the other" —
+        2 of 4 test questions produced no clause split at all. Proposed change: in
+        `answer_comparison_deterministic`, stop requiring resolved doc_ids to engage;
+        decompose (reuse `_llm_split_subqueries`), retrieve each part unscoped via
+        `search_knowledge_base`, keep the union as evidence, require ≥2 distinct documents
+        before synthesizing. Removes the `FORCED_DOC_ID` resolver requirement entirely —
+        a net deletion, not just an addition. Not started.
+      - **M-7 (partially landed, one piece open)** — the corrective retry
+        (`_missing_mentioned_docs`) only fires on literal doc-id mentions in the question
+        text (≤3 of 15 gold questions), not on ids resolved by M-6/M-8 once those exist.
+        Widen the trigger to accept resolved ids from whichever of M-6/M-8 ships, then
+        re-test whether `skip_grounding_check=is_comparison` can be safely turned back on
+        (it's currently a blanket skip because the grounding judge falsely flipped ~1/3 of
+        correct comparison answers to `Unsupported` on 2026-07-15 — don't re-enable without
+        re-measuring against the exact same regression case).
+      - Full original write-up (failure-mode numbering FM-1..FM-8, root-cause evidence,
+        per-item measurement plans) is preserved in git history at
+        `MITIGATION_PLAN.md` (removed 2026-08-02 — superseded by this summary; recover via
+        `git show 36cb168:MITIGATION_PLAN.md` if the detail is needed again).
 
 ## RESOLVED (2026-07-22) — Finding 5 root-caused and fixed; reflection override defaulted off
 
