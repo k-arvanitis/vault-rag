@@ -20,7 +20,7 @@ test("a viewer is blocked from every /admin/* route", async ({ page }) => {
     })
   );
 
-  for (const path of ["/admin/sources", "/admin/quality", "/admin/feedback", "/admin/integrations/google-drive"]) {
+  for (const path of ["/admin/sources", "/admin/feedback", "/admin/integrations/google-drive"]) {
     await page.goto(path);
     await expect(page.getByText(/Admin access required/i)).toBeVisible();
     await expect(page.getByRole("button", { name: /Admin login/i })).toBeVisible();
@@ -46,7 +46,6 @@ test("an admin session reaches every admin screen and can return to chat", async
   await expect(page).toHaveURL(/\/admin\/sources$/);
 
   for (const [label, urlPart] of [
-    ["Quality", "/admin/quality"],
     ["Integrations", "/admin/integrations/google-drive"],
     ["Feedback", "/admin/feedback"],
   ] as const) {
@@ -77,7 +76,4 @@ test("old routes redirect to their /admin/* equivalents", async ({ page }) => {
 
   await page.goto("/connectors/google-drive");
   await expect(page).toHaveURL(/\/admin\/integrations\/google-drive$/);
-
-  await page.goto("/quality/evaluation");
-  await expect(page).toHaveURL(/\/admin\/quality$/);
 });

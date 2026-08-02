@@ -1,7 +1,72 @@
 # vault-rag — Progress & Plan
 
 Single source of truth. Update this at the start of every session.
-Last updated: 2026-07-30
+Last updated: 2026-08-02
+
+---
+
+## Session 2026-08-02 — pre-demo bugfix pass, demo recorded, repo finalized for packaging
+
+Demo video recorded. This session's work, now committed:
+
+- **VLM switched from Groq to OpenRouter** (`src/config.py`, `src/ingestion/vlm.py`) —
+  Groq's org was billing-restricted (`organization_delinquent`). `_call_vlm` now supports
+  either provider through the same OpenAI-compatible client; model slug changed
+  `meta-llama/llama-4-scout-17b-16e-instruct` → `meta-llama/llama-4-scout` (OpenRouter's
+  naming). Also capped `max_tokens=300` on the VLM call — it was requesting up to 65536
+  by default for a 3-sentence task, which alone could exhaust a small OpenRouter balance.
+- **VLM prompt tightened for logos/decorative graphics** — a figure that's purely a logo
+  or ornament now gets a short name only ("LACERA logo"), not a font/color/layout
+  description, so the source-inspection UI doesn't show noise for non-content images.
+- **`pymupdf4llm` table-parsing bug fixed**: `table_strategy="lines_strict"` was
+  duplicating text across cells on some layouts — a preceding paragraph's text bleeding
+  into a header row (doc_001), and text wrapping to duplicate itself across body-row
+  columns, including one fully-identical-cells row (doc_002). Fixed generally with
+  `_dedupe_duplicate_table_cells` in `src/parser/pdf_parser.py` (blanks any cell that's a
+  substring duplicate of an earlier cell in the same row) — replaces an earlier, narrower
+  header-only fix that didn't cover the doc_002 case.
+  See [[feedback_chunker_section_headers]] for the related, previously-fixed
+  chunk-merge-across-headers bug in the same file.
+- **Header-banner figures (e.g. a page-top logo) were being inserted mid-paragraph**
+  instead of at the top of the page — `pymupdf4llm`'s block ordering doesn't always match
+  visual position. Fixed in *both* image-insertion code paths in `pdf_parser.py` (the
+  main `replacements` path and the separate OCR-fallback fitz-extraction path) — a figure
+  whose bbox `y0 < 100` now gets pulled to the start of the page markdown.
+- **Frontend citation-chip line-break bug fixed**: `AnswerContent` (`MessageList.tsx`)
+  used to split the raw answer string at each `[N]` marker and feed each fragment to its
+  own `ReactMarkdown` call — a fragment starting with `- **doc_001**...` parsed alone as a
+  complete `<ul><li>` block, forcing the citation chip after it onto a new line. Rewritten
+  to a single-pass render using a `<cite data-citation="N">` placeholder + `rehype-raw`,
+  which also fixed multi-paragraph answers losing their paragraph breaks (an existing,
+  previously-undiagnosed limitation).
+- **Loading indicator replaced**: the elapsed-seconds counter + generic spinner is now a
+  shimmer-text label ("Searching and verifying sources…", `animate-text-shimmer` in
+  `globals.css`) — the elapsed-time state/effect in `ChatPanel.tsx` was removed entirely.
+- **Admin eval dashboard removed from the frontend** (`/admin/quality`, `/quality/evaluation`,
+  `EvalPanel.tsx`, the `AdminNav` entry, the `api.ts` client functions) — benchmark numbers
+  are measured on data unrelated to what an end user sees; they now live only in
+  `make eval` / `GET /eval/summary` (backend endpoints unchanged, still real). Corresponding
+  Playwright routes removed from `e2e/admin-viewer-access.spec.ts`.
+- **`[FIGURE_START]`/`[FIGURE_END]` markers no longer shown to the end user** in the
+  document inspector (`InspectorPanel.tsx`'s `stripFigureMarkers`) — they're an internal
+  chunk-boundary marker, not meant to be human-facing.
+- **Stale query-cache bug diagnosed** — a CLI re-ingest (`python -m src.ingest`) doesn't
+  go through the API endpoints that call `query_cache.clear()`, so a comparison question
+  served a pre-fix cached answer after a manual re-ingest. Cache manually cleared this
+  session (backed up first); the invalidation gap itself is not fixed — CLI-triggered
+  ingests still leave the query cache stale. Worth a real fix (clear cache in
+  `src/ingest.py` itself, not just the API layer) if this bites again.
+- **Repo cleanup for packaging**: removed stale README claims (test count 141 → 452 with
+  a full accurate per-file table; VLM Groq → OpenRouter references; two screenshot rows
+  pointing at PNGs that don't exist in `assets/`; the Evaluation-dashboard UI row, since
+  that panel is gone). `eval/results/backup_20260722/` (a 4.4 MB single-file ablation
+  snapshot, real compute, not deleted) and `opus_prompt.md` (a personal next-session task
+  note) added to `.gitignore` instead of being tracked or removed.
+- `DEMO_QUESTIONS.md` added — the 4 questions used in the recorded demo, with verified
+  expected answers.
+
+Not done this session, flagged for later (see `TODO.md`): the CLI-ingest query-cache
+invalidation gap above, and everything already queued in `TODO.md`/`MITIGATION_PLAN.md`.
 
 ---
 

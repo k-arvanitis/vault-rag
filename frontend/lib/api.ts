@@ -92,10 +92,6 @@ export interface QueryResponse {
   tools_used?: string[];
 }
 
-export interface EvalSummary {
-  question_count: number;
-  [key: string]: unknown;
-}
 
 export type FeedbackReason =
   | "wrong_source"
@@ -360,24 +356,6 @@ export async function setDocumentTitle(filename: string, title: string | null): 
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ title }),
   });
-}
-
-export async function getEvalSummary(): Promise<EvalSummary> {
-  return request<EvalSummary>("/eval/summary");
-}
-
-export interface EvalJobStatus {
-  status: "pending" | "running" | "done" | "failed";
-  summary?: EvalSummary;
-  error?: string;
-}
-
-export async function runEval(): Promise<IngestResponse> {
-  return request<IngestResponse>("/eval/run", { method: "POST" });
-}
-
-export async function getEvalStatus(jobId: string): Promise<EvalJobStatus> {
-  return request<EvalJobStatus>(`/eval/status/${jobId}`);
 }
 
 export async function submitFeedback(

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, usePathname } from "next/navigation";
-import { MessageSquare, Library, FlaskConical, Plug, MessageSquareWarning, LogOut, Gauge, KeyRound } from "lucide-react";
+import { MessageSquare, Library, Plug, MessageSquareWarning, LogOut, Gauge, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -10,7 +10,6 @@ import { adminLogout } from "@/lib/api";
 
 const ITEMS = [
   { href: "/admin/sources", label: "Sources", icon: Library },
-  { href: "/admin/quality", label: "Quality", icon: FlaskConical },
   { href: "/admin/integrations/google-drive", label: "Integrations", icon: Plug },
   { href: "/admin/feedback", label: "Feedback", icon: MessageSquareWarning },
   { href: "/admin/usage", label: "Usage", icon: Gauge },

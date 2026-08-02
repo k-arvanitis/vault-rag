@@ -35,6 +35,7 @@ eval/results/*_full106_baseline.*
 eval/results/*_full109_merged.jsonl
 eval/results/*_run2_old_judge_retry.*
 eval/results/run_final_*
+eval/results/backup_*/
 eval/results/raw_answers*.jsonl
 eval/results/raw_answers.json
 eval/results/text2sql_eval.json
@@ -58,6 +59,7 @@ vault-rag.code-workspace
 /notebooks
 
 cheatsheet.md
+opus_prompt.md
 *.code-workspace
 .blackboxcli/
 run_spot_check.py

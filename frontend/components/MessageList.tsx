@@ -2,12 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
 import { ThumbsUp, ThumbsDown, Check, RotateCcw } from "lucide-react";
 import { submitFeedback, type Source, type FeedbackReason, type InspectTarget } from "@/lib/api";
 import { toCitation, citedIndices, citedOnlySources, type Citation } from "@/lib/product";
 import { useAdminSession } from "@/lib/useAdminSession";
 import { cn } from "@/lib/utils";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -22,7 +23,6 @@ export interface Message {
 interface Props {
   messages: Message[];
   streaming: boolean;
-  elapsedSeconds?: number;
   /** Primary citation action: selects this specific citation's evidence (and
    * the message's full source list, so Evidence shows the right set even for
    * an older turn) and switches the right panel to Evidence — does NOT leave
@@ -59,18 +59,17 @@ const EXAMPLE_PROMPTS = [
   "What is the NET Amount for supplier Citycoseals?",
 ];
 
-/** Honest waiting state: one neutral message plus how long the request has
- * actually been running — no fake sequential "searching... verifying..."
- * steps, since the backend doesn't emit real progress events (see review
- * item H). The elapsed counter is the only truthful signal available. */
-function WaitingIndicator({ elapsedSeconds }: { elapsedSeconds: number }) {
+/** Honest waiting state: one neutral message, no fake sequential
+ * "searching... verifying..." steps, since the backend doesn't emit real
+ * progress events (see review item H). A shimmering gradient sweep across
+ * the label itself instead of an elapsed-time counter or a spinner/dots --
+ * the number invited "why is this taking N seconds" more than it reassured
+ * anyone the request was still alive. */
+function WaitingIndicator() {
   return (
-    <div className="flex items-center gap-2">
-      <Skeleton className="h-2 w-2 rounded-full" />
-      <p className="text-xs text-muted-foreground">
-        Searching and verifying sources…{elapsedSeconds > 0 && ` (${elapsedSeconds}s)`}
-      </p>
-    </div>
+    <p className="animate-text-shimmer text-xs font-medium">
+      Searching and verifying sources…
+    </p>
   );
 }
 
@@ -163,13 +162,18 @@ const INLINE_CITATION_RE = /\[(\d+)\]/g;
 /** Renders the answer with inline [N] markers as real CitationChips instead of
  * plain text — the backend only ever emits an [N] that resolves to a real
  * position in `sources` (see build_citation_map in answer_pipeline.py); any
- * marker it couldn't resolve was already stripped server-side. Splits on the
- * marker and renders each text segment through its own ReactMarkdown (p
- * unwrapped to a fragment so it flows inline) — a reasonable v1 for the
- * common single-paragraph case; a multi-paragraph answer with citations
- * would have paragraph breaks flattened, since markdown block structure
- * isn't reparsed across the split. Falls back to plain ReactMarkdown when
- * there are no sources to resolve against or no markers in the text. */
+ * marker it couldn't resolve was already stripped server-side.
+ *
+ * Swaps each [N] for a raw <cite> tag and renders the WHOLE content through
+ * one ReactMarkdown pass (rehype-raw lets the literal tag through, same
+ * pattern InspectorPanel.tsx uses for embedded OCR <table> HTML). Markdown
+ * block structure — lists, paragraphs — is parsed once and stays intact.
+ * An earlier version split the raw string on each [N] and re-parsed every
+ * fragment independently; a marker landing inside a list item ("- doc_001
+ * ... [1]") made that fragment's own reparse treat "- doc_001 ..." as a
+ * complete <ul><li>, a block element, forcing the citation chip that
+ * followed onto its own line. Falls back to plain ReactMarkdown when there
+ * are no sources to resolve against or no markers in the text. */
 export function AnswerContent({
   content,
   sources,
@@ -185,46 +189,38 @@ export function AnswerContent({
 }) {
   INLINE_CITATION_RE.lastIndex = 0;
   if (sources.length === 0 || !INLINE_CITATION_RE.test(content)) {
-    return <ReactMarkdown>{content}</ReactMarkdown>;
+    return <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>;
   }
 
-  const segments: (string | number)[] = [];
-  let lastIndex = 0;
-  INLINE_CITATION_RE.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = INLINE_CITATION_RE.exec(content))) {
-    segments.push(content.slice(lastIndex, match.index));
-    segments.push(Number(match[1]));
-    lastIndex = match.index + match[0].length;
-  }
-  segments.push(content.slice(lastIndex));
-
-  const unwrapP = { p: ({ children }: { children?: React.ReactNode }) => <>{children}</> };
+  const withCiteTags = content.replace(
+    INLINE_CITATION_RE,
+    (_, n) => `<cite data-citation="${n}"></cite>`
+  );
+  const messageSources = citedOnlySources(content, sources);
 
   return (
-    <p>
-      {segments.map((segment, i) => {
-        if (typeof segment === "string") {
-          return segment ? (
-            <ReactMarkdown key={i} components={unwrapP}>
-              {segment}
-            </ReactMarkdown>
-          ) : null;
-        }
-        const source = sources[segment - 1];
-        if (!source) return `[${segment}]`;
-        return (
-          <CitationChip
-            key={i}
-            citation={toCitation(source, segment)}
-            messageSources={citedOnlySources(content, sources)}
-            selectedCitation={selectedCitation}
-            onSelectEvidence={onSelectEvidence}
-            onOpenFullSource={onOpenFullSource}
-          />
-        );
-      })}
-    </p>
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      rehypePlugins={[rehypeRaw]}
+      components={{
+        cite: ({ node }: { node?: { properties?: Record<string, unknown> } }) => {
+          const n = Number(node?.properties?.dataCitation);
+          const source = sources[n - 1];
+          if (!source) return <>{`[${n}]`}</>;
+          return (
+            <CitationChip
+              citation={toCitation(source, n)}
+              messageSources={messageSources}
+              selectedCitation={selectedCitation}
+              onSelectEvidence={onSelectEvidence}
+              onOpenFullSource={onOpenFullSource}
+            />
+          );
+        },
+      }}
+    >
+      {withCiteTags}
+    </ReactMarkdown>
   );
 }
 
@@ -446,7 +442,6 @@ function FeedbackWidget({ question, answer, sources }: { question: string; answe
 export default function MessageList({
   messages,
   streaming,
-  elapsedSeconds = 0,
   onSelectEvidence,
   onOpenFullSource,
   selectedCitation = null,
@@ -533,7 +528,7 @@ export default function MessageList({
               <div className="max-w-[85%]">
                 <div className="prose-ui rounded-xl rounded-bl-sm border border-border bg-card px-4 py-2 text-sm text-card-foreground">
                   {isActiveStream && !msg.content ? (
-                    <WaitingIndicator elapsedSeconds={elapsedSeconds} />
+                    <WaitingIndicator />
                   ) : (
                     <AnswerContent
                       content={msg.content}

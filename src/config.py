@@ -101,8 +101,8 @@ class Settings(BaseSettings):
     # VLM (figure descriptions)
     image_size_limit: float = 0.05
     vlm_enabled: bool = True
-    vlm_provider: str = "groq"
-    vlm_model: str = "meta-llama/llama-4-scout-17b-16e-instruct"
+    vlm_provider: str = "openrouter"
+    vlm_model: str = "meta-llama/llama-4-scout"
 
     # DuckDB
     duckdb_path: str = ".duckdb/excel_store.duckdb"

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from openai import OpenAI
 
-from src.config import GROQ_API_KEY, VLM_MODEL, VLM_PROVIDER
+from src.config import GROQ_API_KEY, OPENROUTER_API_KEY, VLM_MODEL, VLM_PROVIDER
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +18,12 @@ _VLM_PROMPT = (
     "Describe all information in this figure, chart, diagram, or image. "
     "Be specific about numbers, labels, trends, and values. "
     "If this is a table, transcribe it fully. "
-    "Be concise — maximum 3 sentences."
+    "If this is a logo, brand mark, or purely decorative graphic (a divider "
+    "line, header/footer ornament, border) with no numbers, labels, or other "
+    "real data in it, reply with ONLY a short name for it and nothing else — "
+    "no color, font, or layout description. Examples: 'LACERA logo', "
+    "'decorative header graphic'. "
+    "Otherwise, be concise — maximum 3 sentences."
 )
 
 # Content-addressed cache so re-ingesting an unchanged PDF doesn't re-pay for a
@@ -66,14 +71,17 @@ def call_vlm_description(image_bytes: bytes) -> str:
 
 def _call_vlm(image_bytes: bytes) -> str:
     try:
-        if VLM_PROVIDER == "groq":
-            client = OpenAI(
-                base_url="https://api.groq.com/openai/v1",
-                api_key=GROQ_API_KEY or "no-key",
+        if VLM_PROVIDER in ("groq", "openrouter"):
+            base_url, api_key = (
+                ("https://api.groq.com/openai/v1", GROQ_API_KEY or "no-key")
+                if VLM_PROVIDER == "groq"
+                else ("https://openrouter.ai/api/v1", OPENROUTER_API_KEY or "no-key")
             )
+            client = OpenAI(base_url=base_url, api_key=api_key)
             b64 = base64.b64encode(image_bytes).decode()
             response = client.chat.completions.create(
                 model=VLM_MODEL,
+                max_tokens=300,
                 messages=[
                     {
                         "role": "user",

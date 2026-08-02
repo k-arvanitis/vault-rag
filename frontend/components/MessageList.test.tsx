@@ -64,4 +64,26 @@ describe("AnswerContent", () => {
     render(<AnswerContent content="Filed under [9]." sources={[makeSource()]} />);
     expect(screen.getByText("[9]", { exact: false })).toBeInTheDocument();
   });
+
+  it("keeps a citation chip inline when its marker lands inside a list item", () => {
+    // Reproduced live: a comparison answer formatted as "- **doc_001** ...
+    // [1]" split the raw markdown string at the marker, so only the
+    // fragment before it ("- **doc_001** ...") got reparsed -- markdown
+    // read that alone as a complete <ul><li>, a block element, which forced
+    // the chip that followed onto its own line. AnswerContent now parses
+    // the whole message in one pass, so the list and the chip stay in the
+    // same <li>.
+    const sources = [makeSource()];
+    render(
+      <AnswerContent
+        content={"- **doc_001** – requires legal review [1]. More text after."}
+        sources={sources}
+      />
+    );
+
+    const chip = screen.getByRole("button", { name: "1" });
+    const item = chip.closest("li");
+    expect(item).not.toBeNull();
+    expect(item?.textContent).toContain("More text after.");
+  });
 });

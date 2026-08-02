@@ -39,6 +39,60 @@ _LABEL_OCR_CPU = "unstructured OCR"
 # match a plain-prose mention like "as shown in figure 3" or a table-of-contents row.
 _FIGURE_CAPTION_RE = re.compile(r"\*\*Fig(?:ure)?\.?\s*(\d+)\s*:", re.IGNORECASE)
 
+# Points from the top of the page below which a figure is treated as a
+# repeating page-header banner rather than in-content -- see
+# _parse_text_layer_page's reordering step.
+_HEADER_BANNER_Y_THRESHOLD = 100
+
+_TABLE_ROW_RE = re.compile(r"^\|(?P<cells>.+)\|[ \t]*$")
+_TABLE_SEPARATOR_ROW_RE = re.compile(r"^\|[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)+\|?[ \t]*$")
+_MIN_DUPLICATE_CELL_LEN = 10
+
+
+def _dedupe_duplicate_table_cells(page_markdown: str) -> str:
+    """Blank a table cell whose text is a near-duplicate of an earlier cell
+    in the same row.
+
+    pymupdf4llm's table_strategy sometimes spills a term/heading's text into
+    the adjacent column instead of stopping at the real column boundary --
+    reproduced on doc_001 page 3's headerless "IV. Definitions" table (both
+    header cells came out as the paragraph sentence above the table, since
+    that's what pymupdf4llm mistook for the header) and on doc_002 page 1's
+    "Interpretation" table (an ordinary body row, "1.1 In these terms and
+    conditions:" repeated verbatim in both the term and definition columns,
+    and a wrapped "Key Personnel" row duplicated into an identical pair).
+    Detected by substring containment between normalized cell texts within
+    a row -- not by comparing to surrounding prose, and not hardcoded to
+    either document's wording -- so it generalizes across both cases and any
+    other row with the same mis-parse.
+    """
+    lines = page_markdown.split("\n")
+    for i, line in enumerate(lines):
+        if _TABLE_SEPARATOR_ROW_RE.match(line):
+            continue
+        row_match = _TABLE_ROW_RE.match(line)
+        if not row_match:
+            continue
+        cells = row_match.group("cells").split("|")
+        if len(cells) < 2:
+            continue
+        normalized = []
+        for cell in cells:
+            n = re.sub(r"<br\s*/?>", " ", cell)
+            n = re.sub(r"\*\*|_", "", n).strip().lower()
+            normalized.append(n)
+        changed = False
+        for a in range(len(cells)):
+            if not normalized[a]:
+                continue
+            for b in range(a + 1, len(cells)):
+                if len(normalized[b]) >= _MIN_DUPLICATE_CELL_LEN and normalized[b] in normalized[a]:
+                    cells[b] = ""
+                    changed = True
+        if changed:
+            lines[i] = "|" + "|".join(cells) + "|"
+    return "\n".join(lines)
+
 
 def _nearby_figure_label(page_markdown: str, position: int, window: int = 800) -> str:
     """Return "Figure N: " if a figure caption heading precedes this position, else "".
@@ -148,7 +202,7 @@ def _parse_text_layer_page(path: str, page_number: int, image_dir: str) -> str:
     )
 
     chunk = result[0]
-    page_markdown: str = chunk["text"]
+    page_markdown: str = _dedupe_duplicate_table_cells(chunk["text"])
     images: list = chunk.get("images", [])
 
     # Collect all image markers in document order (both types)
@@ -189,7 +243,15 @@ def _parse_text_layer_page(path: str, page_number: int, image_dir: str) -> str:
                     )
                     description = "description unavailable"
                 bbox = xref_to_bbox.get(xref)
-                if bbox and page_rect.height > 0:
+                # A repeating header banner sits at the top of the page visually
+                # but the proportional-position estimate below can still snap it
+                # past the first paragraph (the next "\n\n" at-or-after its target
+                # char is always the END of whichever paragraph it landed inside) --
+                # same class of bug as _parse_text_layer_page's main reorder step.
+                # Anything in the top margin goes straight to the front instead.
+                if bbox and bbox.y0 < _HEADER_BANNER_Y_THRESHOLD:
+                    pos = 0
+                elif bbox and page_rect.height > 0:
                     # y-fraction applied to original length, then shifted by prior insertions
                     y_frac = bbox.y1 / page_rect.height
                     target_char = int(y_frac * original_len) + insert_offset
@@ -250,6 +312,7 @@ def _parse_text_layer_page(path: str, page_number: int, image_dir: str) -> str:
                 (
                     match,
                     f"[FIGURE_START]\n{bbox_comment}{label}{description}\n[FIGURE_END]",
+                    bbox,
                 )
             )
 
@@ -279,15 +342,31 @@ def _parse_text_layer_page(path: str, page_number: int, image_dir: str) -> str:
                 (
                     match,
                     f"[FIGURE_START]\n{bbox_comment}{label}{description}\n[FIGURE_END]",
+                    bbox,
                 )
             )
 
-    # Apply replacements from end to start to preserve string positions
-    for match, replacement in sorted(
+    # A repeating header banner (logo, divider) sits at the top of the page
+    # visually (small bbox y0), but pymupdf4llm's linear text order can place
+    # its marker after the first paragraph -- reproduced on doc_001 page 3,
+    # where the header logo landed between the intro sentence and the
+    # definitions table instead of before either. Pull anything whose bbox
+    # top falls within the page's top margin out of its extracted position
+    # and prepend it, so reading order matches what's actually on the page.
+    header_markers: list[str] = []
+    for match, replacement, bbox in sorted(
         replacements, key=lambda x: x[0].start(), reverse=True
     ):
+        is_header = bbox is not None and bbox[1] < _HEADER_BANNER_Y_THRESHOLD
         page_markdown = (
-            page_markdown[: match.start()] + replacement + page_markdown[match.end() :]
+            page_markdown[: match.start()]
+            + ("" if is_header else replacement)
+            + page_markdown[match.end() :]
         )
+        if is_header:
+            header_markers.append(replacement)
+
+    if header_markers:
+        page_markdown = "\n\n".join(reversed(header_markers)) + "\n\n" + page_markdown
 
     return page_markdown

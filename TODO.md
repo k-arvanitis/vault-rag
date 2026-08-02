@@ -1,5 +1,16 @@
 # vault-rag — TODO to portfolio-ready
 
+## New from 2026-08-02 pre-demo session (not fixed, flagged only)
+
+- [ ] **Query cache not invalidated by CLI ingests.** `query_cache.clear()` is only called
+      from the API's upload/reprocess/delete endpoints (`api.py`), not from
+      `python -m src.ingest` directly. A manual CLI re-ingest this session left a stale
+      cached answer served to a live question until the cache was cleared by hand. Real
+      fix: clear (or at least invalidate affected doc_ids in) `data/query_cache.json` from
+      `src/ingest.py` itself so both entry points behave the same.
+- [ ] `MITIGATION_PLAN.md`'s queued items (reranker override on cross-doc comparisons,
+      etc.) — not touched this session, still open.
+
 ## RESOLVED (2026-07-22) — Finding 5 root-caused and fixed; reflection override defaulted off
 
 The backend investigation queued below (Finding 5: "model answers from general knowledge, cites

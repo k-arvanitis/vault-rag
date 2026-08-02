@@ -77,7 +77,6 @@ export default function ChatPanel({
   const [messages, setMessages] = useState<Message[]>(initialMessages ?? []);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [conversationId, setConversationId] = useState<string | null>(initialConversationId);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [hasSourcesNonAdmin, setHasSourcesNonAdmin] = useState(false);
@@ -87,19 +86,6 @@ export default function ChatPanel({
   );
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
-
-  // Elapsed-time counter for the honest waiting state (see MessageList) — no
-  // fake sequential "searching... verifying..." progress, just how long the
-  // real request has actually been running.
-  useEffect(() => {
-    if (!streaming) {
-      setElapsedSeconds(0);
-      return;
-    }
-    const start = Date.now();
-    const id = setInterval(() => setElapsedSeconds(Math.floor((Date.now() - start) / 1000)), 1000);
-    return () => clearInterval(id);
-  }, [streaming]);
 
   // getDocuments()/getStats() are admin-only (a non-admin viewer must not be
   // able to enumerate the corpus, see api.py's require_admin on those
@@ -341,7 +327,6 @@ export default function ChatPanel({
       <MessageList
         messages={messages}
         streaming={streaming}
-        elapsedSeconds={elapsedSeconds}
         selectedCitation={selectedCitation}
         onSelectEvidence={onSelectEvidence}
         onOpenFullSource={onOpenFullSource}

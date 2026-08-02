@@ -73,15 +73,14 @@ https://github.com/user-attachments/assets/7f3fe838-6336-4a5f-815d-f879a86c57b9
 
 ## User interface
 
-Four-pane operator console (Next.js, `frontend/`) built around one idea: every answer should be checkable, not just readable.
+Three-pane operator console (Next.js, `frontend/`) built around one idea: every answer should be checkable, not just readable. Benchmark numbers (Hit@K, faithfulness, refusal rate) are a `make eval` / `/eval/summary` concern, not part of the end-user demo surface — no admin eval dashboard ships in the UI.
 
 | Pane | What it shows |
 |---|---|
 | **Documents** (left sidebar) | Every indexed file with type, status, and last-indexed date. Per document: inspect, re-index (re-runs ingestion on the file already on disk — idempotent point IDs overwrite it in place, no re-upload needed), delete. Drag-and-drop upload zone at the bottom; index totals (docs/chunks) above it; "Clear all" wipes the collection with a confirm step. |
-| **Chat** (center) | Markdown + table rendering, with a neutral waiting state (elapsed time, real cancellation) while an answer is generated — no token-by-token streaming to the client yet, see Known limitations. Multi-part questions are split, answered, and merged automatically — no special syntax needed. |
+| **Chat** (center) | Markdown + table rendering, with live token streaming and real mid-answer cancellation (`POST /query/stream`) instead of a blocking spinner. Multi-part questions are split, answered, and merged automatically — no special syntax needed. |
 | **Trace** (right sidebar, populated per turn) | Three collapsible panels: **Tools** used (RAG · Qdrant vs SQL · DuckDB, as pills); **Generated SQL** for spreadsheet questions; **Retrieved chunks** — every source the agent actually used, each card showing filename, page/sheet, section heading, cross-encoder score (color-coded), and the exact excerpt quoted. A fourth panel, **Retrieved but rejected**, lists the reranked candidates that *didn't* make the cut with their scores — so a viewer can see the model wasn't just handed the top hit, it discarded lower-relevance ones. |
 | **Document inspector** (replaces the trace pane on click) | Click any document to open a full-screen view: PDF pages side-by-side with parsed Markdown (chunk boundaries visible), or for spreadsheets, the raw sheet rows next to the cleaned/chunked version the agent actually queries. |
-| **Evaluation** (header button, full-screen overlay) | The benchmark dashboard: Hit@K, faithfulness, answer relevancy, refusal rate, and the retrieval/structured/unanswerable breakdowns, read live from the last `make eval` run. A "Run eval" button kicks off a fresh benchmark pass in the background (real LLM calls, a few minutes) and refreshes the numbers when it completes. |
 
 The header also carries an offline banner (missing/unreachable backend) and a light/dark theme toggle. A Slack bot (`slack_app.py`) exposes the same query path outside the browser.
 
@@ -119,8 +118,8 @@ The header also carries an offline banner (missing/unreachable backend) and a li
    YES → pymupdf4llm  (reads the text layer; CPU,       │    raw rows — column names, data-start row,     │
          no model)                                      │    footnote-start row, 2-3-sentence summary     │
          + figures → VLM, model:                        │model: qwen/qwen3-32b (Groq, via LiteLLM proxy) │
-           meta-llama/llama-4-scout-17b-16e-instruct    │  • rows → DuckDB  (one table per sheet)        │
-           (Groq) — raster .png + vector graphics       │    Why DuckDB: in-process, single file,        │
+           meta-llama/llama-4-scout                     │  • rows → DuckDB  (one table per sheet)        │
+           (OpenRouter) — raster .png + vector graphics │    Why DuckDB: in-process, single file,        │
            rendered to an image, swapped for            │    columnar — fast SUM / GROUP BY / AVG, no    │
            [FIGURE_START] … [FIGURE_END]                │    server to run; the agent writes SQL here    │
    NO  → LightOn OCR, model:                            │  • document_summary + sheet_summary chunks →   │
@@ -432,7 +431,7 @@ Full methodology and reproduction steps: [eval/README.md](eval/README.md).
 | PDF — born-digital | pymupdf4llm | Reading the existing text layer is faster and more faithful than OCR, especially for numbers, tables, and equations |
 | PDF — scanned (GPU) | LightOn OCR `lightonocr-2-1b-ocr-soup` (local vLLM) | Scanned pages have no usable text layer; running OCR locally preserves privacy. ~8 GB VRAM at fp16 |
 | PDF — scanned (CPU fallback) | unstructured + tesseract | Activated by `PDF_PARSER=cpu`. ~10× slower per scanned page but unblocks CPU-only deployments |
-| Figure descriptions (VLM) | `meta-llama/llama-4-scout-17b-16e-instruct` (Groq) | Turns charts and diagrams into searchable text so evidence inside figures is retrievable |
+| Figure descriptions (VLM) | `meta-llama/llama-4-scout` (OpenRouter) | Turns charts and diagrams into searchable text so evidence inside figures is retrievable |
 | Contextual summaries | `google/gemma-4-31b-it:free` (OpenRouter → Groq fallback) | Cheap model writes a one-sentence context note per chunk at ingest, with no query-time latency |
 | Dense embeddings | `nomic-embed-text` (Ollama, 768-dim) | 8k context, runs in ~2 GB RAM via Ollama — indexing stays on-prem with no external API per chunk |
 | Sparse embeddings | `Qdrant/bm42-all-minilm-l6-v2-attentions` (via fastembed) | BM42 attention-weighted sparse vectors — exact-token recall for IDs / supplier names / transaction numbers a dense vector smears; CPU-only ONNX, no torch |
@@ -455,7 +454,7 @@ Full methodology and reproduction steps: [eval/README.md](eval/README.md).
 |---|---|---|
 | Parsing (PDF/Excel/CSV) | Nothing | Default — pymupdf4llm, openpyxl, pandas all run locally |
 | Scanned-page OCR | Nothing | LightOn OCR (`lightonocr-2-1b-ocr-soup`) runs on a local vLLM server; `PDF_PARSER=cpu` uses tesseract — also local |
-| Figure descriptions | Image bytes → Groq (`meta-llama/llama-4-scout-17b-16e-instruct`) when `VLM_ENABLED=true` | Set `VLM_ENABLED=false` to skip, or point `VLM_PROVIDER` / `VLM_MODEL` at a local model |
+| Figure descriptions | Image bytes → OpenRouter (`meta-llama/llama-4-scout`) when `VLM_ENABLED=true` | Set `VLM_ENABLED=false` to skip, or point `VLM_PROVIDER` / `VLM_MODEL` at a local model |
 | Embeddings | Nothing | Ollama serves `nomic-embed-text` (dense) on-device; sparse `bm42` runs locally via fastembed |
 | Excel schema extraction (ingest) | Sheet rows → Groq (`llama-3.3-70b-versatile`) | Point `GENERATION_API_BASE` / `TABLE_LLM_MODEL` at a local vLLM server |
 | Contextual summaries (ingest) | Chunk text → OpenRouter (`google/gemma-4-31b-it:free`) | Point `CHUNK_LLM_API_BASE` at a local vLLM server |
@@ -465,7 +464,7 @@ Full methodology and reproduction steps: [eval/README.md](eval/README.md).
 
 ## Walkthrough
 
-Suggested flow in the operator console: **Chat** — ask a cross-document question · **Retrieved chunks** — inspect the exact snippets used, and what was retrieved but rejected · **Document inspector** — compare the original page with parsed Markdown and chunk boundaries · **Evaluation** — Hit@K, faithfulness, and refusal rate from the last benchmark run, with a button to trigger a fresh one.
+Suggested flow in the operator console: **Chat** — ask a cross-document question · **Retrieved chunks** — inspect the exact snippets used, and what was retrieved but rejected · **Document inspector** — compare the original page with parsed Markdown and chunk boundaries. Benchmark numbers (Hit@K, faithfulness, refusal rate) live in `make eval` / `GET /eval/summary`, not in the console — see [Evaluation](#evaluation).
 
 Sample questions:
 
@@ -479,17 +478,13 @@ Google Ads2372193163 row and the SS SYSTEMS LTD row?
 What is the salary of the CEO of Doncaster School Solutions?
 ```
 
-| RAG answer over PDFs | Excel / SQL answer |
+| Cited answer + evidence panel | Excel/CSV inspector — raw vs. cleaned |
 |---|---|
-| ![RAG answer](assets/rag-answer.png) | ![SQL answer](assets/sql-answer.png) |
+| ![Cited answer with evidence panel](assets/chat-ui.png) | ![Spreadsheet raw vs. cleaned table inspector](assets/table-inspector.png) |
 
-| Retrieved vs. rejected chunks | Document inspector |
+| Document inspector — PDF side-by-side | Slack bot |
 |---|---|
-| ![Retrieved and rejected chunks](assets/trace-rejected.png) | ![Document inspector](assets/document-inspector.png) |
-
-| Evaluation dashboard | Slack bot |
-|---|---|
-| ![Evaluation dashboard](assets/eval-panel.png) | ![Slack bot](assets/slack-bot.png) |
+| ![PDF document inspector, side-by-side with parsed markdown](assets/document-inspector.png) | ![Slack bot](assets/slack-bot.png) |
 
 ---
 
@@ -607,21 +602,40 @@ WhatsApp-specific) are in [`integrations/n8n/`](integrations/n8n/), with an impo
 
 ## Tests
 
-141 tests, all mocked — no live services required to run CI.
+452 tests, all mocked — no live services required to run CI.
 
 | File | Tests | What's covered |
 |---|---|---|
-| `test_chunker.py` | 3 | Token limits, minimum chunk size, output fields |
-| `test_config.py` | 5 | Config invariants: types, model family constraints |
-| `test_retriever.py` | 15 | Cosine similarity, text filter, dense and hybrid Qdrant paths |
-| `test_retrieval_tool.py` | 8 | search_knowledge_base: numbered-hit formatting, doc-id scoping, HyDE, sheet-summary inclusion, stem-overlap doc boost |
-| `test_reranker.py` | 10 | BGEReranker and QwenReranker: output format, sort order, score ranges |
-| `test_rag_agent.py` | 44 | History injection, token streaming, `<think>` suppression, cross-document repair |
+| `test_answer_pipeline.py` | 106 | Shared routing/retry/comparison/split logic used by both `/query` and the eval harness |
+| `test_rag_agent.py` | 58 | History injection, token streaming, `<think>` suppression, cross-document repair |
+| `test_api.py` | 29 | FastAPI endpoints: ingest, documents, feedback, conversations, admin auth |
+| `test_retriever.py` | 24 | Cosine similarity, text filter, dense and hybrid Qdrant paths |
+| `test_excel_tool.py` | 23 | Excel sub-graph: table selection, SQL writing/retry, refusal path |
 | `test_pipeline.py` | 17 | Reflection retry logic, decomposition plan formatting, supervisor routing, LLM failure fallbacks |
-| `test_table_repair.py` | 13 | Two-row HTML headers, LaTeX column derivation, missing-column recovery |
-| `test_pdf_parser.py` | 6 | Per-page routing, VLM enable/disable, exception handling |
-| `test_excel_cleaner.py` | 4 | Sheet filtering, row-value skipping, no-data token handling |
+| `test_eval_run.py` | 16 | Eval harness: question loading, judge scoring, summary generation |
+| `test_retrieval_tool.py` | 16 | search_knowledge_base: numbered-hit formatting, doc-id scoping, HyDE, sheet-summary inclusion, stem-overlap doc boost |
 | `test_slack.py` | 16 | Message routing, DM handling, mention parsing, answer formatting |
+| `test_admin_auth.py` | 14 | Session cookies, `require_admin`, `ACCESS_MODE=admin_viewer` gating |
+| `test_llm_credentials.py` | 13 | Credential resolution across providers/base URLs |
+| `test_chunker.py` | 13 | Token limits, minimum chunk size, section-header merge guard, output fields |
+| `test_table_repair.py` | 13 | Two-row HTML headers, LaTeX column derivation, missing-column recovery |
+| `test_pdf_parser.py` | 12 | Per-page routing, VLM enable/disable, table-cell dedup, header-banner reordering, exception handling |
+| `test_reranker.py` | 10 | BGEReranker and QwenReranker: output format, sort order, score ranges |
+| `test_grounding_check.py` | 9 | Post-generation groundedness verification |
+| `test_google_drive_connector.py` | 7 | Drive sync: configure, pull, remove-deleted |
+| `test_usage_log.py` | 6 | Per-query usage/token logging |
+| `test_calculator.py` | 6 | Safe arithmetic evaluator (numeric literals + `+ - * / ** ()` only) |
+| `test_answer_quality.py` | 5 | Multi-part question splitting, malformed-generation guards |
+| `test_config.py` | 5 | Config invariants: types, model family constraints |
+| `test_conversation_store.py` | 5 | Saved-conversation CRUD |
+| `test_feedback_store.py` | 5 | Feedback record CRUD, admin resolution |
+| `test_title_overrides.py` | 5 | Document display-title overrides |
+| `test_excel_cleaner.py` | 4 | Sheet filtering, row-value skipping, no-data token handling |
+| `test_generate_summary_doc.py` | 4 | document_summary / sheet_summary chunk generation |
+| `test_duckdb_store.py` | 3 | DuckDB table load and query |
+| `test_embedder.py` | 3 | Dense embedding client |
+| `test_vector_store.py` | 3 | Qdrant point upsert/delete, source resolution |
+| `test_unstructured_ocr.py` | 2 | CPU OCR fallback (`PDF_PARSER=cpu`) |
 
 ```bash
 uv run pytest tests/ -v
@@ -656,8 +670,8 @@ vault-rag/
 │   ├── ingestion/             # OCR + VLM clients (LightOn, Groq, unstructured)
 │   └── preprocessing/         # Excel cleaning + chunk building
 ├── frontend/                  # Next.js chat UI (consumes api.py)
-├── eval/                      # Benchmark runner + 14-doc corpus + results
-├── tests/                     # 141 pytest tests, all mocked
+├── eval/                      # Benchmark runner + 18-doc corpus + results
+├── tests/                     # 452 pytest tests, all mocked
 ├── docs/
 │   ├── chunking.md            # Chunker pipeline detail
 │   ├── engineering.md         # Key engineering decisions

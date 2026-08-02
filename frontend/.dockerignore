@@ -2,3 +2,9 @@ node_modules/
 .next/
 .git/
 *.log
+test-results/
+.deepeval/
+.duckdb/
+.ruff_cache/
+coverage/
+playwright-report/

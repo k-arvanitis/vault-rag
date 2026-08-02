@@ -56,6 +56,14 @@ export function extractTableMarkdown(cleanedMd: string): string {
   return start === -1 ? cleanedMd : lines.slice(start).join("\n");
 }
 
+/** [FIGURE_START]/[FIGURE_END] are storage-only markers the parser/chunker use
+ * to locate VLM-described figure blocks (see src/parser/pdf_parser.py) --
+ * meaningless as literal bracketed text to someone reading the inspector.
+ * Strip for display only; the underlying chunk content is untouched. */
+export function stripFigureMarkers(content: string): string {
+  return content.replace(/\[FIGURE_START\]\n?/g, "").replace(/\n?\[FIGURE_END\]/g, "");
+}
+
 /** Parses a markdown pipe-table into header + data rows, skipping the
  * `|---|---|` separator line. Rendered manually (not via ReactMarkdown) so
  * the matched row can be ref'd and highlighted the same way the raw table
@@ -183,7 +191,7 @@ function PdfInspector({ filename, initialPage }: { filename: string; initialPage
 
   const parsedContent = mdPage ? (
     <div className="prose-ui text-xs leading-relaxed text-foreground">
-      <ReactMarkdown {...MD_PLUGINS}>{mdPage.content}</ReactMarkdown>
+      <ReactMarkdown {...MD_PLUGINS}>{stripFigureMarkers(mdPage.content)}</ReactMarkdown>
     </div>
   ) : (
     <p className="text-xs text-muted-foreground">No content for this page.</p>
@@ -284,7 +292,7 @@ function PdfInspector({ filename, initialPage }: { filename: string; initialPage
         <div className="flex-1 overflow-y-auto p-5">
           <p className="mb-3 text-[10px] text-muted-foreground">No page markers — showing full parsed markdown.</p>
           <div className="prose-ui text-xs leading-relaxed text-foreground">
-            <ReactMarkdown {...MD_PLUGINS}>{fullText ?? ""}</ReactMarkdown>
+            <ReactMarkdown {...MD_PLUGINS}>{stripFigureMarkers(fullText ?? "")}</ReactMarkdown>
           </div>
         </div>
       )}
