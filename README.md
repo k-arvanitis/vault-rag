@@ -4,12 +4,13 @@
 ![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
 ![Qdrant](https://img.shields.io/badge/Qdrant-FF4136?style=for-the-badge&logoColor=white)
 ![Groq](https://img.shields.io/badge/Groq-F55036?style=for-the-badge&logo=groq&logoColor=white)
+![LangGraph](https://img.shields.io/badge/LangGraph-1C3C3C?style=for-the-badge&logoColor=white)
 
 # Vault RAG
 
 **Ask questions across messy PDFs, scans and spreadsheets. Every answer links back to the exact original evidence.**
 
-Private document knowledge assistant for PDFs, scanned documents, spreadsheets, and mixed business files. Ingests messy company documents, routes scanned pages through OCR, indexes prose and tables separately, retrieves with hybrid dense+sparse search and cross-encoder reranking, and answers only with cited evidence — page-level citations for PDFs, sheet/SQL evidence for spreadsheets. Refuses out-of-corpus questions instead of hallucinating. The storage, OCR, embeddings, Qdrant and DuckDB layers run locally. Generation and optional enrichment use external APIs by default but can be redirected to local OpenAI-compatible endpoints — see [Privacy & data](#privacy--data) for exactly what leaves the machine and how to keep it fully on-prem.
+Private document knowledge assistant for PDFs, scanned documents, spreadsheets, and mixed business files. Ingests messy company documents and answers only with cited evidence — page-level citations for PDFs, sheet/SQL evidence for spreadsheets. Refuses out-of-corpus questions instead of hallucinating. Storage, OCR, embeddings, and the vector/SQL layers run locally by default; see [Privacy & data](#privacy--data) for exactly what leaves the machine and how to keep it fully on-prem.
 
 **Who this is for:** Teams with mixed-format internal document collections (PDFs, scanned docs, spreadsheets) who need cited, auditable answers without shipping their files to a SaaS vendor or paying per-page processing fees.
 
@@ -53,21 +54,6 @@ Private document knowledge assistant for PDFs, scanned documents, spreadsheets, 
 | Refuses unanswerable questions | **85.7%** | Returns `Unsupported` instead of fabricating — see Known limitations |
 
 No eval-set-specific shortcuts — every answer comes from the model and tool outputs. Full methodology and detailed metric breakdowns in [Evaluation](#evaluation).
-
----
-
-## Demo
-
-<!-- To embed the video inline like GitHub renders user-attachments, drag
-     assets/vault-rag-demo.mp4 into a GitHub issue or PR comment, copy the
-     resulting https://github.com/user-attachments/assets/... URL, and paste
-     it on a blank line below (no markdown wrapper needed). -->
-
-
-https://github.com/user-attachments/assets/7f3fe838-6336-4a5f-815d-f879a86c57b9
-
-
-![Chat UI](assets/chat-ui.png)
 
 ---
 
@@ -424,7 +410,7 @@ Full methodology and reproduction steps: [eval/README.md](eval/README.md).
 
 ---
 
-## Tech stack
+## Tech Stack
 
 | Component | Technology | Why |
 |---|---|---|
@@ -462,7 +448,16 @@ Full methodology and reproduction steps: [eval/README.md](eval/README.md).
 
 ---
 
-## Walkthrough
+## Demo
+
+<!-- To embed the video inline like GitHub renders user-attachments, drag
+     assets/vault-rag-demo.mp4 into a GitHub issue or PR comment, copy the
+     resulting https://github.com/user-attachments/assets/... URL, and paste
+     it on a blank line below (no markdown wrapper needed). -->
+
+
+https://github.com/user-attachments/assets/7f3fe838-6336-4a5f-815d-f879a86c57b9
+
 
 Suggested flow in the operator console: **Chat** — ask a cross-document question · **Retrieved chunks** — inspect the exact snippets used, and what was retrieved but rejected · **Document inspector** — compare the original page with parsed Markdown and chunk boundaries. Benchmark numbers (Hit@K, faithfulness, refusal rate) live in `make eval` / `GET /eval/summary`, not in the console — see [Evaluation](#evaluation).
 
@@ -677,7 +672,7 @@ vault-rag/
 │   ├── engineering.md         # Key engineering decisions
 │   ├── CASE_STUDY.md
 │   └── SLACK_SETUP.md
-├── assets/                    # Screenshots, architecture image
+├── assets/                    # Screenshots, demo video
 └── docker/                    # Compose stacks: ingestion-stack, slack-stack, langfuse
 ```
 
@@ -715,7 +710,7 @@ vault-rag/
 
 ## Contact
 
-Built by Konstantinos Arvanitis — AI engineer & automation specialist.
+Built by Konstantinos Arvanitis — AI engineer specializing in RAG and document intelligence.
 
 - [LinkedIn](https://www.linkedin.com/in/konstantinos-arvanitis-0248b3246/)
 - [GitHub](https://github.com/k-arvanitis)
