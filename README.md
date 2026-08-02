@@ -29,6 +29,20 @@ Private document knowledge assistant for PDFs, scanned documents, spreadsheets, 
 - Enterprise SSO
 - Full multi-tenant SaaS billing
 
+## What it does
+
+- Ingests PDFs (born-digital and scanned), Excel, CSV, and figures through one router; no per-format scripts.
+- Routes each PDF page independently — text-layer pages skip OCR entirely; only scanned pages hit the GPU.
+- Indexes prose in Qdrant (hybrid dense + sparse) and structured spreadsheet rows in DuckDB; the agent picks per query.
+- Cites every answer back to a chunk + page (PDF) or a sheet + SQL trace (Excel/CSV) — auditable, not a black box.
+- Runs a LangGraph ReAct agent (`src/rag_agent.py`, model `openai/gpt-oss-120b` via OpenRouter) over two tools — Qdrant retrieval and a delegated Excel sub-graph (`src/tools/excel.py`, model `gpt-4o-mini`) that decomposes spreadsheet questions and fans out parallel SQL loops via the `Send` API; a coverage/repair pass and an API-level retry on bare `Unsupported` close common failure modes.
+- Two-stage retrieval — stage 1 routes the query to the most relevant document(s) via `document_summary` chunks; stage 2 fetches answer-bearing content from those documents only. Stem-overlap on the filename rescues stage-1 misses when generic phrasing dominates the embedding.
+- Asks for clarification on broad queries instead of dumping a file list — when the question spans 3+ unrelated documents, the agent returns `Clarify: <2-4 specific options>` derived from what was actually retrieved.
+- Forced API-level retry on bare `Unsupported` responses — mitigates Groq inference nondeterminism by re-running the agent once with explicit doc-routing instructions if the first attempt skipped it.
+- Exposes the same backend through three surfaces — Next.js console (upload, chat, document inspector, trace panel, evaluation dashboard), Slack bot, and a FastAPI service.
+
+---
+
 ## Standard RAG workflow demonstrated
 
 - Upload PDFs, Excel/CSV, and scanned documents
@@ -54,35 +68,6 @@ Private document knowledge assistant for PDFs, scanned documents, spreadsheets, 
 | Refuses unanswerable questions | **85.7%** | Returns `Unsupported` instead of fabricating — see Known limitations |
 
 No eval-set-specific shortcuts — every answer comes from the model and tool outputs. Full methodology and detailed metric breakdowns in [Evaluation](#evaluation).
-
----
-
-## User interface
-
-Three-pane operator console (Next.js, `frontend/`) built around one idea: every answer should be checkable, not just readable. Benchmark numbers (Hit@K, faithfulness, refusal rate) are a `make eval` / `/eval/summary` concern, not part of the end-user demo surface — no admin eval dashboard ships in the UI.
-
-| Pane | What it shows |
-|---|---|
-| **Documents** (left sidebar) | Every indexed file with type, status, and last-indexed date. Per document: inspect, re-index (re-runs ingestion on the file already on disk — idempotent point IDs overwrite it in place, no re-upload needed), delete. Drag-and-drop upload zone at the bottom; index totals (docs/chunks) above it; "Clear all" wipes the collection with a confirm step. |
-| **Chat** (center) | Markdown + table rendering, with live token streaming and real mid-answer cancellation (`POST /query/stream`) instead of a blocking spinner. Multi-part questions are split, answered, and merged automatically — no special syntax needed. |
-| **Trace** (right sidebar, populated per turn) | Three collapsible panels: **Tools** used (RAG · Qdrant vs SQL · DuckDB, as pills); **Generated SQL** for spreadsheet questions; **Retrieved chunks** — every source the agent actually used, each card showing filename, page/sheet, section heading, cross-encoder score (color-coded), and the exact excerpt quoted. A fourth panel, **Retrieved but rejected**, lists the reranked candidates that *didn't* make the cut with their scores — so a viewer can see the model wasn't just handed the top hit, it discarded lower-relevance ones. |
-| **Document inspector** (replaces the trace pane on click) | Click any document to open a full-screen view: PDF pages side-by-side with parsed Markdown (chunk boundaries visible), or for spreadsheets, the raw sheet rows next to the cleaned/chunked version the agent actually queries. |
-
-The header also carries an offline banner (missing/unreachable backend) and a light/dark theme toggle. A Slack bot (`slack_app.py`) exposes the same query path outside the browser.
-
----
-
-## What it does
-
-- Ingests PDFs (born-digital and scanned), Excel, CSV, and figures through one router; no per-format scripts.
-- Routes each PDF page independently — text-layer pages skip OCR entirely; only scanned pages hit the GPU.
-- Indexes prose in Qdrant (hybrid dense + sparse) and structured spreadsheet rows in DuckDB; the agent picks per query.
-- Cites every answer back to a chunk + page (PDF) or a sheet + SQL trace (Excel/CSV) — auditable, not a black box.
-- Runs a LangGraph ReAct agent (`src/rag_agent.py`, model `openai/gpt-oss-120b` via OpenRouter) over two tools — Qdrant retrieval and a delegated Excel sub-graph (`src/tools/excel.py`, model `gpt-4o-mini`) that decomposes spreadsheet questions and fans out parallel SQL loops via the `Send` API; a coverage/repair pass and an API-level retry on bare `Unsupported` close common failure modes.
-- Two-stage retrieval — stage 1 routes the query to the most relevant document(s) via `document_summary` chunks; stage 2 fetches answer-bearing content from those documents only. Stem-overlap on the filename rescues stage-1 misses when generic phrasing dominates the embedding.
-- Asks for clarification on broad queries instead of dumping a file list — when the question spans 3+ unrelated documents, the agent returns `Clarify: <2-4 specific options>` derived from what was actually retrieved.
-- Forced API-level retry on bare `Unsupported` responses — mitigates Groq inference nondeterminism by re-running the agent once with explicit doc-routing instructions if the first attempt skipped it.
-- Exposes the same backend through three surfaces — Next.js console (upload, chat, document inspector, trace panel, evaluation dashboard), Slack bot, and a FastAPI service.
 
 ---
 
@@ -141,7 +126,6 @@ The header also carries an offline banner (missing/unreachable backend) and a li
     Point ID = int(SHA-1(file_name + "::" + chunk_index))  → IDEMPOTENT: re-ingesting a file
     overwrites its points in place, never duplicates them.
 
-
  ╔════════════════════════════════════════════════════════════════════════════════════╗
  ║  QUERY — 2 LangGraph graphs wired into /query                                      ║
  ╚════════════════════════════════════════════════════════════════════════════════════╝
@@ -181,7 +165,7 @@ The header also carries an offline banner (missing/unreachable backend) and a li
        │ (only the query_excel branch reaches GRAPH 2)
        ▼
   GRAPH 2 — Excel sub-graph   (src/tools/excel.py — two hand-built LangGraph StateGraphs)
-    LLM: llama-3.3-70b-versatile  (Groq)   ← needs EXCEL_AGENT_API_KEY,
+    LLM: gpt-4o-mini  (OpenAI, default)   ← needs EXCEL_AGENT_API_KEY,
                                    without it query_excel is a no-op stub
     Outer graph:  decompose the question per source → Send fan-out (one inner run per sub-Q, in parallel)
                   → synthesize the per-part answers
@@ -222,53 +206,6 @@ Four design choices that materially moved eval scores. The full writeup of these
 ### Retrieval-quality refinements
 
 A second wave of changes after manual UI testing closed specific failure modes — Unsupported-despite-present-data, irrelevant source chunks, file-list dumps for vague queries, and bare-filename "answers". All fixes are domain-agnostic (no question-specific shortcuts). On the earlier refusal subset, these changes improved the rate from 75% to 100%; the latest full 109-question benchmark run measured a refusal rate of **85.7%** (see [Evaluation](#evaluation) — a 2026-07-22 session found and fixed the two remaining sources of drag: a corpus-embedding bug and an eval-harness-only override, see [Recent fixes](#recent-fixes)). Highlights: stem-overlap doc-routing boost + force-inject, per-doc slot reservation in the reranker, neighbor-chunk expansion, prompt-driven `Clarify:` rule, content-based bare-filename answer guard, source-diversity acceptance check on the repair pass, and an API-level forced retry on bare-`Unsupported`. Full rationale + trade-offs: [docs/engineering.md](docs/engineering.md#retrieval-quality-refinements).
-
----
-
-## Access modes
-
-Two modes, controlled by `ACCESS_MODE` in `.env`:
-
-- **`open` (default)** — today's behavior, unchanged. No login, nothing gated except whatever `API_KEY` already protects.
-- **`admin_viewer`** — demonstrates the common "admin manages the knowledge base, everyone else just queries it" pattern. Viewers can ask questions, scope sources, inspect evidence, browse conversations, and leave feedback — no login required. Admin-only actions (upload, reprocess, delete, clear the collection, run evals, resolve feedback, configure/sync Google Drive) require a session started at `/admin/login` with `ADMIN_PASSWORD`, or the existing `X-API-Key` header for scripts/CI. Enforced in the backend (`require_admin` in `api.py`), not just by hiding frontend buttons — see `tests/test_admin_auth.py`.
-
-This is intentionally small: an HMAC-signed session cookie, no user accounts, no RBAC, no multi-tenancy. Not a substitute for real auth in a multi-admin deployment.
-
-## API endpoints
-
-The FastAPI service (`api.py`, `make api` → http://localhost:8001) is the backend for the Next.js frontend in `frontend/`. Mutating endpoints require either the `X-API-Key` header (when `API_KEY` is set) or, in `ACCESS_MODE=admin_viewer`, an admin session — see [Access modes](#access-modes).
-
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| `GET` | `/health` | — | Liveness probe |
-| `POST` | `/admin/login` | — | Exchange `ADMIN_PASSWORD` for an admin session cookie (`ACCESS_MODE=admin_viewer` only) |
-| `POST` | `/admin/logout` | — | Clear the admin session cookie |
-| `GET` | `/admin/session` | — | `{access_mode, is_admin}` — lets the frontend show/hide admin UI |
-| `POST` | `/query` | — | Run a single agent query; returns `{answer, sources, rejected_sources, sql, tools_used}` — each source carries `page`/`chunk_id`/`quote` for citation traceability |
-| `POST` | `/ingest` | yes | Upload a file (`multipart/form-data`) and start an ingestion job; returns `{job_id}` |
-| `GET` | `/ingest/status/{job_id}` | — | Poll an ingestion job status |
-| `GET` | `/documents` | — | List all indexed documents grouped by filename, with `last_indexed_at` |
-| `DELETE` | `/documents/{filename}` | yes | Remove all Qdrant points for one file |
-| `POST` | `/documents/{filename}/reindex` | yes | Re-run ingestion on a file already in `data/input/` — idempotent point IDs overwrite it in place |
-| `GET` | `/stats` | — | Index totals (`{total_docs, total_chunks}`) |
-| `DELETE` | `/collection` | yes | Drop the Qdrant collection (destructive — wipes the index) |
-| `GET` | `/documents/{filename}/chunks` | — | All Qdrant chunks for one document, sorted for the inspector |
-| `GET` | `/documents/{filename}/markdown` | — | Parsed markdown for a document, split by page |
-| `GET` | `/documents/{filename}/pdf/info` | — | Total page count for a PDF |
-| `GET` | `/documents/{filename}/pdf/{page}` | — | Render one PDF page as base64 PNG |
-| `GET` | `/documents/{filename}/table-sheet/{sheet}` | — | Raw rows + cleaned markdown for one Excel/CSV sheet |
-| `GET` | `/eval/summary` | — | Last computed benchmark results (Hit@K, faithfulness, refusal rate, …) |
-| `POST` | `/eval/run` | yes | Kick off the full benchmark in the background (real LLM calls, several minutes); returns `{job_id}` |
-| `GET` | `/eval/status/{job_id}` | — | Poll an eval run started via `/eval/run` |
-| `POST` | `/feedback` | — | Record a thumbs up/down (with an optional reason: wrong source / hallucinated / should have refused / missing document) on an answer |
-| `GET` | `/feedback` | yes | List all feedback records for the admin review queue, newest first |
-| `PATCH` | `/feedback/{id}` | yes | Resolve a feedback record with an admin action + note (e.g. "add to eval set", "mark correct source") |
-| `POST` | `/conversations` | — | Create or update a saved conversation (`{id, messages}` — omit `id` to create) |
-| `GET` | `/conversations` | — | List saved conversations (metadata only), newest first |
-| `GET` | `/conversations/{id}` | — | Return one saved conversation with its full message history |
-| `DELETE` | `/conversations/{id}` | — | Remove a saved conversation |
-
-CORS allow-list is read from `API_CORS_ORIGINS` (default `http://localhost:3000`).
 
 ---
 
@@ -434,17 +371,65 @@ Full methodology and reproduction steps: [eval/README.md](eval/README.md).
 
 ---
 
-## Privacy & data
+## Access modes
 
-| Stage | What leaves the machine | How to keep it local |
-|---|---|---|
-| Parsing (PDF/Excel/CSV) | Nothing | Default — pymupdf4llm, openpyxl, pandas all run locally |
-| Scanned-page OCR | Nothing | LightOn OCR (`lightonocr-2-1b-ocr-soup`) runs on a local vLLM server; `PDF_PARSER=cpu` uses tesseract — also local |
-| Figure descriptions | Image bytes → OpenRouter (`meta-llama/llama-4-scout`) when `VLM_ENABLED=true` | Set `VLM_ENABLED=false` to skip, or point `VLM_PROVIDER` / `VLM_MODEL` at a local model |
-| Embeddings | Nothing | Ollama serves `nomic-embed-text` (dense) on-device; sparse `bm42` runs locally via fastembed |
-| Excel schema extraction (ingest) | Sheet rows → Groq (`llama-3.3-70b-versatile`) | Point `GENERATION_API_BASE` / `TABLE_LLM_MODEL` at a local vLLM server |
-| Contextual summaries (ingest) | Chunk text → OpenRouter (`google/gemma-4-31b-it:free`) | Point `CHUNK_LLM_API_BASE` at a local vLLM server |
-| Query answering | Retrieved chunks + question → Groq (`qwen/qwen3-32b`); Excel questions also → Groq (`llama-3.3-70b-versatile`) | Point `GENERATION_API_BASE` (and `EXCEL_AGENT_API_BASE`) at a local vLLM server |
+Two modes, controlled by `ACCESS_MODE` in `.env`:
+
+- **`open` (default)** — today's behavior, unchanged. No login, nothing gated except whatever `API_KEY` already protects.
+- **`admin_viewer`** — demonstrates the common "admin manages the knowledge base, everyone else just queries it" pattern. Viewers can ask questions, scope sources, inspect evidence, browse conversations, and leave feedback — no login required. Admin-only actions (upload, reprocess, delete, clear the collection, run evals, resolve feedback, configure/sync Google Drive) require a session started at `/admin/login` with `ADMIN_PASSWORD`, or the existing `X-API-Key` header for scripts/CI. Enforced in the backend (`require_admin` in `api.py`), not just by hiding frontend buttons — see `tests/test_admin_auth.py`.
+
+This is intentionally small: an HMAC-signed session cookie, no user accounts, no RBAC, no multi-tenancy. Not a substitute for real auth in a multi-admin deployment.
+
+## API endpoints
+
+The FastAPI service (`api.py`, `make api` → http://localhost:8001) is the backend for the Next.js frontend in `frontend/`. Mutating endpoints require either the `X-API-Key` header (when `API_KEY` is set) or, in `ACCESS_MODE=admin_viewer`, an admin session — see [Access modes](#access-modes).
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/health` | — | Liveness probe |
+| `POST` | `/admin/login` | — | Exchange `ADMIN_PASSWORD` for an admin session cookie (`ACCESS_MODE=admin_viewer` only) |
+| `POST` | `/admin/logout` | — | Clear the admin session cookie |
+| `GET` | `/admin/session` | — | `{access_mode, is_admin}` — lets the frontend show/hide admin UI |
+| `POST` | `/query` | — | Run a single agent query; returns `{answer, sources, rejected_sources, sql, tools_used}` — each source carries `page`/`chunk_id`/`quote` for citation traceability |
+| `POST` | `/ingest` | yes | Upload a file (`multipart/form-data`) and start an ingestion job; returns `{job_id}` |
+| `GET` | `/ingest/status/{job_id}` | — | Poll an ingestion job status |
+| `GET` | `/documents` | — | List all indexed documents grouped by filename, with `last_indexed_at` |
+| `DELETE` | `/documents/{filename}` | yes | Remove all Qdrant points for one file |
+| `POST` | `/documents/{filename}/reindex` | yes | Re-run ingestion on a file already in `data/input/` — idempotent point IDs overwrite it in place |
+| `GET` | `/stats` | — | Index totals (`{total_docs, total_chunks}`) |
+| `DELETE` | `/collection` | yes | Drop the Qdrant collection (destructive — wipes the index) |
+| `GET` | `/documents/{filename}/chunks` | — | All Qdrant chunks for one document, sorted for the inspector |
+| `GET` | `/documents/{filename}/markdown` | — | Parsed markdown for a document, split by page |
+| `GET` | `/documents/{filename}/pdf/info` | — | Total page count for a PDF |
+| `GET` | `/documents/{filename}/pdf/{page}` | — | Render one PDF page as base64 PNG |
+| `GET` | `/documents/{filename}/table-sheet/{sheet}` | — | Raw rows + cleaned markdown for one Excel/CSV sheet |
+| `GET` | `/eval/summary` | — | Last computed benchmark results (Hit@K, faithfulness, refusal rate, …) |
+| `POST` | `/eval/run` | yes | Kick off the full benchmark in the background (real LLM calls, several minutes); returns `{job_id}` |
+| `GET` | `/eval/status/{job_id}` | — | Poll an eval run started via `/eval/run` |
+| `POST` | `/feedback` | — | Record a thumbs up/down (with an optional reason: wrong source / hallucinated / should have refused / missing document) on an answer |
+| `GET` | `/feedback` | yes | List all feedback records for the admin review queue, newest first |
+| `PATCH` | `/feedback/{id}` | yes | Resolve a feedback record with an admin action + note (e.g. "add to eval set", "mark correct source") |
+| `POST` | `/conversations` | — | Create or update a saved conversation (`{id, messages}` — omit `id` to create) |
+| `GET` | `/conversations` | — | List saved conversations (metadata only), newest first |
+| `GET` | `/conversations/{id}` | — | Return one saved conversation with its full message history |
+| `DELETE` | `/conversations/{id}` | — | Remove a saved conversation |
+
+CORS allow-list is read from `API_CORS_ORIGINS` (default `http://localhost:3000`).
+
+---
+
+## User interface
+
+Three-pane operator console (Next.js, `frontend/`) built around one idea: every answer should be checkable, not just readable. Benchmark numbers (Hit@K, faithfulness, refusal rate) are a `make eval` / `/eval/summary` concern, not part of the end-user demo surface — no admin eval dashboard ships in the UI.
+
+| Pane | What it shows |
+|---|---|
+| **Documents** (left sidebar) | Every indexed file with type, status, and last-indexed date. Per document: inspect, re-index (re-runs ingestion on the file already on disk — idempotent point IDs overwrite it in place, no re-upload needed), delete. Drag-and-drop upload zone at the bottom; index totals (docs/chunks) above it; "Clear all" wipes the collection with a confirm step. |
+| **Chat** (center) | Markdown + table rendering, with live token streaming and real mid-answer cancellation (`POST /query/stream`) instead of a blocking spinner. Multi-part questions are split, answered, and merged automatically — no special syntax needed. |
+| **Trace** (right sidebar, populated per turn) | Three collapsible panels: **Tools** used (RAG · Qdrant vs SQL · DuckDB, as pills); **Generated SQL** for spreadsheet questions; **Retrieved chunks** — every source the agent actually used, each card showing filename, page/sheet, section heading, cross-encoder score (color-coded), and the exact excerpt quoted. A fourth panel, **Retrieved but rejected**, lists the reranked candidates that *didn't* make the cut with their scores — so a viewer can see the model wasn't just handed the top hit, it discarded lower-relevance ones. |
+| **Document inspector** (replaces the trace pane on click) | Click any document to open a full-screen view: PDF pages side-by-side with parsed Markdown (chunk boundaries visible), or for spreadsheets, the raw sheet rows next to the cleaned/chunked version the agent actually queries. |
+
+The header also carries an offline banner (missing/unreachable backend) and a light/dark theme toggle. A Slack bot (`slack_app.py`) exposes the same query path outside the browser.
 
 ---
 
@@ -455,9 +440,7 @@ Full methodology and reproduction steps: [eval/README.md](eval/README.md).
      resulting https://github.com/user-attachments/assets/... URL, and paste
      it on a blank line below (no markdown wrapper needed). -->
 
-
 https://github.com/user-attachments/assets/7f3fe838-6336-4a5f-815d-f879a86c57b9
-
 
 Suggested flow in the operator console: **Chat** — ask a cross-document question · **Retrieved chunks** — inspect the exact snippets used, and what was retrieved but rejected · **Document inspector** — compare the original page with parsed Markdown and chunk boundaries. Benchmark numbers (Hit@K, faithfulness, refusal rate) live in `make eval` / `GET /eval/summary`, not in the console — see [Evaluation](#evaluation).
 
@@ -645,6 +628,54 @@ cd frontend && npm run test:e2e
 
 ---
 
+## Known limitations
+
+- **Multi-hop cross-document recall** — complex questions are answered by the ReAct agent re-querying within its tool loop (spreadsheet questions are additionally split per source by the Excel sub-graph). However, if the relevant chunk for a sub-question is simply not indexed (e.g. a section that fell below the minimum chunk size during ingestion), no amount of re-querying can recover it — the content gap must be fixed at ingest time.
+- **Arithmetic on prose-extracted values** — a `calculate` tool evaluates expressions the agent builds only from numbers it already retrieved and cited (sums, differences, percentages over PDF/OCR text); it never invents an input value, and the underlying evaluator only accepts numeric literals and `+ - * / ** ()` — no arbitrary code execution. SQL aggregations on structured data (Excel/CSV) are handled by DuckDB through the `query_excel` tool, so `SUM`, `GROUP BY`, `COUNT`, and `AVG` over spreadsheet rows return exact computed values.
+- **Scanned PDFs default to GPU** — LightOn OCR runs on a local vLLM server with CUDA (~8 GB VRAM). Born-digital PDFs, Excel, and CSV ingest on CPU only. Set `PDF_PARSER=cpu` to fall back to `unstructured` + tesseract on CPU (~10× slower per scanned page).
+- **Contextual summaries send chunk text to Groq** — at ingest time, each chunk is sent to `CHUNK_LLM_API_BASE` (OpenRouter by default) to generate a one-sentence context note. Air-gapped ingest requires pointing this at a local vLLM endpoint.
+- **Reranker cold-start** — the first query after a fresh container start takes ~30 s while the cross-encoder model weights download (~270 MB). The Dockerfile pre-downloads weights at build time; bare `uv run` does not.
+- **Single Qdrant collection** — all documents share one collection. There is no per-user or per-tenant isolation; this is a single-operator deployment model.
+- **Groq generation is not perfectly deterministic at temp=0** — speculative decoding and other engine-side optimizations introduce small variation that can flip the agent's tool-call decisions across identical queries. Mitigated by an API-level retry on bare `Unsupported` responses (see Retrieval-quality refinements). True determinism would require a self-hosted vLLM endpoint with a fixed seed.
+- **Display source cards capped at 8** — when the agent makes multiple tool calls, only chunks from the most recent call(s) are shown after de-duplication; chunks the LLM saw beyond the cap are not visible in the UI. The cap is intentional to keep the panel scannable; raise `sources[:N]` in `api.py` if you need more.
+- **Figure-grounded questions are still weak in one specific way** — traced to retrieval, not the VLM: the correct figure descriptions (with the right numbers) are already sitting in the index, but when multiple figures with similar wording live on nearby pages, the agent can retrieve a similar-but-wrong neighbor instead of the one asked about. A related, previously-conflated failure mode (a compound question about a figure losing its own subject when split into sub-questions) is fixed. See [Recent fixes](#recent-fixes).
+- **Comparison questions could skip a required retrieval and guess instead of admitting it** — verified directly: on a two-document comparison question, the agent retrieved the first document, then answered the second half from general domain knowledge rather than making the second required tool call, phrasing it as an inference ("implied by... typically..."). Fixed with a deterministic check that forces a second, scoped retrieval when a comparison question's evidence spans fewer sources than it names — see [Recent fixes](#recent-fixes).
+
+---
+
+## Privacy & data
+
+Vault RAG can run **fully on local models — no data leaves the machine** — but that isn't the out-of-the-box default for every stage; some LLM calls point at a cloud provider until you repoint the relevant `*_API_BASE` variable. The table below reflects `src/vault_rag/config.py` defaults, not aspirational claims.
+
+| Stage | What leaves the machine by default | How to keep it local |
+|---|---|---|
+| Parsing (PDF/Excel/CSV) | Nothing | Always local — pymupdf4llm, openpyxl, pandas |
+| Scanned-page OCR | Nothing | Always local — LightOn OCR (`lightonocr-2-1b-ocr-soup`) on a local vLLM server; `PDF_PARSER=cpu` uses tesseract, also local |
+| Embeddings | Nothing | Always local — Ollama serves `nomic-embed-text` (dense) on-device; sparse `bm42` runs via fastembed, CPU-only, no torch |
+| Figure descriptions | Image bytes → OpenRouter (`meta-llama/llama-4-scout`) when `VLM_ENABLED=true` | Set `VLM_ENABLED=false` to skip, or point `VLM_PROVIDER` / `VLM_MODEL` at a local vLLM endpoint |
+| Contextual summaries (ingest) | Chunk text → OpenRouter (`google/gemma-4-31b-it:free`, default `CHUNK_LLM_API_BASE`) | Point `CHUNK_LLM_API_BASE` at a local vLLM server |
+| Excel schema extraction (ingest) | Sheet rows → wherever `GENERATION_API_BASE` resolves to (same variable as query answering, below) | See "Query answering" row — one knob controls both |
+| Query answering (main agent) | Retrieved chunks + question → wherever `GENERATION_API_BASE` resolves to (default `http://localhost:4000/v1`, the LiteLLM proxy) | `litellm_config.yaml`'s primary route already targets a local vLLM server (`qwen3-32b`, port 8005) — run that plus `make litellm` and this call never leaves the machine; without a local vLLM up, LiteLLM fails over to Groq, then OpenRouter |
+| Excel text-to-SQL sub-agent | Table schema + question → `EXCEL_AGENT_API_BASE` (defaults to OpenAI, model `gpt-4o-mini`) | Point `EXCEL_AGENT_API_BASE` / `EXCEL_AGENT_MODEL` at a local vLLM server |
+
+**To run fully air-gapped:** stand up a local vLLM server (or reuse the one on port 8005) and point `GENERATION_API_BASE`, `EXCEL_AGENT_API_BASE`, and `CHUNK_LLM_API_BASE` at it, and either set `VLM_ENABLED=false` or point `VLM_MODEL` at a local vision model. Parsing, OCR, and embeddings are already local with zero configuration. No LLM call is hard-coded to a cloud provider — every one goes through an OpenAI-compatible `*_API_BASE` variable, so any local endpoint speaking that protocol works.
+---
+
+## Failure modes
+
+| Component | What fails | Symptom | Fix |
+|---|---|---|---|
+| LightOn OCR | vLLM server not running | Scanned pages fail; born-digital pages unaffected | `make up`, or set `PDF_PARSER=cpu` for the CPU fallback |
+| VLM (figures) | Groq unavailable | Figures replaced with `[Figure: description unavailable]`; ingestion continues | Set `VLM_ENABLED=false` to opt out |
+| Qdrant | Container not running | All queries return empty | `docker compose up -d qdrant` |
+| Ollama | Model not pulled | Embedding step fails | `ollama pull nomic-embed-text` |
+| Groq API | Missing key | Generation returns 401 | Set `GROQ_API_KEY` in `.env` |
+| Reranker | First run | First query slow (~30s, downloads model weights) | Pre-download at startup (Dockerfile does this) |
+| Agent (Groq nondeterminism) | Skips doc-routing, returns bare `Unsupported` | Answer is just `Unsupported` despite the data being present | API auto-retries once with explicit doc-routing instructions; falls back to original abstention if the retry also fails |
+| Stage-1 doc routing | Dense embedding ranks the wrong doc first | Answer-bearing chunks never reach the reranker | Stem-overlap boost adds the doc to stage 1 if its filename shares ≥2 query tokens; force-inject pulls 5 chunks from any stage-1 doc not present in the candidate pool |
+
+---
+
 ## Project structure
 
 ```text
@@ -675,36 +706,6 @@ vault-rag/
 ├── assets/                    # Screenshots, demo video
 └── docker/                    # Compose stacks: ingestion-stack, slack-stack, langfuse
 ```
-
----
-
-## Known limitations
-
-- **Multi-hop cross-document recall** — complex questions are answered by the ReAct agent re-querying within its tool loop (spreadsheet questions are additionally split per source by the Excel sub-graph). However, if the relevant chunk for a sub-question is simply not indexed (e.g. a section that fell below the minimum chunk size during ingestion), no amount of re-querying can recover it — the content gap must be fixed at ingest time.
-- **Arithmetic on prose-extracted values** — a `calculate` tool evaluates expressions the agent builds only from numbers it already retrieved and cited (sums, differences, percentages over PDF/OCR text); it never invents an input value, and the underlying evaluator only accepts numeric literals and `+ - * / ** ()` — no arbitrary code execution. SQL aggregations on structured data (Excel/CSV) are handled by DuckDB through the `query_excel` tool, so `SUM`, `GROUP BY`, `COUNT`, and `AVG` over spreadsheet rows return exact computed values.
-- **Scanned PDFs default to GPU** — LightOn OCR runs on a local vLLM server with CUDA (~8 GB VRAM). Born-digital PDFs, Excel, and CSV ingest on CPU only. Set `PDF_PARSER=cpu` to fall back to `unstructured` + tesseract on CPU (~10× slower per scanned page).
-- **Contextual summaries send chunk text to Groq** — at ingest time, each chunk is sent to `CHUNK_LLM_API_BASE` (OpenRouter by default) to generate a one-sentence context note. Air-gapped ingest requires pointing this at a local vLLM endpoint.
-- **Reranker cold-start** — the first query after a fresh container start takes ~30 s while the cross-encoder model weights download (~270 MB). The Dockerfile pre-downloads weights at build time; bare `uv run` does not.
-- **Single Qdrant collection** — all documents share one collection. There is no per-user or per-tenant isolation; this is a single-operator deployment model.
-- **Groq generation is not perfectly deterministic at temp=0** — speculative decoding and other engine-side optimizations introduce small variation that can flip the agent's tool-call decisions across identical queries. Mitigated by an API-level retry on bare `Unsupported` responses (see Retrieval-quality refinements). True determinism would require a self-hosted vLLM endpoint with a fixed seed.
-- **Display source cards capped at 8** — when the agent makes multiple tool calls, only chunks from the most recent call(s) are shown after de-duplication; chunks the LLM saw beyond the cap are not visible in the UI. The cap is intentional to keep the panel scannable; raise `sources[:N]` in `api.py` if you need more.
-- **Figure-grounded questions are still weak in one specific way** — traced to retrieval, not the VLM: the correct figure descriptions (with the right numbers) are already sitting in the index, but when multiple figures with similar wording live on nearby pages, the agent can retrieve a similar-but-wrong neighbor instead of the one asked about. A related, previously-conflated failure mode (a compound question about a figure losing its own subject when split into sub-questions) is fixed. See [Recent fixes](#recent-fixes).
-- **Comparison questions could skip a required retrieval and guess instead of admitting it** — verified directly: on a two-document comparison question, the agent retrieved the first document, then answered the second half from general domain knowledge rather than making the second required tool call, phrasing it as an inference ("implied by... typically..."). Fixed with a deterministic check that forces a second, scoped retrieval when a comparison question's evidence spans fewer sources than it names — see [Recent fixes](#recent-fixes).
-
----
-
-## Failure modes
-
-| Component | What fails | Symptom | Fix |
-|---|---|---|---|
-| LightOn OCR | vLLM server not running | Scanned pages fail; born-digital pages unaffected | `make up`, or set `PDF_PARSER=cpu` for the CPU fallback |
-| VLM (figures) | Groq unavailable | Figures replaced with `[Figure: description unavailable]`; ingestion continues | Set `VLM_ENABLED=false` to opt out |
-| Qdrant | Container not running | All queries return empty | `docker compose up -d qdrant` |
-| Ollama | Model not pulled | Embedding step fails | `ollama pull nomic-embed-text` |
-| Groq API | Missing key | Generation returns 401 | Set `GROQ_API_KEY` in `.env` |
-| Reranker | First run | First query slow (~30s, downloads model weights) | Pre-download at startup (Dockerfile does this) |
-| Agent (Groq nondeterminism) | Skips doc-routing, returns bare `Unsupported` | Answer is just `Unsupported` despite the data being present | API auto-retries once with explicit doc-routing instructions; falls back to original abstention if the retry also fails |
-| Stage-1 doc routing | Dense embedding ranks the wrong doc first | Answer-bearing chunks never reach the reranker | Stem-overlap boost adds the doc to stage 1 if its filename shares ≥2 query tokens; force-inject pulls 5 chunks from any stage-1 doc not present in the candidate pool |
 
 ---
 
