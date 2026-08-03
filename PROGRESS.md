@@ -1,7 +1,34 @@
 # vault-rag — Progress & Plan
 
 Single source of truth. Update this at the start of every session.
-Last updated: 2026-08-02
+Last updated: 2026-08-03
+
+---
+
+## Session 2026-08-03 — portfolio consistency pass: README, package layout
+
+Cosmetic/structural only — no behavior change to the running app.
+
+- **README standardized** to match the other 3 sibling portfolio repos
+  (orion-agent, doc-intel, claimflow): badges, section order, heading
+  casing. Per the documented exception, kept the credit-only footer
+  (`Built by Konstantinos Arvanitis`) instead of the full 3-item Contact
+  block the other 3 use — vault-rag is the polished centerpiece by design.
+- **Fixed a stale Tech Stack claim**: Excel sub-agent's default model was
+  documented as `llama-3.3-70b-versatile` (Groq) — actual default per
+  `config.py` is `gpt-4o-mini` (OpenAI, `EXCEL_AGENT_MODEL`/
+  `EXCEL_AGENT_API_BASE`). Corrected in the architecture diagram.
+- **`src/` restructured into `src/vault_rag/`** — was a flat `src/` with no
+  package subdir, now matches doc-intel (`src/doc_intel/`) and claimflow
+  (`src/claimflow/`). Mechanical rename (`git mv` + sed import rewrite
+  across 66 files, `pyproject.toml` build-system/packages config added),
+  no logic changes. 452 tests passed before and after. Landed on
+  `fix/cross-doc-evidence` (this branch), not merged to `master` yet.
+- **Verified vault-rag does NOT depend on doc-intel** — own OCR stack
+  (LightOn OCR + tesseract CPU fallback); `chandra_parser.py` confirmed a
+  stripped, non-live shim, not an active code path. Corrects an earlier
+  assumption (the portfolio-wide "doc-intel is the shared backbone"
+  framing only actually holds for claimflow).
 
 ---
 

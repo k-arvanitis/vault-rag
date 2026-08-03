@@ -1,5 +1,14 @@
 # vault-rag — TODO to portfolio-ready
 
+## New from 2026-08-03 session (not fixed, flagged only)
+
+- [ ] **`src/vault_rag/` package-layout refactor sits on `fix/cross-doc-evidence`,
+      not merged to `master`.** Cosmetic/structural only (portfolio consistency
+      with doc-intel/claimflow's `src/<package>/` layout), 452 tests pass
+      before and after — but it's riding on an in-progress feature branch, not
+      isolated. Merge `fix/cross-doc-evidence` to `master` when that work is
+      done, don't cherry-pick the refactor out separately unless needed sooner.
+
 ## New from 2026-08-02 pre-demo session (not fixed, flagged only)
 
 - [ ] **Query cache not invalidated by CLI ingests.** `query_cache.clear()` is only called
