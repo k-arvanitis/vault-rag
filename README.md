@@ -64,8 +64,6 @@ No eval-set-specific shortcuts — every answer comes from the model and tool ou
      it on a blank line below (no markdown wrapper needed). -->
 
 
-https://github.com/user-attachments/assets/7f3fe838-6336-4a5f-815d-f879a86c57b9
-
 
 ![Chat UI](assets/chat-ui.png)
 
